@@ -24,17 +24,17 @@ app.use(express.json());
 
 // Configuration
 const CONFIG = {
-  WHATSAPP_TOKEN: process.env.WHATSAPP_TOKEN || 'your_whatsapp_access_token',
-  WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || 'your_phone_number_id',
-  VERIFY_TOKEN: process.env.VERIFY_TOKEN || 'your_verify_token',
-  WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET || '',
+  WHATSAPP_TOKEN: (process.env.WHATSAPP_TOKEN || 'your_whatsapp_access_token').trim(),
+  WHATSAPP_PHONE_NUMBER_ID: (process.env.WHATSAPP_PHONE_NUMBER_ID || 'your_phone_number_id').trim(),
+  VERIFY_TOKEN: (process.env.VERIFY_TOKEN || 'your_verify_token').trim(),
+  WHATSAPP_APP_SECRET: (process.env.WHATSAPP_APP_SECRET || '').trim(),
   PORT: process.env.PORT || 3000,
-  GROQ_API_KEY: process.env.GROQ_API_KEY || 'your_groq_api_key',
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
-  MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales',
-  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
-  SENTRY_DSN: process.env.SENTRY_DSN || '',
+  GROQ_API_KEY: (process.env.GROQ_API_KEY || 'your_groq_api_key').trim(),
+  GEMINI_API_KEY: (process.env.GEMINI_API_KEY || '').trim(),
+  ANTHROPIC_API_KEY: (process.env.ANTHROPIC_API_KEY || '').trim(),
+  MONGODB_URI: (process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales').trim(),
+  REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
+  SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
   NODE_ENV: process.env.NODE_ENV || 'development'
 };
 
