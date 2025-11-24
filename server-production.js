@@ -237,36 +237,56 @@ if (CONFIG.SENTRY_DSN) {
   app.use(Sentry.Handlers.tracingHandler());
 }
 
-// Connect to MongoDB
-mongoose.connect(CONFIG.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('✅ MongoDB connected'))
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err);
-  if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
-});
+// Initialize message queue variable (will be set up after server starts)
+let messageQueue;
 
-// Create message queue with Redis
-const messageQueue = new Bull('whatsapp-messages', CONFIG.REDIS_URL, {
-  redis: {
-    tls: {
-      rejectUnauthorized: false
-    }
-  },
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 2000
-    },
-    removeOnComplete: 100,
-    removeOnFail: false
+// Initialize MongoDB connection (non-blocking)
+async function connectDatabase() {
+  try {
+    await mongoose.connect(CONFIG.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000 // 5 second timeout
+    });
+    console.log('✅ MongoDB connected');
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err.message);
+    console.log('⚠️  Continuing without MongoDB - conversation history disabled');
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
   }
-});
+}
 
-console.log('✅ Message queue initialized');
+// Initialize Redis queue (non-blocking)
+async function connectQueue() {
+  try {
+    messageQueue = new Bull('whatsapp-messages', CONFIG.REDIS_URL, {
+      redis: {
+        tls: {
+          rejectUnauthorized: false
+        },
+        connectTimeout: 5000 // 5 second timeout
+      },
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000
+        },
+        removeOnComplete: 100,
+        removeOnFail: false
+      }
+    });
+
+    // Test the connection
+    await messageQueue.isReady();
+    console.log('✅ Message queue initialized');
+  } catch (err) {
+    console.error('❌ Redis connection error:', err.message);
+    console.log('⚠️  Continuing without queue - messages will be processed directly');
+    messageQueue = null;
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
+  }
+}
 
 // Rate limiting middleware
 const webhookLimiter = rateLimit({
@@ -344,15 +364,26 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
 
       // Only process text messages
       if (messageType === 'text' && messageBody) {
-        // Add to queue for processing
-        await messageQueue.add('process-message', {
-          from,
-          messageBody,
-          messageId,
-          timestamp: new Date()
-        });
-
-        console.log('✅ Message added to queue');
+        // Add to queue for processing (if queue is available)
+        if (messageQueue) {
+          await messageQueue.add('process-message', {
+            from,
+            messageBody,
+            messageId,
+            timestamp: new Date()
+          });
+          console.log('✅ Message added to queue');
+        } else {
+          console.log('⚠️  Queue unavailable - processing directly');
+          // Process directly without queue
+          try {
+            const context = [];
+            const response = await processWithClaudeAgent(messageBody, from, context);
+            await sendWhatsAppMessage(from, response);
+          } catch (err) {
+            console.error('Error processing message:', err);
+          }
+        }
       }
     }
   } catch (error) {
@@ -623,11 +654,16 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-// Start server
+// Start server FIRST (so Render sees it's alive immediately)
 app.listen(CONFIG.PORT, () => {
   console.log(`\n🚀 WhatsApp-Claude Production Server`);
   console.log(`📡 Server running on port ${CONFIG.PORT}`);
   console.log(`🔗 Webhook URL: https://your-domain.com/webhook`);
   console.log(`🏥 Health check: http://localhost:${CONFIG.PORT}/health`);
   console.log(`📊 Stats: http://localhost:${CONFIG.PORT}/stats\n`);
+
+  // Connect to services in the background (non-blocking)
+  console.log('🔄 Connecting to databases...');
+  connectDatabase().catch(err => console.error('Database connection failed:', err));
+  connectQueue().catch(err => console.error('Queue connection failed:', err));
 });
