@@ -570,6 +570,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
 // Send WhatsApp message
 async function sendWhatsAppMessage(to, text) {
   try {
+    // Clean token - remove ALL whitespace and control characters
+    const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
+
     const response = await axios.post(
       `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
@@ -580,7 +583,7 @@ async function sendWhatsAppMessage(to, text) {
       },
       {
         headers: {
-          'Authorization': `Bearer ${CONFIG.WHATSAPP_TOKEN}`,
+          'Authorization': `Bearer ${cleanToken}`,
           'Content-Type': 'application/json'
         }
       }
@@ -597,6 +600,9 @@ async function sendWhatsAppMessage(to, text) {
 // Send typing indicator
 async function sendTypingIndicator(to) {
   try {
+    // Clean token - remove ALL whitespace and control characters
+    const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
+
     await axios.post(
       `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
@@ -608,7 +614,7 @@ async function sendTypingIndicator(to) {
       },
       {
         headers: {
-          'Authorization': `Bearer ${CONFIG.WHATSAPP_TOKEN}`,
+          'Authorization': `Bearer ${cleanToken}`,
           'Content-Type': 'application/json'
         }
       }
