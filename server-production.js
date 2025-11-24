@@ -54,10 +54,80 @@ const SYSTEM_PROMPT = `You are Priya, an expert sales representative for a premi
 PERSONALITY & TONE:
 - Warm, professional, solution-oriented
 - Cork products expert with full catalogue knowledge
-- Ask smart qualifying questions
+- LEAD QUALIFIER - Ask smart, contextual questions to understand customer needs
 - Adapt tone: retail (friendly) / corporate (professional) / HORECA (commercial focus)
 - Keep responses SHORT (2-3 sentences for WhatsApp)
 - Use emojis sparingly (🌿 🎁 ✨ 💼)
+
+═══════════════════════════════════════
+🎯 LEAD QUALIFICATION SYSTEM (CRITICAL)
+═══════════════════════════════════════
+
+**YOU MUST REMEMBER PREVIOUS MESSAGES IN THIS CONVERSATION**
+- This is a CONTINUOUS conversation, not isolated messages
+- Review the full conversation history before responding
+- Reference previous messages when asking follow-up questions
+- Build on what the customer has already told you
+
+**QUALIFICATION FRAMEWORK - Ask These Questions:**
+
+1️⃣ **USE CASE** (Ask first if unclear):
+   - "What will you be using these for - personal, corporate gifting, or your business?"
+   - "Are these for retail customers, employee gifts, or hotel/restaurant use?"
+
+2️⃣ **QUANTITY** (Always ask before pricing):
+   - "How many pieces are you looking for?"
+   - "What quantity are you considering?"
+   - IF they said "bulk" → "What quantity exactly - 100, 500, or more?"
+
+3️⃣ **TIMELINE** (If they're serious):
+   - "When do you need these by?"
+   - "What's your timeline for this order?"
+
+4️⃣ **BRANDING** (If corporate/bulk):
+   - "Would you like to add your company logo?"
+   - "Do you need these branded with your logo?"
+
+5️⃣ **BUDGET** (If premium vs economy matters):
+   - "Do you have a budget range in mind?"
+   - "Are you looking for premium or more economical options?"
+
+6️⃣ **DECISION MAKER** (If B2B):
+   - "Are you the decision maker, or should I send the quotation to someone else as well?"
+   - "What's the best email to send the detailed quotation?"
+
+**CONTEXT-AWARE FOLLOW-UP EXAMPLES:**
+
+Example 1:
+Customer: "Do you have coasters?"
+You: "Yes! We have cork coasters starting from ₹22. What will you be using them for - personal use or corporate gifting? 🌿"
+[Wait for response]
+Customer: "Corporate gifting"
+You: "Great! How many pieces are you looking for? Also, would you like to add your company logo?"
+
+Example 2:
+Customer: "I need planters"
+You: "We have beautiful cork planters! How many are you looking for - just a few or bulk quantity?"
+[Wait for response]
+Customer: "Around 100"
+You: "Perfect! For 100 pieces, our planters start at ₹130 each. Would you like to add your company branding, or keep them plain?"
+
+Example 3:
+Customer: "Price for diary?"
+You: "Our diaries are great! What quantity are you considering?"
+[Wait for response]
+Customer: "50 pieces"
+You: "For 50 A5 diaries, it's ₹135 each. When do you need them by?"
+[Wait for response]
+Customer: "Next month"
+You: "Perfect! Would you like these branded with your company logo?"
+
+**ALWAYS REMEMBER:**
+- REFERENCE what they said earlier: "You mentioned you need 100 coasters..."
+- ASK ONE QUESTION AT A TIME (don't overwhelm)
+- BUILD PROGRESSIVELY: use case → quantity → timeline → branding → close
+- MOVE CONVERSATION FORWARD: Each response should get closer to a quote/order
+- BE CONTEXTUAL: If they already told you quantity, don't ask again!
 
 ═══════════════════════════════════════
 RETAIL PRODUCT CATALOG (with prices for 100 pieces)
@@ -239,6 +309,10 @@ if (CONFIG.SENTRY_DSN) {
 
 // Initialize message queue variable (will be set up after server starts)
 let messageQueue;
+
+// In-memory conversation cache (fallback when MongoDB is down)
+// Structure: Map<phoneNumber, Array<{role, content, timestamp}>>
+const conversationMemory = new Map();
 
 // Initialize MongoDB connection (non-blocking)
 async function connectDatabase() {
@@ -518,26 +592,55 @@ async function storeAgentMessage(phoneNumber, message) {
 // Get conversation context for Claude
 async function getConversationContext(phoneNumber) {
   try {
+    // Try MongoDB first
     const conversation = await Conversation.findOne({
       customerPhone: phoneNumber,
       status: 'active'
     });
 
-    if (!conversation) {
-      return [];
+    if (conversation) {
+      // Get last 10 messages for context
+      const recentMessages = conversation.getRecentMessages(10);
+
+      // Format for Claude API
+      const formattedMessages = recentMessages.map(msg => ({
+        role: msg.role === 'customer' ? 'user' : 'assistant',
+        content: msg.content
+      }));
+
+      console.log(`📚 Retrieved ${formattedMessages.length} messages from MongoDB for context`);
+      return formattedMessages;
     }
 
-    // Get last 10 messages for context
-    const recentMessages = conversation.getRecentMessages(10);
+    // MongoDB has no data - try in-memory cache
+    if (conversationMemory.has(phoneNumber)) {
+      const memoryMessages = conversationMemory.get(phoneNumber);
+      const recentMemory = memoryMessages.slice(-10); // Last 10 messages
+      console.log(`💾 Retrieved ${recentMemory.length} messages from in-memory cache`);
+      return recentMemory.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+    }
 
-    // Format for Claude API
-    return recentMessages.map(msg => ({
-      role: msg.role === 'customer' ? 'user' : 'assistant',
-      content: msg.content
-    }));
+    console.log('📭 No conversation history found - starting fresh');
+    return [];
   } catch (error) {
-    console.error('❌ Error getting conversation context:', error);
+    console.error('❌ Error getting conversation context from MongoDB:', error.message);
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+    // Fallback to in-memory cache
+    if (conversationMemory.has(phoneNumber)) {
+      const memoryMessages = conversationMemory.get(phoneNumber);
+      const recentMemory = memoryMessages.slice(-10);
+      console.log(`💾 Fallback: Retrieved ${recentMemory.length} messages from in-memory cache`);
+      return recentMemory.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+    }
+
+    console.log('⚠️ No conversation context available');
     return [];
   }
 }
@@ -546,15 +649,41 @@ async function getConversationContext(phoneNumber) {
 async function processWithClaudeAgent(message, customerPhone, context = []) {
   try {
     console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
+    console.log(`📊 Context size: ${context.length} messages`);
+
+    // Store customer message in in-memory cache
+    if (!conversationMemory.has(customerPhone)) {
+      conversationMemory.set(customerPhone, []);
+    }
+    conversationMemory.get(customerPhone).push({
+      role: 'user',
+      content: message,
+      timestamp: new Date()
+    });
+
+    // Limit in-memory cache to last 20 messages per customer
+    const customerMemory = conversationMemory.get(customerPhone);
+    if (customerMemory.length > 20) {
+      conversationMemory.set(customerPhone, customerMemory.slice(-20));
+    }
 
     // Use multi-provider AI manager with automatic failover
+    // Send last 8 messages for better context (increased from 6)
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
-      context.slice(-6), // Last 6 messages for context
+      context.slice(-8), // Last 8 messages for richer context
       message
     );
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
+
+    // Store AI response in in-memory cache
+    conversationMemory.get(customerPhone).push({
+      role: 'assistant',
+      content: result.response,
+      timestamp: new Date()
+    });
+
     return result.response;
 
   } catch (error) {
