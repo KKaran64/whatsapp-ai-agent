@@ -1,0 +1,633 @@
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+const Bull = require('bull');
+const rateLimit = require('express-rate-limit');
+const Sentry = require('@sentry/node');
+const Groq = require('groq-sdk');
+
+// Import models
+const Customer = require('./models/Customer');
+const Conversation = require('./models/Conversation');
+
+// Import AI Provider Manager (Multi-provider with fallbacks)
+const AIProviderManager = require('./ai-provider-manager');
+
+const app = express();
+
+// Trust proxy for rate limiting when behind ngrok/reverse proxy
+app.set('trust proxy', 1);
+
+app.use(express.json());
+
+// Configuration
+const CONFIG = {
+  WHATSAPP_TOKEN: process.env.WHATSAPP_TOKEN || 'your_whatsapp_access_token',
+  WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || 'your_phone_number_id',
+  VERIFY_TOKEN: process.env.VERIFY_TOKEN || 'your_verify_token',
+  WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET || '',
+  PORT: process.env.PORT || 3000,
+  GROQ_API_KEY: process.env.GROQ_API_KEY || 'your_groq_api_key',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+  MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales',
+  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  SENTRY_DSN: process.env.SENTRY_DSN || '',
+  NODE_ENV: process.env.NODE_ENV || 'development'
+};
+
+// Initialize Groq AI (legacy - kept for compatibility)
+const groq = new Groq({ apiKey: CONFIG.GROQ_API_KEY });
+
+// Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
+const aiManager = new AIProviderManager({
+  GROQ_API_KEY: CONFIG.GROQ_API_KEY,
+  GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
+  ANTHROPIC_API_KEY: null // Disabled for Option B (FREE tier only)
+});
+
+// System Prompt for AI Agent (extracted for reuse)
+const SYSTEM_PROMPT = `You are Priya, an expert sales representative for a premium sustainable cork products company with COMPLETE knowledge of all products, exact pricing, and HORECA solutions.
+
+PERSONALITY & TONE:
+- Warm, professional, solution-oriented
+- Cork products expert with full catalogue knowledge
+- Ask smart qualifying questions
+- Adapt tone: retail (friendly) / corporate (professional) / HORECA (commercial focus)
+- Keep responses SHORT (2-3 sentences for WhatsApp)
+- Use emojis sparingly (🌿 🎁 ✨ 💼)
+
+═══════════════════════════════════════
+RETAIL PRODUCT CATALOG (with prices for 100 pieces)
+═══════════════════════════════════════
+
+🟤 CORK COASTERS
+• Premium Square Fabric: ₹50
+• Square with Veneer: ₹22
+• Premium Natural/Chocochip/Olive: ₹45
+• Web Printed/UV Printed: ₹45
+• Leaf Coasters: ₹36
+• Bread Coaster: ₹50
+• Set of 4 with Case: ₹120
+• Hexagon with Veneer: ₹24
+
+🟤 CORK PREMIUM DIARIES
+• A5 Diary: ₹135
+• A6 Diary: ₹90
+• Printed A5 Diary: ₹240
+• Various designer diaries: ₹165-₹185
+
+🟤 DESK ORGANIZERS
+• Desk Organizer: ₹390-₹490
+• iPad Desk Organizer: ₹360
+• Pen Holder: ₹180
+• Mobile & Pen Holder: ₹415
+• 3-in-One Organizer: ₹550
+• Mouse Pad Super Fine: ₹90
+• Desktop Mat Rubberized: ₹250
+• Cork Clock (all designs): ₹500
+• Calendar with Case: ₹200
+
+🟤 TEST TUBE PLANTERS
+• Single: ₹130
+• Set of 3: ₹280
+• Set of 5: ₹400
+• Wall Mounted Set of 4: ₹340
+• Wall Mounted Set of 6: ₹460
+• Wall Mounted Set of 8: ₹560
+
+🟤 PHOTO FRAMES
+• 4x6 Photo Frame: ₹280
+• 5x7 Photo Frame: ₹300
+• 8x10 Photo Frame: ₹340
+• Collage Frame: ₹350
+
+🟤 STORAGE BOXES
+• Small Storage Box: ₹130
+• Medium Storage Box: ₹180
+• Large Storage Box: ₹220
+• Jewelry Box: ₹260
+
+🟤 SERVING ITEMS
+• Cork Placemats: ₹38
+• Serving Tray Small: ₹220
+• Serving Tray Large: ₹260
+• Hot Pot Holder: ₹320
+
+🟤 GIFTING COMBOS (Popular for Corporate)
+• Coaster Set + Planter: ₹230
+• Diary + Pen + Coaster: ₹300
+• Complete Desk Set: ₹650
+
+═══════════════════════════════════════
+BRANDING/CUSTOMIZATION PRICING
+═══════════════════════════════════════
+
+🎨 SCREEN PRINTING (Single Color - Most Economical):
+• ₹300 for first 100 pieces
+• ₹2 per piece for 101+ pieces
+• Best for: Single color logos, bulk orders
+• Minimum: 100 pieces recommended
+
+🔲 LASER ENGRAVING (Black Color Only):
+• Premium finish, elegant look
+• Black color only
+• Pricing: On request based on quantity
+• Best for: Premium/luxury look
+
+🌈 UV PRINTING (Multi-Color):
+• ₹8-12 per piece (based on logo size)
+• Full color capability
+• Great for detailed logos
+• Best for: Colorful, detailed designs
+
+🌈 DTF PRINTING (Multi-Color):
+• ₹8-12 per piece (based on logo size)
+• Full color capability
+• Vibrant colors
+• Best for: Multi-color logos, photos
+
+CUSTOM CORPORATE SOLUTIONS:
+• Logo customization: Available for ANY quantity
+• Custom packaging available
+• Bulk discount on products: 15-25% (for 100+)
+• Branding charges are SEPARATE from product prices
+
+═══════════════════════════════════════
+HORECA (Hotels, Restaurants, Cafes) PRODUCTS
+═══════════════════════════════════════
+
+🏨 FOR HOTELS:
+• Cork Coasters (logo branded): ₹22-50 + branding
+• Cork Placemats: ₹38 + branding
+• Room Amenity Trays: ₹220-260 + branding
+• Cork Menu Covers: ₹180-240 + branding
+• Hot Pot Holders: ₹320 + branding
+
+🍽️ FOR RESTAURANTS:
+• Cork Coasters (disposable/reusable): ₹22-50 + branding
+• Cork Placemats: ₹38 + branding
+• Cork Menu Covers: ₹180-240 + branding
+• Cork Trivets/Hot Pot Holders: ₹320 + branding
+• Cork Serving Trays: ₹220-260 + branding
+
+☕ FOR CAFES:
+• Cork Coasters (branded): ₹22-50 + branding
+• Cork Cup Sleeves: On request + branding
+• Cork Display Trays: ₹220-260 + branding
+• Wall-mounted Cork Planters: ₹340-560 + branding
+
+HORECA BENEFITS:
+• Branding prominently displays your hotel/restaurant/cafe logo
+• 100% natural, sustainable, eco-friendly image
+• Unique aesthetic appeal
+• Durable and long-lasting
+• Bulk discounts available (15-25% for 100+)
+• Quick turnaround times
+
+KEY PHRASE TO HIGHLIGHT WHEN RELEVANT: "Your logo/branding prominently displayed on premium eco-friendly cork products"
+
+═══════════════════════════════════════
+RESPONSE RULES
+═══════════════════════════════════════
+
+**CRITICAL PRICING RULE - MUST FOLLOW:**
+When someone asks "How much for [product]?" or "Price for [product]?" or "What's the price of [product]?":
+- ⚠️ NEVER give a price directly without knowing quantity
+- ⚠️ DO NOT say "₹X for 100 pieces" until you know their quantity
+- ALWAYS ask their quantity FIRST: "How many pieces are you looking for?"
+- Explain pricing varies by quantity (retail vs bulk)
+- Only give exact prices AFTER knowing quantity
+- For retail (1-10): Suggest Set options (e.g., "Set of 4 with Case")
+- For bulk (50+): Mention volume discounts available
+- Example: "The price varies by quantity. How many are you thinking - just a few pieces or larger quantity?"
+- Even if you see a price in the catalog, ASK QUANTITY FIRST before sharing any price
+
+**BRANDING/LOGO PRINTING RULE:**
+When someone asks about logo/branding:
+1. First ask: "Is it a single color or multi-color logo?"
+2. Based on their answer, recommend ONLY the best option:
+   - Single color → Screen printing (₹300 for 100 pcs, then ₹2/pc)
+   - Multi-color → UV/DTF printing (₹8-12/pc based on logo size)
+3. DO NOT list all 4 options unless customer specifically asks "what options do you have?"
+4. Keep it simple and consultative
+5. Example: "For single color logos, screen printing works great - ₹300 for 100 pieces, then ₹2/pc after that. What quantity?"
+
+**CATALOG/IMAGE/PICTURE REQUESTS:**
+When someone asks for pictures, images, catalog, or "can you share pics?":
+- NEVER say "I'm a text-based AI" or "I cannot share pictures"
+- ALWAYS respond professionally as a sales representative
+- Say: "I'd be happy to share our catalog! Please share your email or WhatsApp number and I'll send you detailed product images and our full catalog right away. Which products are you most interested in?"
+- Or: "Let me share our product catalog with you. What's the best way to send it - email or WhatsApp? Also, which category interests you most - coasters, planters, desk items, or gifting combos?"
+- Act like you CAN and WILL send the catalog, just need their contact method
+- Keep it natural and helpful, not technical
+
+REMEMBER: You KNOW all products, exact prices, and combos. Be confident! Qualify customers. This is WhatsApp - keep it SHORT!`;
+
+// Initialize Sentry for error monitoring
+if (CONFIG.SENTRY_DSN) {
+  Sentry.init({
+    dsn: CONFIG.SENTRY_DSN,
+    environment: CONFIG.NODE_ENV,
+    tracesSampleRate: 1.0
+  });
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+}
+
+// Connect to MongoDB
+mongoose.connect(CONFIG.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('✅ MongoDB connected'))
+.catch(err => {
+  console.error('❌ MongoDB connection error:', err);
+  if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
+});
+
+// Create message queue with Redis
+const messageQueue = new Bull('whatsapp-messages', CONFIG.REDIS_URL, {
+  redis: {
+    tls: {
+      rejectUnauthorized: false
+    }
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000
+    },
+    removeOnComplete: 100,
+    removeOnFail: false
+  }
+});
+
+console.log('✅ Message queue initialized');
+
+// Rate limiting middleware
+const webhookLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // Limit each IP to 100 requests per minute
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Webhook signature validation middleware
+function validateWebhookSignature(req, res, next) {
+  if (!CONFIG.WHATSAPP_APP_SECRET) {
+    // Skip validation if no app secret configured (development mode)
+    return next();
+  }
+
+  const signature = req.headers['x-hub-signature-256'];
+
+  if (!signature) {
+    console.warn('⚠️ No signature provided in webhook request');
+    return res.sendStatus(401);
+  }
+
+  const expectedSignature = 'sha256=' + crypto
+    .createHmac('sha256', CONFIG.WHATSAPP_APP_SECRET)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
+
+  if (signature !== expectedSignature) {
+    console.error('❌ Invalid webhook signature');
+    return res.sendStatus(403);
+  }
+
+  next();
+}
+
+// Webhook verification (required by Meta)
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === CONFIG.VERIFY_TOKEN) {
+      console.log('✅ Webhook verified');
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  }
+});
+
+// Receive WhatsApp messages
+app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) => {
+  console.log('📨 Incoming webhook:', JSON.stringify(req.body, null, 2));
+
+  // Acknowledge immediately to Meta
+  res.sendStatus(200);
+
+  try {
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const messages = value?.messages;
+
+    if (messages && messages[0]) {
+      const message = messages[0];
+      const from = message.from; // Customer's phone number
+      const messageBody = message.text?.body;
+      const messageType = message.type;
+      const messageId = message.id;
+
+      console.log(`📱 Message from ${from}: ${messageBody}`);
+
+      // Only process text messages
+      if (messageType === 'text' && messageBody) {
+        // Add to queue for processing
+        await messageQueue.add('process-message', {
+          from,
+          messageBody,
+          messageId,
+          timestamp: new Date()
+        });
+
+        console.log('✅ Message added to queue');
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error processing webhook:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+});
+
+// Process messages from queue
+messageQueue.process('process-message', async (job) => {
+  const { from, messageBody, messageId } = job.data;
+
+  try {
+    console.log(`🔄 Processing message from queue: ${from}`);
+
+    // Store customer message in database (non-blocking - don't await)
+    storeCustomerMessage(from, messageBody, messageId).catch(err => {
+      console.log('⚠️ MongoDB unavailable - continuing without history');
+    });
+
+    // Send typing indicator (non-blocking)
+    sendTypingIndicator(from).catch(err => {
+      console.log('⚠️ Typing indicator failed - continuing');
+    });
+
+    // Get conversation context with timeout fallback
+    let context = [];
+    try {
+      const contextPromise = getConversationContext(from);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Context timeout')), 2000)
+      );
+      context = await Promise.race([contextPromise, timeoutPromise]);
+    } catch (error) {
+      console.log('⚠️ Context unavailable - using empty context');
+      context = [];
+    }
+
+    // Process message with Claude agent (ALWAYS runs)
+    const agentResponse = await processWithClaudeAgent(messageBody, from, context);
+
+    // Send response back to customer
+    await sendWhatsAppMessage(from, agentResponse);
+
+    // Store agent response in database (non-blocking - don't await)
+    storeAgentMessage(from, agentResponse).catch(err => {
+      console.log('⚠️ MongoDB unavailable - response sent but not stored');
+    });
+
+    console.log('✅ Message processed successfully');
+  } catch (error) {
+    console.error('❌ Error processing message:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+    // Send error message to customer
+    await sendWhatsAppMessage(
+      from,
+      "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
+    );
+
+    throw error; // Re-throw to trigger retry
+  }
+});
+
+// Store customer message in database
+async function storeCustomerMessage(phoneNumber, message, messageId) {
+  try {
+    // Find or create customer
+    let customer = await Customer.findOne({ phoneNumber });
+    if (!customer) {
+      customer = new Customer({
+        phoneNumber,
+        lastContactedAt: new Date()
+      });
+      await customer.save();
+    } else {
+      customer.lastContactedAt = new Date();
+      await customer.save();
+    }
+
+    // Find or create conversation
+    let conversation = await Conversation.findOne({
+      customerPhone: phoneNumber,
+      status: 'active'
+    });
+
+    if (!conversation) {
+      conversation = new Conversation({
+        customerPhone: phoneNumber
+      });
+    }
+
+    // Add message
+    await conversation.addMessage('customer', message, messageId);
+
+    console.log('✅ Customer message stored in database');
+  } catch (error) {
+    console.error('❌ Error storing customer message:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+}
+
+// Store agent message in database
+async function storeAgentMessage(phoneNumber, message) {
+  try {
+    const conversation = await Conversation.findOne({
+      customerPhone: phoneNumber,
+      status: 'active'
+    });
+
+    if (conversation) {
+      await conversation.addMessage('agent', message);
+      console.log('✅ Agent message stored in database');
+    }
+  } catch (error) {
+    console.error('❌ Error storing agent message:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+}
+
+// Get conversation context for Claude
+async function getConversationContext(phoneNumber) {
+  try {
+    const conversation = await Conversation.findOne({
+      customerPhone: phoneNumber,
+      status: 'active'
+    });
+
+    if (!conversation) {
+      return [];
+    }
+
+    // Get last 10 messages for context
+    const recentMessages = conversation.getRecentMessages(10);
+
+    // Format for Claude API
+    return recentMessages.map(msg => ({
+      role: msg.role === 'customer' ? 'user' : 'assistant',
+      content: msg.content
+    }));
+  } catch (error) {
+    console.error('❌ Error getting conversation context:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    return [];
+  }
+}
+
+// Process message with Multi-Provider AI agent (Groq → Gemini → Rules)
+async function processWithClaudeAgent(message, customerPhone, context = []) {
+  try {
+    console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
+
+    // Use multi-provider AI manager with automatic failover
+    const result = await aiManager.getResponse(
+      SYSTEM_PROMPT,
+      context.slice(-6), // Last 6 messages for context
+      message
+    );
+
+    console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
+    return result.response;
+
+  } catch (error) {
+    console.error('❌ Error in AI processing:', error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+    // Ultimate fallback (should rarely happen since aiManager has its own fallbacks)
+    return "Thank you for your message! We're experiencing technical difficulties. Please share your email and I'll send you our catalog and product details right away. 🌿";
+  }
+}
+
+
+// Send WhatsApp message
+async function sendWhatsAppMessage(to, text) {
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'text',
+        text: { body: text }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${CONFIG.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    console.log('✅ Message sent successfully');
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error sending WhatsApp message:', error.response?.data || error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    throw error;
+  }
+}
+
+// Send typing indicator
+async function sendTypingIndicator(to) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'text',
+        text: { body: '...' }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${CONFIG.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+  } catch (error) {
+    console.error('⚠️ Error sending typing indicator:', error.message);
+  }
+}
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    services: {
+      mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      queue: messageQueue ? 'active' : 'inactive'
+    }
+  };
+
+  res.json(health);
+});
+
+// Stats endpoint
+app.get('/stats', async (req, res) => {
+  try {
+    const totalCustomers = await Customer.countDocuments();
+    const activeConversations = await Conversation.countDocuments({ status: 'active' });
+    const queueStats = await messageQueue.getJobCounts();
+
+    res.json({
+      customers: totalCustomers,
+      activeConversations,
+      queue: queueStats
+    });
+  } catch (error) {
+    console.error('Error getting stats:', error);
+    res.status(500).json({ error: 'Error retrieving stats' });
+  }
+});
+
+// Sentry error handler (must be after all routes)
+if (CONFIG.SENTRY_DSN) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+
+  await messageQueue.close();
+  await mongoose.connection.close();
+
+  process.exit(0);
+});
+
+// Start server
+app.listen(CONFIG.PORT, () => {
+  console.log(`\n🚀 WhatsApp-Claude Production Server`);
+  console.log(`📡 Server running on port ${CONFIG.PORT}`);
+  console.log(`🔗 Webhook URL: https://your-domain.com/webhook`);
+  console.log(`🏥 Health check: http://localhost:${CONFIG.PORT}/health`);
+  console.log(`📊 Stats: http://localhost:${CONFIG.PORT}/stats\n`);
+});

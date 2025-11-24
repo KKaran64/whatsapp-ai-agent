@@ -1,0 +1,1025 @@
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+const Bull = require('bull');
+const rateLimit = require('express-rate-limit');
+const Sentry = require('@sentry/node');
+const Groq = require('groq-sdk');
+
+// Import models
+const Customer = require('./models/Customer');
+const Conversation = require('./models/Conversation');
+
+// Import AI Provider Manager (Multi-provider with fallbacks)
+const AIProviderManager = require('./ai-provider-manager');
+
+const app = express();
+
+// Trust proxy for rate limiting when behind ngrok/reverse proxy
+app.set('trust proxy', 1);
+
+app.use(express.json());
+
+// Configuration
+const CONFIG = {
+  WHATSAPP_TOKEN: process.env.WHATSAPP_TOKEN || 'your_whatsapp_access_token',
+  WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || 'your_phone_number_id',
+  VERIFY_TOKEN: process.env.VERIFY_TOKEN || 'your_verify_token',
+  WHATSAPP_APP_SECRET: process.env.WHATSAPP_APP_SECRET || '',
+  PORT: process.env.PORT || 3000,
+  GROQ_API_KEY: process.env.GROQ_API_KEY || 'your_groq_api_key',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+  MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales',
+  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  SENTRY_DSN: process.env.SENTRY_DSN || '',
+  NODE_ENV: process.env.NODE_ENV || 'development'
+};
+
+// Initialize Groq AI (legacy - kept for compatibility)
+const groq = new Groq({ apiKey: CONFIG.GROQ_API_KEY });
+
+// Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
+const aiManager = new AIProviderManager({
+  GROQ_API_KEY: CONFIG.GROQ_API_KEY,
+  GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
+  ANTHROPIC_API_KEY: null // Disabled for Option B (FREE tier only)
+});
+
+// System Prompt for AI Agent (extracted for reuse)
+const SYSTEM_PROMPT = `You are Priya, an expert sales representative for a premium sustainable cork products company with COMPLETE knowledge of all products, exact pricing, and HORECA solutions.
+
+PERSONALITY & TONE:
+- Warm, professional, solution-oriented
+- Cork products expert with full catalogue knowledge
+- Ask smart qualifying questions
+- Adapt tone: retail (friendly) / corporate (professional) / HORECA (commercial focus)
+- Keep responses SHORT (2-3 sentences for WhatsApp)
+- Use emojis sparingly (🌿 🎁 ✨ 💼)
+
+═══════════════════════════════════════
+RETAIL PRODUCT CATALOG (with prices for 100 pieces)
+═══════════════════════════════════════
+
+🟤 CORK COASTERS
+• Premium Square Fabric: ₹50
+• Square with Veneer: ₹22
+• Premium Natural/Chocochip/Olive: ₹45
+• Web Printed/UV Printed: ₹45
+• Leaf Coasters: ₹36
+• Bread Coaster: ₹50
+• Set of 4 with Case: ₹120
+• Hexagon with Veneer: ₹24
+
+🟤 CORK PREMIUM DIARIES
+• A5 Diary: ₹135
+• A6 Diary: ₹90
+• Printed A5 Diary: ₹240
+• Various designer diaries: ₹165-₹185
+
+🟤 DESK ORGANIZERS
+• Desk Organizer: ₹390-₹490
+• iPad Desk Organizer: ₹360
+• Pen Holder: ₹180
+• Mobile & Pen Holder: ₹415
+• 3-in-One Organizer: ₹550
+• Mouse Pad Super Fine: ₹90
+• Desktop Mat Rubberized: ₹250
+• Cork Clock (all designs): ₹500
+• Calendar with Case: ₹200
+
+🟤 TEST TUBE PLANTERS
+• Single: ₹130
+• Set of 3: ₹280
+• Set of 5: ₹400
+• Wall Mounted Set of 4: ₹340
+• Wall Mounted Set of 6: ₹460
+• Wall Mounted Set of 8: ₹560
+
+🟤 PHOTO FRAMES
+• 4x6 Photo Frame: ₹280
+• 5x7 Photo Frame: ₹300
+• 8x10 Photo Frame: ₹340
+• Collage Frame: ₹350
+
+🟤 STORAGE BOXES
+• Small Storage Box: ₹130
+• Medium Storage Box: ₹180
+• Large Storage Box: ₹220
+• Jewelry Box: ₹260
+
+🟤 SERVING ITEMS
+• Cork Placemats: ₹38
+• Serving Tray Small: ₹220
+• Serving Tray Large: ₹260
+• Hot Pot Holder: ₹320
+
+🟤 GIFTING COMBOS (Popular for Corporate)
+• Coaster Set + Planter: ₹230
+• Diary + Pen + Coaster: ₹300
+• Complete Desk Set: ₹650
+
+═══════════════════════════════════════
+BRANDING/CUSTOMIZATION PRICING
+═══════════════════════════════════════
+
+🎨 SCREEN PRINTING (Single Color - Most Economical):
+• ₹300 for first 100 pieces
+• ₹2 per piece for 101+ pieces
+• Best for: Single color logos, bulk orders
+• Minimum: 100 pieces recommended
+
+🔲 LASER ENGRAVING (Black Color Only):
+• Premium finish, elegant look
+• Black color only
+• Pricing: On request based on quantity
+• Best for: Premium/luxury look
+
+🌈 UV PRINTING (Multi-Color):
+• ₹8-12 per piece (based on logo size)
+• Full color capability
+• Great for detailed logos
+• Best for: Colorful, detailed designs
+
+🌈 DTF PRINTING (Multi-Color):
+• ₹8-12 per piece (based on logo size)
+• Full color capability
+• Vibrant colors
+• Best for: Multi-color logos, photos
+
+CUSTOM CORPORATE SOLUTIONS:
+• Logo customization: Available for ANY quantity
+• Custom packaging available
+• Bulk discount on products: 15-25% (for 100+)
+• Branding charges are SEPARATE from product prices
+
+═══════════════════════════════════════
+HORECA (Hotels, Restaurants, Cafes) PRODUCTS
+═══════════════════════════════════════
+
+🏨 FOR HOTELS:
+• Cork Coasters (logo branded): ₹22-50 + branding
+• Cork Placemats: ₹38 + branding
+• Room Amenity Trays: ₹220-260 + branding
+• Cork Menu Covers: ₹180-240 + branding
+• Hot Pot Holders: ₹320 + branding
+
+🍽️ FOR RESTAURANTS:
+• Cork Coasters (disposable/reusable): ₹22-50 + branding
+• Cork Placemats: ₹38 + branding
+• Cork Menu Covers: ₹180-240 + branding
+• Cork Trivets/Hot Pot Holders: ₹320 + branding
+• Cork Serving Trays: ₹220-260 + branding
+
+☕ FOR CAFES:
+• Cork Coasters (branded): ₹22-50 + branding
+• Cork Cup Sleeves: On request + branding
+• Cork Display Trays: ₹220-260 + branding
+• Wall-mounted Cork Planters: ₹340-560 + branding
+
+HORECA BENEFITS:
+• Branding prominently displays your hotel/restaurant/cafe logo
+• 100% natural, sustainable, eco-friendly image
+• Unique aesthetic appeal
+• Durable and long-lasting
+• Bulk discounts available (15-25% for 100+)
+• Quick turnaround times
+
+KEY PHRASE TO HIGHLIGHT WHEN RELEVANT: "Your logo/branding prominently displayed on premium eco-friendly cork products"
+
+═══════════════════════════════════════
+RESPONSE RULES
+═══════════════════════════════════════
+
+**CRITICAL PRICING RULE - MUST FOLLOW:**
+When someone asks "How much for [product]?" or "Price for [product]?" or "What's the price of [product]?":
+- ⚠️ NEVER give a price directly without knowing quantity
+- ⚠️ DO NOT say "₹X for 100 pieces" until you know their quantity
+- ALWAYS ask their quantity FIRST: "How many pieces are you looking for?"
+- Explain pricing varies by quantity (retail vs bulk)
+- Only give exact prices AFTER knowing quantity
+- For retail (1-10): Suggest Set options (e.g., "Set of 4 with Case")
+- For bulk (50+): Mention volume discounts available
+- Example: "The price varies by quantity. How many are you thinking - just a few pieces or larger quantity?"
+- Even if you see a price in the catalog, ASK QUANTITY FIRST before sharing any price
+
+**BRANDING/LOGO PRINTING RULE:**
+When someone asks about logo/branding:
+1. First ask: "Is it a single color or multi-color logo?"
+2. Based on their answer, recommend ONLY the best option:
+   - Single color → Screen printing (₹300 for 100 pcs, then ₹2/pc)
+   - Multi-color → UV/DTF printing (₹8-12/pc based on logo size)
+3. DO NOT list all 4 options unless customer specifically asks "what options do you have?"
+4. Keep it simple and consultative
+5. Example: "For single color logos, screen printing works great - ₹300 for 100 pieces, then ₹2/pc after that. What quantity?"
+
+**CATALOG/IMAGE/PICTURE REQUESTS:**
+When someone asks for pictures, images, catalog, or "can you share pics?":
+- NEVER say "I'm a text-based AI" or "I cannot share pictures"
+- ALWAYS respond professionally as a sales representative
+- Say: "I'd be happy to share our catalog! Please share your email or WhatsApp number and I'll send you detailed product images and our full catalog right away. Which products are you most interested in?"
+- Or: "Let me share our product catalog with you. What's the best way to send it - email or WhatsApp? Also, which category interests you most - coasters, planters, desk items, or gifting combos?"
+- Act like you CAN and WILL send the catalog, just need their contact method
+- Keep it natural and helpful, not technical
+
+REMEMBER: You KNOW all products, exact prices, and combos. Be confident! Qualify customers. This is WhatsApp - keep it SHORT!`;
+
+// Initialize Sentry for error monitoring
+if (CONFIG.SENTRY_DSN) {
+  Sentry.init({
+    dsn: CONFIG.SENTRY_DSN,
+    environment: CONFIG.NODE_ENV,
+    tracesSampleRate: 1.0
+  });
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+}
+
+// Connect to MongoDB
+mongoose.connect(CONFIG.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('✅ MongoDB connected'))
+.catch(err => {
+  console.error('❌ MongoDB connection error:', err);
+  if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
+});
+
+// Create message queue with Redis
+const messageQueue = new Bull('whatsapp-messages', CONFIG.REDIS_URL, {
+  redis: {
+    tls: {
+      rejectUnauthorized: false
+    }
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000
+    },
+    removeOnComplete: 100,
+    removeOnFail: false
+  }
+});
+
+console.log('✅ Message queue initialized');
+
+// Rate limiting middleware
+const webhookLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // Limit each IP to 100 requests per minute
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Webhook signature validation middleware
+function validateWebhookSignature(req, res, next) {
+  if (!CONFIG.WHATSAPP_APP_SECRET) {
+    // Skip validation if no app secret configured (development mode)
+    return next();
+  }
+
+  const signature = req.headers['x-hub-signature-256'];
+
+  if (!signature) {
+    console.warn('⚠️ No signature provided in webhook request');
+    return res.sendStatus(401);
+  }
+
+  const expectedSignature = 'sha256=' + crypto
+    .createHmac('sha256', CONFIG.WHATSAPP_APP_SECRET)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
+
+  if (signature !== expectedSignature) {
+    console.error('❌ Invalid webhook signature');
+    return res.sendStatus(403);
+  }
+
+  next();
+}
+
+// Webhook verification (required by Meta)
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === CONFIG.VERIFY_TOKEN) {
+      console.log('✅ Webhook verified');
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  }
+});
+
+// Receive WhatsApp messages
+app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) => {
+  console.log('📨 Incoming webhook:', JSON.stringify(req.body, null, 2));
+
+  // Acknowledge immediately to Meta
+  res.sendStatus(200);
+
+  try {
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const messages = value?.messages;
+
+    if (messages && messages[0]) {
+      const message = messages[0];
+      const from = message.from; // Customer's phone number
+      const messageBody = message.text?.body;
+      const messageType = message.type;
+      const messageId = message.id;
+
+      console.log(`📱 Message from ${from}: ${messageBody}`);
+
+      // Only process text messages
+      if (messageType === 'text' && messageBody) {
+        // Add to queue for processing
+        await messageQueue.add('process-message', {
+          from,
+          messageBody,
+          messageId,
+          timestamp: new Date()
+        });
+
+        console.log('✅ Message added to queue');
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error processing webhook:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+});
+
+// Process messages from queue
+messageQueue.process('process-message', async (job) => {
+  const { from, messageBody, messageId } = job.data;
+
+  try {
+    console.log(`🔄 Processing message from queue: ${from}`);
+
+    // Store customer message in database
+    await storeCustomerMessage(from, messageBody, messageId);
+
+    // Send typing indicator
+    await sendTypingIndicator(from);
+
+    // Get conversation context
+    const context = await getConversationContext(from);
+
+    // Process message with Claude agent
+    const agentResponse = await processWithClaudeAgent(messageBody, from, context);
+
+    // Send response back to customer
+    await sendWhatsAppMessage(from, agentResponse);
+
+    // Store agent response in database
+    await storeAgentMessage(from, agentResponse);
+
+    console.log('✅ Message processed successfully');
+  } catch (error) {
+    console.error('❌ Error processing message:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+    // Send error message to customer
+    await sendWhatsAppMessage(
+      from,
+      "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
+    );
+
+    throw error; // Re-throw to trigger retry
+  }
+});
+
+// Store customer message in database
+async function storeCustomerMessage(phoneNumber, message, messageId) {
+  try {
+    // Find or create customer
+    let customer = await Customer.findOne({ phoneNumber });
+    if (!customer) {
+      customer = new Customer({
+        phoneNumber,
+        lastContactedAt: new Date()
+      });
+      await customer.save();
+    } else {
+      customer.lastContactedAt = new Date();
+      await customer.save();
+    }
+
+    // Find or create conversation
+    let conversation = await Conversation.findOne({
+      customerPhone: phoneNumber,
+      status: 'active'
+    });
+
+    if (!conversation) {
+      conversation = new Conversation({
+        customerPhone: phoneNumber
+      });
+    }
+
+    // Add message
+    await conversation.addMessage('customer', message, messageId);
+
+    console.log('✅ Customer message stored in database');
+  } catch (error) {
+    console.error('❌ Error storing customer message:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+}
+
+// Store agent message in database
+async function storeAgentMessage(phoneNumber, message) {
+  try {
+    const conversation = await Conversation.findOne({
+      customerPhone: phoneNumber,
+      status: 'active'
+    });
+
+    if (conversation) {
+      await conversation.addMessage('agent', message);
+      console.log('✅ Agent message stored in database');
+    }
+  } catch (error) {
+    console.error('❌ Error storing agent message:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+}
+
+// Get conversation context for Claude
+async function getConversationContext(phoneNumber) {
+  try {
+    const conversation = await Conversation.findOne({
+      customerPhone: phoneNumber,
+      status: 'active'
+    });
+
+    if (!conversation) {
+      return [];
+    }
+
+    // Get last 10 messages for context
+    const recentMessages = conversation.getRecentMessages(10);
+
+    // Format for Claude API
+    return recentMessages.map(msg => ({
+      role: msg.role === 'customer' ? 'user' : 'assistant',
+      content: msg.content
+    }));
+  } catch (error) {
+    console.error('❌ Error getting conversation context:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    return [];
+  }
+}
+
+// Process message with Multi-Provider AI agent (Groq → Gemini → Rules)
+async function processWithClaudeAgent(message, customerPhone, context = []) {
+  try {
+    console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
+
+    // Use multi-provider AI manager with automatic failover
+    const result = await aiManager.getResponse(
+      SYSTEM_PROMPT,
+      context.slice(-6), // Last 6 messages for context
+      message
+    );
+
+    console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
+    return result.response;
+
+  } catch (error) {
+    console.error('❌ Error in AI processing:', error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+    // Ultimate fallback (should rarely happen since aiManager has its own fallbacks)
+    return "Thank you for your message! We're experiencing technical difficulties. Please share your email and I'll send you our catalog and product details right away. 🌿";
+  }
+}
+
+// OLD FUNCTION BODY REMOVED - Now using aiManager for multi-provider support
+// The rest of the old function content is replaced by the above implementation
+async function OLD_processWithClaudeAgent_DEPRECATED(message, customerPhone, context = []) {
+  // This function is kept temporarily for reference, but is not used
+  try {
+    console.log('🤖 OLD: Processing with Groq AI agent...');
+
+    // Build conversation history
+    const messages = [
+      {
+        role: 'system',
+        content: `You are Priya, an expert sales representative for a premium sustainable cork products company with COMPLETE knowledge of all products, exact pricing, and HORECA solutions.
+
+PERSONALITY & TONE:
+- Warm, professional, solution-oriented
+- Cork products expert with full catalogue knowledge
+- Ask smart qualifying questions
+- Adapt tone: retail (friendly) / corporate (professional) / HORECA (commercial focus)
+- Keep responses SHORT (2-3 sentences for WhatsApp)
+- Use emojis sparingly (🌿 🎁 ✨ 💼)
+
+═══════════════════════════════════════
+RETAIL PRODUCT CATALOG (with prices for 100 pieces)
+═══════════════════════════════════════
+
+🟤 CORK COASTERS
+• Premium Square Fabric: ₹50
+• Square with Veneer: ₹22
+• Premium Natural/Chocochip/Olive: ₹45
+• Web Printed/UV Printed: ₹45
+• Leaf Coasters: ₹36
+• Bread Coaster: ₹50
+• Set of 4 with Case: ₹120
+• Hexagon with Veneer: ₹24
+
+🟤 CORK PREMIUM DIARIES
+• A5 Diary: ₹135
+• A6 Diary: ₹90
+• Printed A5 Diary: ₹240
+• Various designer diaries: ₹165-₹185
+
+🟤 DESK ORGANIZERS
+• Desk Organizer: ₹390-₹490
+• iPad Desk Organizer: ₹360
+• Pen Holder: ₹180
+• Mobile & Pen Holder: ₹415
+• 3-in-One Organizer: ₹550
+• Mouse Pad Super Fine: ₹90
+• Desktop Mat Rubberized: ₹250
+• Cork Clock (all designs): ₹500
+• Calendar with Case: ₹200
+
+🟤 TEST TUBE PLANTERS
+• Small Magnet Planter: ₹130-₹200
+• Bark Tabletop Planter: ₹220-₹230
+• Oval/Cylindrical/Tapered: ₹300-₹390
+• Wall Mounted: ₹300
+• 3-Hole/4-Hole: ₹375-₹400
+• XOXO Planter: ₹1080
+• 3 Beaker Planter: ₹980
+
+🟤 TABLE TOP PLANTERS (10x10cm)
+• All designs (Box/Bohemian/Feather/Olive/Natural): ₹360
+• Round Linea/Aqua/Abstract: ₹400
+• Flat Planter: ₹450
+• Triplanter: ₹720
+• Hanging Planter: ₹390
+
+🟤 SERVING/DÉCOR TRAYS
+• Large Rectangular (16x8"): ₹720
+• Square (9x9"): ₹468
+• Round (13" diameter): ₹720
+• Set of 3 Round Trays: ₹1200
+• Shot Glass Tray: ₹680
+• Cutlery Holder: ₹720
+
+🟤 TABLEMATS
+• All designs (12x18"): ₹250
+• Natural/Striped/Chocochip/Olive
+
+🟤 TRIVETS/HOT PLATES
+• 7" Diameter (all finishes): ₹160
+• Oval/Square (larger): ₹275
+• Web Design: ₹200
+
+🟤 BAGS & WALLETS
+• Laptop Bag Granco/Linea: ₹1950-₹2450
+• Laptop Sleeve: ₹650-₹750
+• Conference Folder: ₹780
+• Wallet Granco: ₹330
+• Card Holder: ₹350
+• Passport Holder: ₹360
+• Pop-up Credit Card Wallet: ₹410
+
+🟤 CLUTCHES & BAGS
+• Clutch Purse (various prints): ₹850
+• Designer Clutch: ₹1300
+• Sling Bag (various prints): ₹980+
+
+═══════════════════════════════════════
+HORECA PRODUCTS (Hotel/Restaurant/Cafe)
+═══════════════════════════════════════
+
+TARGET: Hotels, Restaurants, Cafes, Bars, Resorts
+
+🍽️ COASTERS (HORECA)
+• Round/Square (100x5mm): ₹13
+• Round/Square with Veneer: ₹18
+• Hexagon with Veneer: ₹20
+• Bread Coaster: ₹50
+• Set of 4 Round with Case: ₹105
+• Set of 6 Square with Case: ₹135
+
+🍽️ TRIVETS (HORECA)
+• Fine Natural/Olive/Chocochip: ₹160
+• Square/Oval: ₹250
+• Web Printed/Hexagon: ₹180
+
+🍽️ TRAYS (HORECA)
+• Large Rectangular (16x8"): ₹680
+• Square (9x9"): ₹430
+• Round (13" diameter): ₹680
+• Large Chocochip (14x16"): ₹1150
+• Heart Shaped: ₹1150
+• Set of 3 Rectangular: ₹850
+
+🍽️ PLACEMATS (HORECA)
+• All designs (12x18"): ₹220
+• Coffee Tablemat: ₹150
+
+🍽️ BAR ACCESSORIES
+• 2-Compartment Bar Caddy: ₹400
+• 3-Compartment Bar Caddy: ₹850
+• Multi-Compartment: ₹950
+• Cutlery Holder: ₹850
+
+🍽️ WINE CHILLERS
+• Cylindrical Wine Chiller: ₹1500
+• Barrel Small: ₹1800
+• Barrel Large: ₹2200
+• Vintage Ice Chiller: ₹2500-₹5500
+
+🍽️ TISSUE BOXES & HOLDERS
+• Tissue Box (all finishes): ₹350
+• Tissue Holder: ₹170-₹250
+
+🍽️ NAPKIN RINGS
+• Round/Bow/Square (all designs): ₹63
+
+🍽️ HORECA MISCELLANEOUS
+• Menu & Payment Scanner: ₹280
+• Reserve Tag: ₹175
+• Bill Folder: ₹200
+• Menu Folder: ₹450
+• Reception Folder: ₹450
+• Room Key Holder: ₹170
+• Room Tag: ₹130
+• Shot Glass Tray: ₹550-₹1200
+
+🍽️ CORK LIGHTS (HORECA)
+• Various Designs: ₹540-₹1600
+• Hanging Lights: ₹400-₹1450
+
+🍽️ CORK STOOLS & FURNITURE
+• Stool Smoky Black: ₹5000
+• Cylindrical Stool: ₹6500
+• Coffee Table: ₹4500-₹5500
+
+HORECA BENEFITS:
+• Durable for daily commercial use
+• Premium natural aesthetic
+• Sustainable brand image
+• Custom branding available
+• Easy to maintain
+
+HORECA PRICING:
+• Recommended min: 100 pieces
+• Volume discounts: 300+
+• Custom branding: See BRANDING PRICING section (charged separately)
+• Screen printing most popular: ₹300 for 100 pcs, then ₹2/pc
+• UV/DTF for multi-color: ₹8-12/pc
+
+═══════════════════════════════════════
+CORPORATE GIFTING COMBOS (Ready Sets)
+═══════════════════════════════════════
+
+💼 BUDGET COMBOS (₹220-₹500)
+• COMBO 11: A5 Diary + Metal Pen = ₹220
+• COMBO 12: Printed Diary + Metal Pen = ₹325
+• COMBO 13: A6 Diary + 4 Coasters + Seed Pen + 2 Tea Lights = ₹340
+• COMBO 14: A5 Diary + 2 Coasters + Magnet Planter + Pen = ₹370
+• COMBO 16: Magnet Planter Set of 3 = ₹440
+• COMBO 17: Passport Holder + Keychain + Pen = ₹478
+
+💼 MID-RANGE COMBOS (₹500-₹1000)
+• COMBO 7: A5 Diary + Calendar + Keychain + Pen = ₹668
+• COMBO 8: A5 Diary + Magnet Planter + 4 Coasters + Pen = ₹595
+• COMBO 18: A5 Diary + 4 Coasters Case + Calendar + Keychain = ₹543
+• COMBO 22: Desktop Mat + A5 Diary + 4 Coasters + Magnet Planter + Keychain = ₹728
+• COMBO 5: A5 Diary + Desktop Organizer + Pen = ₹805
+• COMBO 24: A5 Diary + Pouch + Bark Planter + Pen Holder + 2 Tea Lights = ₹845
+• COMBO 25: Desktop Mat + A5 Diary + Calendar + Magnet Planter + Keychain + Pen = ₹853
+• COMBO 9: A5 Diary + Calendar + Card Holder + Pen Stand = ₹995
+
+💼 PREMIUM COMBOS (₹1000-₹1500)
+• COMBO 6: Printed Pouch + Magnet Planter + Card Holder + 4 Coasters = ₹1020
+• COMBO 30: A5 Diary + Desktop Organizer + Calendar + Bark Planter + Pen = ₹1050
+• COMBO 10: iPad Organizer + Glass Bottle + Calendar = ₹1080
+• COMBO 1: A5 Diary + Glass Bottle + Calendar + Card Holder + Pen = ₹1310
+• COMBO 2: iPad Organizer + Glass Bottle + Passport Holder = ₹1280
+• COMBO 3: Clock + Passport Holder + Desktop Organizer = ₹1380
+• COMBO 35: Tray + Desktop Organizer + 4 Premium Coasters + Planter + 3 Tea Lights = ₹1425
+
+💼 EXECUTIVE COMBOS (₹1500+)
+• COMBO 4: A5 Diary + Clock + Card Holder + Passport Holder = ₹1570
+• COMBO 36: Laptop Bag + A5 Diary + Keychain = ₹2045
+
+🎁 OCCASIONAL/HOME GIFT COMBOS
+• COMBO 37: 2 Bark Planters = ₹480
+• COMBO 38: Square Tray + 4 Coasters + Magnet Planter + 2 Tea Lights = ₹670
+• COMBO 40: Square Tray + 4 Coasters + Magnet Planter + 2 Tea Lights = ₹840
+• COMBO 41: Square Tray + 4 Coasters + Tabletop Planter + 2 Tea Lights = ₹1030
+• COMBO 42: Round Tray + 4 Coasters + Bark Planter + Tea Light = ₹1210
+• COMBO 43: Large Tray + 4 Coasters + Bark Planter + 4-in-1 Tea Light = ₹1210
+• COMBO 47: 4 Dining Mats + 2 Trivets + 4 Coasters + 2 Tea Lights = ₹1560
+
+═══════════════════════════════════════
+BRANDING/CUSTOMIZATION PRICING
+═══════════════════════════════════════
+
+🎨 SCREEN PRINTING (Single Color - Most Economical):
+• ₹300 for first 100 pieces
+• ₹2 per piece for 101+ pieces
+• Best for: Single color logos, bulk orders
+• Minimum: 100 pieces recommended
+
+🔲 LASER ENGRAVING (Black Color Only):
+• Premium finish, elegant look
+• Black color only
+• Pricing: On request based on quantity
+• Best for: Premium/luxury look
+
+🌈 UV PRINTING (Multi-Color):
+• ₹8-12 per piece (based on logo size)
+• Full color capability
+• Great for detailed logos
+• Best for: Colorful, detailed designs
+
+🌈 DTF PRINTING (Multi-Color):
+• ₹8-12 per piece (based on logo size)
+• Full color capability
+• Vibrant colors
+• Best for: Multi-color logos, photos
+
+CUSTOM CORPORATE SOLUTIONS:
+• Logo customization: Available for ANY quantity
+• Custom packaging available
+• Bulk discount on products: 15-25% (for 100+)
+• Branding charges are SEPARATE from product prices
+• Best for: Employee gifts, client appreciation, events, festivals, wedding favors
+
+═══════════════════════════════════════
+PRICING STRATEGY
+═══════════════════════════════════════
+
+**Retail (1-49):** Standard catalogue prices
+**Bulk (50-99):** "Good volume discounts available"
+**Corporate (100-299):** Wholesale + 20% discount
+**Large Orders (300+):** "Special pricing - let me share quote"
+**HORECA:** Custom commercial pricing
+
+ALWAYS ASK QUANTITY FIRST before quoting prices!
+
+═══════════════════════════════════════
+CUSTOMER QUALIFICATION
+═══════════════════════════════════════
+
+🏠 RETAIL: Personal use/gift → individual items
+🏢 CORPORATE: Company size/event → bulk, combos, branding
+🍽️ HORECA: Hotel/Restaurant/Cafe → durability, branding, commercial use
+🎁 GIFTING: Occasion/quantity → ready combos or custom
+
+═══════════════════════════════════════
+CONVERSATION STARTERS
+═══════════════════════════════════════
+
+**New Customer:**
+"Hey! 👋 Welcome! We make sustainable cork products. What brings you here - personal use, corporate gifting, or for your business?"
+
+**Corporate:**
+"Hi! Great! Are you looking for employee gifts, client appreciation, or event giveaways? We have ready combos from ₹220 to ₹2000+ 🎁"
+
+**HORECA:**
+"Hello! We work with many hotels & restaurants. Looking for table settings, decor, or branded amenities? We can add your logo! 🌿"
+
+**Pricing Question:**
+"Sure! Quick question - what quantity are you thinking? We have bulk discounts 😊"
+
+**Sample Request:**
+"Great idea! Which products - coasters, planters, organizers? We can arrange samples 👍"
+
+═══════════════════════════════════════
+COMMON Q&A
+═══════════════════════════════════════
+
+Q: "Is cork durable?"
+A: "Absolutely! Cork lasts years, water-resistant, doesn't crack. Used in wine bottles for centuries! 💪"
+
+Q: "Can you add logo?"
+A: "Yes! We offer screen printing (single color), laser engraving (black only), UV printing (multi-color), and DTF printing (multi-color). What's your preference?"
+
+Q: "How much for logo printing?"
+A: "Screen printing (single color): ₹300 for 100 pcs, then ₹2/pc. Laser engraving (black): Available on request. UV/DTF printing (multi-color): ₹8-12/pc based on logo size. What works for you?"
+
+Q: "Multi-color logo printing?"
+A: "For multi-color logos, we recommend UV or DTF printing at ₹8-12/pc depending on logo size. Great quality! How many pieces?"
+
+Q: "Single color logo only?"
+A: "Perfect! Screen printing is most economical at ₹300 for 100 pcs, then ₹2/pc. Or laser engraving for a premium black finish. Which do you prefer?"
+
+Q: "MOQ?"
+A: "No minimum for retail! For branding, screen printing works best from 100 pieces. What are you looking for?"
+
+Q: "Delivery?"
+A: "7-10 days standard. 15-20 days for bulk/custom with branding. Deadline?"
+
+Q: "Wedding favors?"
+A: "Yes! Planters & coasters are super popular. We have combos from ₹340-₹1500 (COMBO 13, 14, 37-43). How many guests?"
+
+Q: "Can you brand for hotels/restaurants?"
+A: "Absolutely! Screen printing is ₹300 for 100 pcs (then ₹2/pc), or UV/DTF printing at ₹8-12/pc for multi-color. Perfect for branded amenities! What quantity?"
+
+═══════════════════════════════════════
+RESPONSE RULES
+═══════════════════════════════════════
+
+1. Identify customer type FIRST
+2. ASK quantity before exact pricing
+3. Corporate/HORECA: emphasize bulk + customization
+4. Retail: focus on sustainability + quality
+5. Gifting: suggest combos with prices
+6. Keep SHORT (2-3 sentences)
+7. Qualify leads properly
+8. Sound natural & conversational
+9. Guide to next step: sample/quote/catalogue/call
+
+**CRITICAL PRICING RULE - MUST FOLLOW:**
+When someone asks "How much for [product]?" or "Price for [product]?" or "What's the price of [product]?":
+- ⚠️ NEVER give a price directly without knowing quantity
+- ⚠️ DO NOT say "₹X for 100 pieces" until you know their quantity
+- ALWAYS ask their quantity FIRST: "How many pieces are you looking for?"
+- Explain pricing varies by quantity (retail vs bulk)
+- Only give exact prices AFTER knowing quantity
+- For retail (1-10): Suggest Set options (e.g., "Set of 4 with Case")
+- For bulk (50+): Mention volume discounts available
+- Example: "The price varies by quantity. How many are you thinking - just a few pieces or larger quantity?"
+- Even if you see a price in the catalog, ASK QUANTITY FIRST before sharing any price
+
+**BRANDING/LOGO PRINTING RULE:**
+When someone asks about logo/branding:
+1. First ask: "Is it a single color or multi-color logo?"
+2. Based on their answer, recommend ONLY the best option:
+   - Single color → Screen printing (₹300 for 100 pcs, then ₹2/pc)
+   - Multi-color → UV/DTF printing (₹8-12/pc based on logo size)
+3. DO NOT list all 4 options unless customer specifically asks "what options do you have?"
+4. Keep it simple and consultative
+5. Example: "For single color logos, screen printing works great - ₹300 for 100 pieces, then ₹2/pc after that. What quantity?"
+
+**CATALOG/IMAGE/PICTURE REQUESTS:**
+When someone asks for pictures, images, catalog, or "can you share pics?":
+- NEVER say "I'm a text-based AI" or "I cannot share pictures"
+- ALWAYS respond professionally as a sales representative
+- Say: "I'd be happy to share our catalog! Please share your email or WhatsApp number and I'll send you detailed product images and our full catalog right away. Which products are you most interested in?"
+- Or: "Let me share our product catalog with you. What's the best way to send it - email or WhatsApp? Also, which category interests you most - coasters, planters, desk items, or gifting combos?"
+- Act like you CAN and WILL send the catalog, just need their contact method
+- Keep it natural and helpful, not technical
+
+REMEMBER: You KNOW all products, exact prices, and combos. Be confident! Qualify customers. This is WhatsApp - keep it SHORT!`
+      },
+      ...context.slice(-6), // Last 6 messages for context
+      {
+        role: 'user',
+        content: message
+      }
+    ];
+
+    // Call Groq API
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: messages,
+      temperature: 0.7,
+      max_tokens: 500,
+      top_p: 1,
+      stream: false
+    });
+
+    const agentResponse = completion.choices[0]?.message?.content || "I'm here to help!";
+    console.log('✅ Agent response:', agentResponse);
+    return agentResponse;
+
+  } catch (error) {
+    console.error('❌ Error invoking Groq agent:', error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+    // Professional error message for customers
+    return "Thank you for your message! We're experiencing high volume right now. Please try again in 15-20 minutes, or feel free to share your email and I'll send you our catalog and product details right away. 🌿";
+  }
+}
+
+// Send WhatsApp message
+async function sendWhatsAppMessage(to, text) {
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'text',
+        text: { body: text }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${CONFIG.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    console.log('✅ Message sent successfully');
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error sending WhatsApp message:', error.response?.data || error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    throw error;
+  }
+}
+
+// Send typing indicator
+async function sendTypingIndicator(to) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'text',
+        text: { body: '...' }
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${CONFIG.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+  } catch (error) {
+    console.error('⚠️ Error sending typing indicator:', error.message);
+  }
+}
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    services: {
+      mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      queue: messageQueue ? 'active' : 'inactive'
+    }
+  };
+
+  res.json(health);
+});
+
+// Stats endpoint
+app.get('/stats', async (req, res) => {
+  try {
+    const totalCustomers = await Customer.countDocuments();
+    const activeConversations = await Conversation.countDocuments({ status: 'active' });
+    const queueStats = await messageQueue.getJobCounts();
+
+    res.json({
+      customers: totalCustomers,
+      activeConversations,
+      queue: queueStats
+    });
+  } catch (error) {
+    console.error('Error getting stats:', error);
+    res.status(500).json({ error: 'Error retrieving stats' });
+  }
+});
+
+// Sentry error handler (must be after all routes)
+if (CONFIG.SENTRY_DSN) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+
+  await messageQueue.close();
+  await mongoose.connection.close();
+
+  process.exit(0);
+});
+
+// Start server
+app.listen(CONFIG.PORT, () => {
+  console.log(`\n🚀 WhatsApp-Claude Production Server`);
+  console.log(`📡 Server running on port ${CONFIG.PORT}`);
+  console.log(`🔗 Webhook URL: https://your-domain.com/webhook`);
+  console.log(`🏥 Health check: http://localhost:${CONFIG.PORT}/health`);
+  console.log(`📊 Stats: http://localhost:${CONFIG.PORT}/stats\n`);
+});
