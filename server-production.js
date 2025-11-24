@@ -280,12 +280,73 @@ async function connectQueue() {
     // Test the connection
     await messageQueue.isReady();
     console.log('✅ Message queue initialized');
+
+    // Set up message processor
+    setupMessageProcessor();
   } catch (err) {
     console.error('❌ Redis connection error:', err.message);
     console.log('⚠️  Continuing without queue - messages will be processed directly');
     messageQueue = null;
     if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
   }
+}
+
+// Setup message processor (only called when queue is available)
+function setupMessageProcessor() {
+  if (!messageQueue) return;
+
+  messageQueue.process('process-message', async (job) => {
+    const { from, messageBody, messageId } = job.data;
+
+    try {
+      console.log(`🔄 Processing message from queue: ${from}`);
+
+      // Store customer message in database (non-blocking - don't await)
+      storeCustomerMessage(from, messageBody, messageId).catch(err => {
+        console.log('⚠️ MongoDB unavailable - continuing without history');
+      });
+
+      // Send typing indicator (non-blocking)
+      sendTypingIndicator(from).catch(err => {
+        console.log('⚠️ Typing indicator failed - continuing');
+      });
+
+      // Get conversation context with timeout fallback
+      let context = [];
+      try {
+        const contextPromise = getConversationContext(from);
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Context timeout')), 2000)
+        );
+        context = await Promise.race([contextPromise, timeoutPromise]);
+      } catch (error) {
+        console.log('⚠️ Context unavailable - using empty context');
+        context = [];
+      }
+
+      // Process message with Claude agent (ALWAYS runs)
+      const agentResponse = await processWithClaudeAgent(messageBody, from, context);
+
+      // Send response back to customer
+      await sendWhatsAppMessage(from, agentResponse);
+
+      // Store agent response in database (non-blocking - don't await)
+      storeAgentMessage(from, agentResponse).catch(err => {
+        console.log('⚠️ MongoDB unavailable - response sent but not stored');
+      });
+
+      console.log('✅ Message processed successfully');
+    } catch (error) {
+      console.error('❌ Error processing message:', error);
+      if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+
+      // Send error message to customer
+      await sendWhatsAppMessage(
+        from,
+        "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
+      );
+    }
+  });
 }
 
 // Rate limiting middleware
@@ -395,62 +456,6 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
   } catch (error) {
     console.error('❌ Error processing webhook:', error);
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
-  }
-});
-
-// Process messages from queue
-messageQueue.process('process-message', async (job) => {
-  const { from, messageBody, messageId } = job.data;
-
-  try {
-    console.log(`🔄 Processing message from queue: ${from}`);
-
-    // Store customer message in database (non-blocking - don't await)
-    storeCustomerMessage(from, messageBody, messageId).catch(err => {
-      console.log('⚠️ MongoDB unavailable - continuing without history');
-    });
-
-    // Send typing indicator (non-blocking)
-    sendTypingIndicator(from).catch(err => {
-      console.log('⚠️ Typing indicator failed - continuing');
-    });
-
-    // Get conversation context with timeout fallback
-    let context = [];
-    try {
-      const contextPromise = getConversationContext(from);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Context timeout')), 2000)
-      );
-      context = await Promise.race([contextPromise, timeoutPromise]);
-    } catch (error) {
-      console.log('⚠️ Context unavailable - using empty context');
-      context = [];
-    }
-
-    // Process message with Claude agent (ALWAYS runs)
-    const agentResponse = await processWithClaudeAgent(messageBody, from, context);
-
-    // Send response back to customer
-    await sendWhatsAppMessage(from, agentResponse);
-
-    // Store agent response in database (non-blocking - don't await)
-    storeAgentMessage(from, agentResponse).catch(err => {
-      console.log('⚠️ MongoDB unavailable - response sent but not stored');
-    });
-
-    console.log('✅ Message processed successfully');
-  } catch (error) {
-    console.error('❌ Error processing message:', error);
-    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
-
-    // Send error message to customer
-    await sendWhatsAppMessage(
-      from,
-      "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
-    );
-
-    throw error; // Re-throw to trigger retry
   }
 });
 
