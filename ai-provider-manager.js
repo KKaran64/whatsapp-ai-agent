@@ -219,18 +219,18 @@ class AIProviderManager {
       return { provider: 'cache', response: cachedResponse };
     }
 
-    // 2. Try Groq (Primary - FREE)
-    try {
-      return await this.tryGroq(systemPrompt, conversationHistory, userMessage);
-    } catch (error) {
-      console.log('❌ Groq failed:', error.message);
-    }
-
-    // 3. Try Gemini (Secondary - FREE)
+    // 2. Try Gemini FIRST (Primary - FREE & More Reliable)
     try {
       return await this.tryGemini(systemPrompt, conversationHistory, userMessage);
     } catch (error) {
       console.log('❌ Gemini failed:', error.message);
+    }
+
+    // 3. Try Groq (Secondary - FREE but rate limits more)
+    try {
+      return await this.tryGroq(systemPrompt, conversationHistory, userMessage);
+    } catch (error) {
+      console.log('❌ Groq failed:', error.message);
     }
 
     // 4. Try Claude (Tertiary - PAID but reliable)
