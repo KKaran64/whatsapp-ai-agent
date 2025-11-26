@@ -378,57 +378,29 @@ Table Lamps Small/Medium/Large (₹1,200-₹1,800), Hanging Light Pendant (₹1,
 HORECA (Hotels, Restaurants, Cafes) PRODUCTS
 ═══════════════════════════════════════
 
-🟤 CORK HORECA ACCESSORIES
-═══════════════════════════════════════
-• Cork Bar Caddy: ₹380
-• Cork Bill Folder: ₹240
-• Cork Menu Cover Small: ₹180
-• Cork Menu Cover Large: ₹240
-• Cork Napkin Holder: ₹220
-• Cork Coaster (bulk HORECA): ₹18-45 (varies by design)
-• Cork Placemat (bulk HORECA): ₹35
-• Cork Serving Tray HORECA: ₹220-300
-• Cork Hot Pot Holder HORECA: ₹320
-• Cork Display Stand: ₹350
-• Cork Tray for Room Service: ₹280
-• Cork Amenity Tray: ₹240
+**CORK COASTERS & TRIVETS** (Round/Square 100mm, Hexagon, Bread Shape, Belly, Leaf, UV Print, Veneer): Set of 4/6 with Case, Natural/Olive/Chocochip/Striped finishes. Cork Trivets 7" (Natural/Olive/Chocochip/Red Assiago/Striped/Web Print), Square 18cm, Oval 20x17cm
 
-🏨 FOR HOTELS:
-• Cork Coasters (logo branded): ₹22-50 + branding
-• Cork Placemats: ₹38 + branding
-• Cork Room Amenity Trays: ₹220-280 + branding
-• Cork Menu Covers: ₹180-240 + branding
-• Cork Hot Pot Holders: ₹320 + branding
-• Cork Bill Folders: ₹240 + branding
-• Cork Key Card Holder: ₹120 + branding
+**CORK PREMIUM TRAYS** (Natural Finish 12-18", Square 9x9", Rectangular, Round 13-16", Heart Shape, Hexagon, Burnt Cork): Abstract, Olive, Red Assiago, Chocochip, Striped designs. Small Rect 23x14cm, Large 14x16"
 
-🍽️ FOR RESTAURANTS:
-• Cork Coasters (disposable/reusable): ₹22-50 + branding
-• Cork Placemats: ₹38 + branding
-• Cork Menu Covers: ₹180-240 + branding
-• Cork Trivets/Hot Pot Holders: ₹320 + branding
-• Cork Serving Trays: ₹220-260 + branding
-• Cork Bill Folders: ₹240 + branding
-• Cork Napkin Holders: ₹220 + branding
-• Cork Bar Caddies: ₹380 + branding
+**CORK TRAYS WITH MDF BASE** (Round 13", 9", Square 9x9", Rect Sets): Smoky, Natural, Chocochip, Woody finishes. Set of 3 Rect Trays (25x15, 30x20, 36x25cm)
 
-☕ FOR CAFES:
-• Cork Coasters (branded): ₹22-50 + branding
-• Cork Cup Sleeves: On request + branding
-• Cork Display Trays: ₹220-260 + branding
-• Cork Wall-mounted Planters: ₹340-560 + branding
-• Cork Menu Boards: ₹350 + branding
-• Cork Napkin Holders: ₹220 + branding
+**CORK PLACEMATS** (18x12", 5mm thick): Fine Natural, Olive, Chocochip, Striped, Natural, Red Assiago, Textured, Montage, Oval. Coffee Mat also available
 
-HORECA BENEFITS:
-• Branding prominently displays your hotel/restaurant/cafe logo
-• 100% natural, sustainable, eco-friendly image
-• Unique aesthetic appeal
-• Durable and long-lasting
-• Bulk discounts available (15-25% for 100+)
-• Quick turnaround times
+**CORK BAR ACCESSORIES**: 2-Compartment Bar Caddy, 3-Compartment Bar Caddy, Multi-Compartment Caddy, Cutlery Holder (28x10x11cm), Compact Bar Caddy
 
-KEY PHRASE TO HIGHLIGHT WHEN RELEVANT: "Your logo/branding prominently displayed on premium eco-friendly cork products"
+**CORK ICE CHILLERS & WINE CHILLERS**: Cylindrical Wine Chiller (17x15cm), Barrel Wine Chiller Small (19x16.5cm), Barrel Large (26x24cm), Vintage Ice Chiller (20x19cm), Vintage Large (30x23cm)
+
+**CORK TISSUE BOXES & HOLDERS**: Natural Small (10x5.5x2.75"), Large (10x5.5x4"), Olive, Fine Natural, Burnt Cork. Tissue Holders (15x6.5x5.5cm): Natural, Smoky Black, Choco Chip, Woody, Fine Natural, Burnt Cork
+
+**CORK NAPKIN RINGS** (5x3cm, 5x5x3cm): Round Smoky/Woody, Choco Chip, Fine Grain, Square Woody, Bow Shaped (26x4cm)
+
+**CORK MISCELLANEOUS**: Menu & Payment Scanner (QR code, 16x13x5cm), Reserve Tag, Bill Folder, Reception Folder, Egg Trays (Burnt Cork/Natural), Shot Glass Trays (30x15cm, with/without handle), Room Tags (22x7.5cm), Room Key Holders
+
+**CORK LIGHTS** (9 Lamp Designs, 9 Hanging Lights): Table Lamps (Natural/Chocochip/Olive finishes), Hanging Pendants (Cylindrical, Chocochip, Fine Grain, Gong Shape, Red Assiago, Small Natural/Choco/Fine)
+
+**CORK STOOLS & FURNITURE**: Cork Stool Smoky Black, Cork Stool Cylindrical, Bar Stool (with metal frame), Cork Round Coffee Table (with metal frame)
+
+**HORECA BENEFITS**: Branding with logo, 100% natural & sustainable, unique aesthetic, durable, bulk discounts 15-25% for 100+, quick turnaround. Perfect for hotels, restaurants, cafes seeking eco-friendly premium tableware
 
 ═══════════════════════════════════════
 RESPONSE RULES
