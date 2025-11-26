@@ -32,8 +32,8 @@ class AIProviderManager {
 
     // Common queries with instant responses
     const commonResponses = {
-      'hi': '👋 Welcome! We make sustainable cork products. What brings you here - personal use, corporate gifting, or for your business?',
-      'hello': '👋 Hello! We specialize in eco-friendly cork products. Are you looking for retail items, corporate gifts, or HORECA solutions?',
+      'hi': '👋 Welcome to 9 Cork Sustainable Products! What brings you here - personal use, corporate gifting, or for your business?',
+      'hello': '👋 Hello! I\'m from 9 Cork Sustainable Products. Are you looking for retail items, corporate gifts, or HORECA solutions?',
       'price': 'I\'d love to help with pricing! What product are you interested in, and how many pieces are you looking for?',
       'catalog': 'I\'d be happy to share our catalog! Please share your email or WhatsApp number and I\'ll send you detailed product images right away. 🌿',
       'catalogue': 'I\'d be happy to share our catalog! Please share your email or WhatsApp number and I\'ll send you detailed product images right away. 🌿',
