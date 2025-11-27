@@ -179,35 +179,64 @@ class AIProviderManager {
 
     const msg = userMessage.toLowerCase();
 
-    // Product inquiries
+    // Greetings
+    if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey')) {
+      return "👋 Welcome to 9 Cork Sustainable Products! We make premium eco-friendly cork products. Are you looking for retail items, corporate gifts, or HORECA solutions? 🌿";
+    }
+
+    // Product inquiries - HORECA
+    if (msg.includes('horeca') || msg.includes('hotel') || msg.includes('restaurant') || msg.includes('cafe')) {
+      return "Great! We specialize in HORECA cork products - coasters, placemats, serving trays, bar caddies, tissue holders, napkin rings, and more. What's your requirement? Share quantity and I'll help! 🏨";
+    }
+
+    // Product inquiries - Coasters
     if (msg.includes('coaster')) {
-      return "We have a wide range of cork coasters starting from ₹22 for 100 pieces. What quantity are you looking for? 🌿";
+      return "We have 15+ cork coaster designs (round, square, hexagon, with veneers) starting from ₹22-120 for 100 pieces. What quantity do you need and is this for personal or business use? 🌿";
     }
+
+    // Product inquiries - Planters
     if (msg.includes('planter')) {
-      return "Our cork planters are perfect for eco-friendly spaces, starting at ₹130. How many pieces do you need? 🌱";
+      return "Our cork planters range from ₹130-900 (test tube planters, table top, magnetic, bark planters). How many pieces and what size are you looking for? 🌱";
     }
-    if (msg.includes('diary') || msg.includes('diaries')) {
-      return "We offer premium cork diaries starting from ₹90 for A6 and ₹135 for A5. What quantity are you considering? 📔";
+
+    // Product inquiries - Diaries
+    if (msg.includes('diary') || msg.includes('diaries') || msg.includes('notebook')) {
+      return "We offer premium cork diaries: A6 (₹90), A5 (₹135), Printed A5 (₹240) for 100 pieces. What quantity and size do you need? 📔";
+    }
+
+    // Product inquiries - Trays
+    if (msg.includes('tray')) {
+      return "We have 30+ cork tray designs - serving trays, placemats, premium trays with MDF base (₹150-600). For HORECA or personal use? What quantity? 🍽️";
+    }
+
+    // Product inquiries - Corporate/Bulk
+    if (msg.includes('corporate') || msg.includes('bulk') || msg.includes('gifting')) {
+      return "Perfect! We specialize in corporate gifting. We offer combo sets, branded products with logo, and bulk discounts (15-25% off for 100+ pieces). What products interest you? 🎁";
     }
 
     // Pricing inquiries
-    if (msg.includes('price') || msg.includes('cost')) {
-      return "I'd love to help with pricing! What product are you interested in, and how many pieces are you looking for?";
+    if (msg.includes('price') || msg.includes('cost') || msg.includes('rate')) {
+      return "I'd love to help with pricing! Please share: (1) Which product? (2) Quantity needed? (3) Do you need logo branding? This helps me give you accurate pricing! 💰";
     }
 
     // Logo/branding
-    if (msg.includes('logo') || msg.includes('branding') || msg.includes('customiz')) {
-      return "Yes! We can add your logo. Is it a single color or multi-color logo? Also, what quantity are you thinking?";
+    if (msg.includes('logo') || msg.includes('branding') || msg.includes('customiz') || msg.includes('print')) {
+      return "Yes! We can add your logo on any product. Single color logos are standard, multi-color is available too. What product and quantity are you considering? 🎨";
     }
 
     // Catalog
-    if (msg.includes('catalog') || msg.includes('picture') || msg.includes('image')) {
-      return "I'd be happy to share our catalog! Please share your email and I'll send you detailed product images right away. 🌿";
+    if (msg.includes('catalog') || msg.includes('catalogue') || msg.includes('picture') || msg.includes('image') || msg.includes('photo')) {
+      return "I'd be happy to share our full catalog! Please share your email or WhatsApp number and I'll send detailed product images and price lists right away. 📸🌿";
     }
 
-    // Default
+    // Contact/Email
+    if (msg.includes('email') || msg.includes('contact') || msg.includes('phone') || msg.includes('whatsapp')) {
+      return "📞 You can reach us at:\n• WhatsApp: +91 70090 52784\n• Email: info@9cork.com\n• Website: www.9cork.com\n\nHow can I help you today? 🌿";
+    }
+
+    // Default - More helpful fallback
     this.stats.fallback.success++;
-    return "Thank you for your message! I'm currently experiencing technical difficulties. Please share your email or contact details, and I'll get back to you with full product information within a few hours. 🌿";
+    return "Thanks for contacting 9 Cork Sustainable Products! 🌿\n\nWe make premium cork coasters, diaries, planters, trays, and HORECA products.\n\nTo help you better, please share:\n1. Which product interests you?\n2. Quantity needed?\n3. For personal use, corporate gifting, or HORECA?\n\nOr share your email for our full catalog! 📧";
   }
 
   // Main method: Try all providers with fallbacks
