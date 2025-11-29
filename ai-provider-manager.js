@@ -9,11 +9,12 @@ class AIProviderManager {
   constructor(config) {
     this.config = config;
 
-    // Initialize Groq with multiple keys support
+    // Initialize Groq with multiple keys support (up to 4 keys)
     this.groqKeys = [];
     if (config.GROQ_API_KEY) this.groqKeys.push(config.GROQ_API_KEY);
     if (config.GROQ_API_KEY_2) this.groqKeys.push(config.GROQ_API_KEY_2);
     if (config.GROQ_API_KEY_3) this.groqKeys.push(config.GROQ_API_KEY_3);
+    if (config.GROQ_API_KEY_4) this.groqKeys.push(config.GROQ_API_KEY_4);
 
     this.groqClients = this.groqKeys.map(key => new Groq({ apiKey: key }));
     this.currentGroqIndex = 0;
