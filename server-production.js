@@ -523,10 +523,10 @@ function setupMessageProcessor() {
         console.log('⚠️ MongoDB unavailable - continuing without history');
       });
 
-      // Send typing indicator (non-blocking)
-      sendTypingIndicator(from).catch(err => {
-        console.log('⚠️ Typing indicator failed - continuing');
-      });
+      // Typing indicator disabled - WhatsApp Business API doesn't support it
+      // sendTypingIndicator(from).catch(err => {
+      //   console.log('⚠️ Typing indicator failed - continuing');
+      // });
 
       // Get conversation context with timeout fallback
       let context = [];
