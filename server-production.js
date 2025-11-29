@@ -307,7 +307,7 @@ Wall Clocks (Round/Square: ₹500), Table Clock (₹500), Desk Calendar with Pen
 
 🟤 CORK PLANTERS (₹130-₹900):
 • **TEST TUBE PLANTERS**: Bark Planter (₹180), Test Tube Planter Single (₹130), Test Tube Planter Set of 3 (₹280), Test Tube Planter Set of 5 (₹400), Wall-Mounted Test Tube Planters (₹340-₹560), 3 Hole Planter (₹350), 4 Hole Planter (₹400), Frame Planter (₹450), 3 Beaker Planter (₹380), XOXO Planter (₹420), U-Shape Planter (₹320)
-• **SMALL FRIDGE MAGNET PLANTER** (₹220) - 16.5 X 4.5 X 4.5 CMS - Perfect for corporate gifting! ← WE DEFINITELY HAVE THIS!
+• **SMALL FRIDGE MAGNET PLANTER** (₹130) - 16.5 X 4.5 X 4.5 CMS - Perfect for corporate gifting! ← WE DEFINITELY HAVE THIS!
 • **TABLE TOP PLANTERS** (10 X 10 CMS): Box Print (₹300), Bohemian Print (₹320), Multicolored (₹310), Feather (₹300), Olive (₹280), Chocochip (₹290), Abstract (₹300), Hexa (₹310), Striped (₹300), Natural Grain (₹280), Aqua (₹320), Round Abstract (₹330), Flat Planter Dia 15cm (₹350), Triplanter (₹560), Pink Planter (₹340)
 
 🟤 CORK PHOTO FRAMES (₹280-₹350):
