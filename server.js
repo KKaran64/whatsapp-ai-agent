@@ -54,8 +54,8 @@ app.post('/webhook', async (req, res) => {
 
       // Only process text messages
       if (messageType === 'text' && messageBody) {
-        // Send typing indicator
-        await sendTypingIndicator(from);
+        // Typing indicator disabled - WhatsApp Business API doesn't support it
+        // await sendTypingIndicator(from);
 
         // Process message with Claude Code agent
         const agentResponse = await processWithClaudeAgent(messageBody, from);
