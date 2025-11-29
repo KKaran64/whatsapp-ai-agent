@@ -9,14 +9,22 @@ class AIProviderManager {
   constructor(config) {
     this.config = config;
 
-    // Initialize providers
-    this.groq = new Groq({ apiKey: config.GROQ_API_KEY });
+    // Initialize Groq with multiple keys support
+    this.groqKeys = [];
+    if (config.GROQ_API_KEY) this.groqKeys.push(config.GROQ_API_KEY);
+    if (config.GROQ_API_KEY_2) this.groqKeys.push(config.GROQ_API_KEY_2);
+    if (config.GROQ_API_KEY_3) this.groqKeys.push(config.GROQ_API_KEY_3);
+
+    this.groqClients = this.groqKeys.map(key => new Groq({ apiKey: key }));
+    this.currentGroqIndex = 0;
+
+    // Initialize other providers
     this.anthropic = config.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }) : null;
     this.geminiApiKey = config.GEMINI_API_KEY;
 
     // Track usage and failures
     this.stats = {
-      groq: { success: 0, failures: 0, lastFailure: null },
+      groq: { success: 0, failures: 0, lastFailure: null, keyRotations: 0 },
       gemini: { success: 0, failures: 0, lastFailure: null },
       claude: { success: 0, failures: 0, lastFailure: null },
       fallback: { success: 0 }
@@ -24,6 +32,17 @@ class AIProviderManager {
 
     // Common query cache (in-memory - could use Redis)
     this.responseCache = new Map();
+  }
+
+  // Get next Groq client (round-robin rotation)
+  getNextGroqClient() {
+    if (this.groqClients.length === 0) return null;
+    const client = this.groqClients[this.currentGroqIndex];
+    this.currentGroqIndex = (this.currentGroqIndex + 1) % this.groqClients.length;
+    if (this.currentGroqIndex === 0 && this.groqClients.length > 1) {
+      this.stats.groq.keyRotations++;
+    }
+    return client;
   }
 
   // Check cache for common queries
@@ -49,7 +68,7 @@ class AIProviderManager {
     // Check cache
     if (this.responseCache.has(normalizedMsg)) {
       const cached = this.responseCache.get(normalizedMsg);
-      if (Date.now() - cached.timestamp < 3600000) { // 1 hour cache
+      if (Date.now() - cached.timestamp < 10800000) { // 3 hour cache (extended from 1 hour)
         return cached.response;
       }
     }
@@ -57,43 +76,62 @@ class AIProviderManager {
     return null;
   }
 
-  // Try Groq (PRIMARY - Free)
+  // Try Groq (PRIMARY - Free) with automatic key rotation
   async tryGroq(systemPrompt, conversationHistory, userMessage) {
-    try {
-      console.log('🔵 Trying Groq...');
+    const maxRetries = this.groqClients.length;
+    let lastError = null;
 
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...conversationHistory,
-        { role: 'user', content: userMessage }
-      ];
-
-      const completion = await this.groq.chat.completions.create({
-        messages,
-        model: 'llama-3.3-70b-versatile',
-        temperature: 0.7,
-        max_tokens: 500,
-        top_p: 1,
-        stream: false
-      });
-
-      const response = completion.choices[0]?.message?.content || "I'm here to help!";
-      this.stats.groq.success++;
-
-      // Cache the response
-      this.cacheResponse(userMessage, response);
-
-      return { provider: 'groq', response };
-    } catch (error) {
-      this.stats.groq.failures++;
-      this.stats.groq.lastFailure = new Date();
-
-      if (error.message?.includes('rate_limit')) {
-        console.log('⚠️ Groq rate limit hit');
-        throw new Error('RATE_LIMIT');
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const groqClient = this.getNextGroqClient();
+      if (!groqClient) {
+        throw new Error('No Groq API keys configured');
       }
-      throw error;
+
+      try {
+        console.log(`🔵 Trying Groq (key ${this.currentGroqIndex || this.groqClients.length}/${this.groqClients.length})...`);
+
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...conversationHistory,
+          { role: 'user', content: userMessage }
+        ];
+
+        const completion = await groqClient.chat.completions.create({
+          messages,
+          model: 'llama-3.3-70b-versatile',
+          temperature: 0.7,
+          max_tokens: 500,
+          top_p: 1,
+          stream: false
+        });
+
+        const response = completion.choices[0]?.message?.content || "I'm here to help!";
+        this.stats.groq.success++;
+
+        // Cache the response
+        this.cacheResponse(userMessage, response);
+
+        return { provider: 'groq', response };
+      } catch (error) {
+        lastError = error;
+
+        if (error.message?.includes('rate_limit')) {
+          console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rate limit hit, trying next key...`);
+          continue; // Try next key
+        } else {
+          // Non-rate-limit error, don't retry
+          this.stats.groq.failures++;
+          this.stats.groq.lastFailure = new Date();
+          throw error;
+        }
+      }
     }
+
+    // All keys exhausted
+    this.stats.groq.failures++;
+    this.stats.groq.lastFailure = new Date();
+    console.log('⚠️ All Groq keys rate limited');
+    throw new Error('RATE_LIMIT');
   }
 
   // Try Google Gemini (SECONDARY - Free)
