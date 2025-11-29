@@ -333,10 +333,23 @@ Yoga Mat (₹1,200), Yoga Block Set of 2 (₹450), Yoga Wheel (₹850)
 🟤 CORK SPECIALTY ITEMS (₹45-₹450):
 Wall Décor Round/Hexagon (₹380-₹420), Soap Dispenser (₹340), Toothbrush Holder (₹180), Bowls Small/Medium/Large (₹220-₹340), Christmas Tree Décor (₹450), Key Organizer (₹240), Cork Metal Pen (₹45), Seed Pen & Pencil Set (₹65), Borosil Glass Bottle with Cork Veneer (₹180)
 
-🟤 CORK GIFTING COMBOS (48 professional combos):
-• Popular: Coaster Set + Planter (₹230), Diary + Pen + Coaster (₹300), Desk Set Complete (₹650), Photo Frame + Tea Lights (₹380), Laptop Sleeve + Wallet + Card Holder (₹850)
-• Premium: Executive Desk Set (₹1,150), Yoga Combo (₹2,200), Complete Gifting Set (₹720), Home Décor Combo (₹850), Corporate Gifting Deluxe (₹1,450)
-• 38 additional combos available for corporate gifting, events, and special occasions
+🟤 CORK GIFTING COMBOS - 48 PROFESSIONAL COMBOS AVAILABLE:
+
+📦 CORPORATE GIFTING COMBOS (Combo 01-36):
+• Combo 01-05 (5-item sets): Cork A5 Diary + Glass Bottle + Calendar + Card Holder + Pen | Cork Desktop Organizer 3-in-1 + Coasters Set + Tray + Planter + Diary | Cork Laptop Bag + Wallet + Passport Holder + Card Holder + Keychain
+• Combo 06-10 (4-item sets): Cork Printed Pouch + Magnetic Planter + Card Holder + Coasters | Cork Tray + Tea Light Set + Wall Décor + Coasters | Cork Yoga Mat + 2 Blocks + Wheel | Cork Wine Holder + 4 Coasters + Bottle Opener + Stopper
+• Combo 11-15 (3-item sets): Cork Diary A5 + Pen + Coasters Set | Cork Laptop Sleeve + Mouse Pad + Coasters | Set of 3 Magnetic Test Tube Planters | Cork Photo Frame + Tea Lights + Wall Décor
+• Combo 16-20 (2-item sets): Cork Tray + 4 Coasters | Cork Planter + Coasters Set | Cork Diary + Metal Pen | Cork Card Holder + Keychain | Cork Laptop Bag + Wallet
+• Combo 21-25 (Premium 6-8 item sets): Executive Desk Set (Organizer + Tray + Calendar + Pen Holder + Coasters + Diary) | Complete Home Décor (Planters + Frames + Tea Lights + Wall Art + Trays + Coasters)
+• Combo 26-30 (Eco Sets): Cork Seed Pen & Pencil Set + Diary + Planter + Coasters | Cork Glass Bottle + Lunch Box + Coasters + Tray | Cork Yoga Accessories Full Set
+• Combo 31-36 (Deluxe 10-12 item sets): Ultimate Corporate Gift (Laptop Bag + Desktop Organizer + Diary + Calendar + Tray + Coasters + Planters + Pen Set + Card Holder + Wallet + Keychain + Photo Frame)
+
+🎁 OCCASIONAL GIFT COMBOS (Combo 37-48):
+• Combo 37-40 (Festival Specials): Diwali Set (Tea Lights + Décor + Tray + Coasters) | Christmas Set (Tree Décor + Planters + Frames + Tea Lights) | New Year Set (Calendar + Diary + Desk Organizer + Pen)
+• Combo 41-44 (Personal Gifting): Women's Special (Wallet + Passport Holder + Card Holder + Keychain) | Men's Special (Laptop Bag + Wallet + Card Holder + Keychain) | Student Set (Diary + Pen Set + Pencil + Card Holder)
+• Combo 45-48 (Home & Lifestyle): Kitchen Set (Trays + Coasters + Bowls + Bottle) | Wellness Set (Yoga Mat + Blocks + Wheel + Water Bottle) | Minimalist Set (Planter + Frame + Tea Lights + Coasters)
+
+💰 PRICING: Most combos range ₹230-₹2,200 depending on items included. Request specific combo number for exact pricing and customization options.
 
 ═══════════════════════════════════════
 BRANDING/CUSTOMIZATION PRICING
