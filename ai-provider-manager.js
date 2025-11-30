@@ -212,85 +212,38 @@ class AIProviderManager {
     }
   }
 
-  // Fallback to rule-based responses
+  // Fallback to rule-based responses (ONLY for greetings and educational questions)
   getFallbackResponse(userMessage) {
-    console.log('⚪ Using fallback response...');
+    console.log('⚪ Using LIMITED fallback response (AI providers failed)...');
 
     const msg = userMessage.toLowerCase();
 
-    // Cork material knowledge questions
+    // Cork material knowledge questions (educational - OK for fallback)
     if (msg.includes('what is cork') || msg.includes('what\'s cork') || (msg.includes('cork') && (msg.includes('material') || msg.includes('made of') || msg.includes('about cork')))) {
       return "Cork is the bark of the Cork Oak tree - harvested sustainably without cutting the tree down! The bark regenerates every 9-10 years, and each harvest helps the tree absorb MORE CO2. It's 100% natural, biodegradable, water-resistant, and durable. What draws you to cork products? 🌳";
     }
 
-    // Sustainability questions
+    // Sustainability questions (educational - OK for fallback)
     if (msg.includes('sustainability') || msg.includes('sustainable') || msg.includes('eco-friendly') || msg.includes('environment')) {
       return "That's exactly why cork is special! Cork oak trees absorb 5x more CO2 after each harvest, and forests sequester 14 million tons annually. Unlike plastic (450+ years to decompose), cork biodegrades naturally in months. Are you exploring cork for personal use or corporate gifting? 🌍";
     }
 
-    // Durability questions
-    if (msg.includes('durable') || msg.includes('durability') || msg.includes('last') || msg.includes('quality')) {
-      return "Cork is incredibly durable - naturally water-resistant, heat-resistant, and anti-microbial. Our products last for years with regular use. The bark is designed by nature to protect trees for 200+ years! What will you be using these for? 💪";
-    }
-
-    // Greetings
-    if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey')) {
+    // Greetings ONLY (no context needed)
+    if (msg === 'hi' || msg === 'hello' || msg === 'hey') {
       return "👋 Welcome to 9 Cork Sustainable Products! We make premium eco-friendly cork products. Are you looking for retail items, corporate gifts, or HORECA solutions? 🌿";
     }
 
-    // Product inquiries - HORECA
-    if (msg.includes('horeca') || msg.includes('hotel') || msg.includes('restaurant') || msg.includes('cafe')) {
-      return "Great! We specialize in HORECA cork products - coasters, placemats, serving trays, bar caddies, tissue holders, napkin rings, and more. What's your requirement? Share quantity and I'll help! 🏨";
-    }
-
-    // Product inquiries - Coasters
-    if (msg.includes('coaster')) {
-      return "We have 15+ cork coaster designs (round, square, hexagon, with veneers) starting from ₹22-120 for 100 pieces. What quantity do you need and is this for personal or business use? 🌿";
-    }
-
-    // Product inquiries - Planters
-    if (msg.includes('planter')) {
-      return "Our cork planters range from ₹130-900 (test tube planters, table top, magnetic, bark planters). How many pieces and what size are you looking for? 🌱";
-    }
-
-    // Product inquiries - Diaries
-    if (msg.includes('diary') || msg.includes('diaries') || msg.includes('notebook')) {
-      return "We offer premium cork diaries: A6 (₹90), A5 (₹135), Printed A5 (₹240) for 100 pieces. What quantity and size do you need? 📔";
-    }
-
-    // Product inquiries - Trays
-    if (msg.includes('tray')) {
-      return "We have 30+ cork tray designs - serving trays, placemats, premium trays with MDF base (₹150-600). For HORECA or personal use? What quantity? 🍽️";
-    }
-
-    // Product inquiries - Corporate/Bulk
-    if (msg.includes('corporate') || msg.includes('bulk') || msg.includes('gifting')) {
-      return "Perfect! We specialize in corporate gifting. We offer combo sets, branded products with logo, and bulk discounts (15-25% off for 100+ pieces). What products interest you? 🎁";
-    }
-
-    // Pricing inquiries
-    if (msg.includes('price') || msg.includes('cost') || msg.includes('rate')) {
-      return "I'd love to help with pricing! Please share: (1) Which product? (2) Quantity needed? (3) Do you need logo branding? This helps me give you accurate pricing! 💰";
-    }
-
-    // Logo/branding
-    if (msg.includes('logo') || msg.includes('branding') || msg.includes('customiz') || msg.includes('print')) {
-      return "Yes! We can add your logo on any product. Single color logos are standard, multi-color is available too. What product and quantity are you considering? 🎨";
-    }
-
-    // Catalog
-    if (msg.includes('catalog') || msg.includes('catalogue') || msg.includes('picture') || msg.includes('image') || msg.includes('photo')) {
-      return "I'd be happy to share our full catalog! Please share your email or WhatsApp number and I'll send detailed product images and price lists right away. 📸🌿";
-    }
-
-    // Contact/Email
+    // Contact/Email (informational - no context needed)
     if (msg.includes('email') || msg.includes('contact') || msg.includes('phone') || msg.includes('whatsapp')) {
       return "📞 You can reach us at:\n• WhatsApp: +91 70090 52784\n• Email: info@9cork.com\n• Website: www.9cork.com\n\nHow can I help you today? 🌿";
     }
 
-    // Default - More helpful fallback
+    // CRITICAL: ALL OTHER MESSAGES SHOULD FAIL TO AI
+    // This includes product inquiries, pricing, HORECA, etc. which NEED conversation context
+    // Don't provide misleading context-free responses!
     this.stats.fallback.success++;
-    return "Thanks for contacting 9 Cork Sustainable Products! 🌿\n\nWe make premium cork coasters, diaries, planters, trays, and HORECA products.\n\nTo help you better, please share:\n1. Which product interests you?\n2. Quantity needed?\n3. For personal use, corporate gifting, or HORECA?\n\nOr share your email for our full catalog! 📧";
+    console.error('❌ ALL AI providers failed! Returning error message instead of context-free fallback');
+    return "I'm having trouble processing your message right now. Could you please rephrase or provide more details about what you're looking for? 🌿";
   }
 
   // Main method: Try all providers with fallbacks
