@@ -218,6 +218,21 @@ class AIProviderManager {
 
     const msg = userMessage.toLowerCase();
 
+    // Cork material knowledge questions
+    if (msg.includes('what is cork') || msg.includes('what\'s cork') || (msg.includes('cork') && (msg.includes('material') || msg.includes('made of') || msg.includes('about cork')))) {
+      return "Cork is the bark of the Cork Oak tree - harvested sustainably without cutting the tree down! The bark regenerates every 9-10 years, and each harvest helps the tree absorb MORE CO2. It's 100% natural, biodegradable, water-resistant, and durable. What draws you to cork products? 🌳";
+    }
+
+    // Sustainability questions
+    if (msg.includes('sustainability') || msg.includes('sustainable') || msg.includes('eco-friendly') || msg.includes('environment')) {
+      return "That's exactly why cork is special! Cork oak trees absorb 5x more CO2 after each harvest, and forests sequester 14 million tons annually. Unlike plastic (450+ years to decompose), cork biodegrades naturally in months. Are you exploring cork for personal use or corporate gifting? 🌍";
+    }
+
+    // Durability questions
+    if (msg.includes('durable') || msg.includes('durability') || msg.includes('last') || msg.includes('quality')) {
+      return "Cork is incredibly durable - naturally water-resistant, heat-resistant, and anti-microbial. Our products last for years with regular use. The bark is designed by nature to protect trees for 200+ years! What will you be using these for? 💪";
+    }
+
     // Greetings
     if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey')) {
       return "👋 Welcome to 9 Cork Sustainable Products! We make premium eco-friendly cork products. Are you looking for retail items, corporate gifts, or HORECA solutions? 🌿";
