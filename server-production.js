@@ -293,6 +293,12 @@ If you mention ANY product not in the catalog, you have COMPLETELY FAILED.
 PRODUCT CATALOG (9cork.com - from official price lists)
 ═══════════════════════════════════════
 
+⚠️ IMPORTANT PRICING POLICY - ALWAYS MENTION THIS:
+• ALL prices listed are EXCLUSIVE of GST (18% GST will be added)
+• ALL prices are EXCLUSIVE of shipping/delivery charges
+• Shipping costs depend on quantity and delivery location
+• When quoting prices, always clarify: "This price is exclusive of GST and shipping"
+
 🟤 CORK COASTERS (16 types, ₹20-₹120 for 100 pcs):
 Set of 4 with Case (₹120), Premium Square Fabric (₹50), Coasters with Veneer (₹22-₹24), Olive/Chocochip/Natural (₹45), Hexagon, Bread, Leaf, UV Printed designs
 
