@@ -1213,55 +1213,80 @@ async function storeAgentMessage(phoneNumber, message) {
 // Get conversation context for Claude
 async function getConversationContext(phoneNumber) {
   try {
-    // Try MongoDB first
-    const conversation = await Conversation.findOne({
-      customerPhone: phoneNumber,
-      status: 'active'
-    });
+    // STRATEGY: Check in-memory FIRST (most recent, fastest)
+    // Then fall back to MongoDB if in-memory is empty
 
-    if (conversation) {
-      // Get last 10 messages for context
-      const recentMessages = conversation.getRecentMessages(10);
-
-      // Format for Claude API
-      const formattedMessages = recentMessages.map(msg => ({
-        role: msg.role === 'customer' ? 'user' : 'assistant',
-        content: msg.content
-      }));
-
-      console.log(`📚 Retrieved ${formattedMessages.length} messages from MongoDB for context`);
-      return formattedMessages;
-    }
-
-    // MongoDB has no data - try in-memory cache
+    // Step 1: Check in-memory cache first (fastest and most up-to-date)
     if (conversationMemory.has(phoneNumber)) {
       const memoryMessages = conversationMemory.get(phoneNumber);
-      const recentMemory = memoryMessages.slice(-10); // Last 10 messages
-      console.log(`💾 Retrieved ${recentMemory.length} messages from in-memory cache`);
-      return recentMemory.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+      if (memoryMessages.length > 0) {
+        const recentMemory = memoryMessages.slice(-12); // Last 12 messages
+        console.log(`💾 Retrieved ${recentMemory.length} messages from IN-MEMORY cache (most recent)`);
+        return recentMemory.map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+      }
     }
 
-    console.log('📭 No conversation history found - starting fresh');
+    // Step 2: Try MongoDB (persistent storage)
+    try {
+      const conversation = await Conversation.findOne({
+        customerPhone: phoneNumber,
+        status: 'active'
+      });
+
+      if (conversation) {
+        // Get last 12 messages for context
+        const recentMessages = conversation.getRecentMessages(12);
+
+        if (recentMessages.length > 0) {
+          // Format for Claude API
+          const formattedMessages = recentMessages.map(msg => ({
+            role: msg.role === 'customer' ? 'user' : 'assistant',
+            content: msg.content
+          }));
+
+          console.log(`📚 Retrieved ${formattedMessages.length} messages from MongoDB`);
+
+          // IMPORTANT: Also populate in-memory cache from MongoDB
+          if (!conversationMemory.has(phoneNumber)) {
+            conversationMemory.set(phoneNumber, recentMessages.map(msg => ({
+              role: msg.role === 'customer' ? 'user' : 'assistant',
+              content: msg.content,
+              timestamp: msg.timestamp || new Date()
+            })));
+            console.log(`💾 Populated in-memory cache from MongoDB (${recentMessages.length} messages)`);
+          }
+
+          return formattedMessages;
+        }
+      }
+    } catch (mongoError) {
+      console.error('⚠️ MongoDB lookup failed:', mongoError.message);
+      // Continue to fallback below
+    }
+
+    // Step 3: No history found anywhere
+    console.log('📭 No conversation history found - starting fresh conversation');
     return [];
+
   } catch (error) {
-    console.error('❌ Error getting conversation context from MongoDB:', error.message);
+    console.error('❌ Error in getConversationContext:', error.message);
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
 
-    // Fallback to in-memory cache
+    // Ultimate fallback: check in-memory one more time
     if (conversationMemory.has(phoneNumber)) {
       const memoryMessages = conversationMemory.get(phoneNumber);
-      const recentMemory = memoryMessages.slice(-10);
-      console.log(`💾 Fallback: Retrieved ${recentMemory.length} messages from in-memory cache`);
+      const recentMemory = memoryMessages.slice(-12);
+      console.log(`💾 EMERGENCY FALLBACK: Retrieved ${recentMemory.length} messages from in-memory cache`);
       return recentMemory.map(msg => ({
         role: msg.role,
         content: msg.content
       }));
     }
 
-    console.log('⚠️ No conversation context available');
+    console.log('⚠️ No conversation context available - returning empty array');
     return [];
   }
 }
@@ -1272,27 +1297,26 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
     console.log(`📊 Context size: ${context.length} messages`);
 
-    // Store customer message in in-memory cache
+    // CRITICAL: Add current message to context for AI processing
+    // context already has history, we just need to add the new user message
+    const fullContext = [...context, { role: 'user', content: message }];
+
+    // ALSO store in conversationMemory for in-memory fallback (in case MongoDB fails)
     if (!conversationMemory.has(customerPhone)) {
       conversationMemory.set(customerPhone, []);
     }
+    // Add user message
     conversationMemory.get(customerPhone).push({
       role: 'user',
       content: message,
       timestamp: new Date()
     });
 
-    // Limit in-memory cache to last 20 messages per customer
-    const customerMemory = conversationMemory.get(customerPhone);
-    if (customerMemory.length > 20) {
-      conversationMemory.set(customerPhone, customerMemory.slice(-20));
-    }
-
     // Use multi-provider AI manager with automatic failover
     // Send last 12 messages for better context (increased from 8 to capture full conversations)
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
-      context.slice(-12), // Last 12 messages for full conversation tracking
+      fullContext.slice(-12), // Last 12 messages (including new message)
       message
     );
 
@@ -1304,6 +1328,12 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       content: result.response,
       timestamp: new Date()
     });
+
+    // Limit in-memory cache to last 20 messages per customer
+    const customerMemory = conversationMemory.get(customerPhone);
+    if (customerMemory.length > 20) {
+      conversationMemory.set(customerPhone, customerMemory.slice(-20));
+    }
 
     return result.response;
 
