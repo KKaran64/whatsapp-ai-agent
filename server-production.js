@@ -1117,9 +1117,31 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
           console.log('⚠️  Queue unavailable - processing directly');
           // Process directly without queue
           try {
-            const context = [];
+            // Store customer message in database (non-blocking)
+            storeCustomerMessage(from, messageBody, messageId).catch(err => {
+              console.log('⚠️ MongoDB unavailable - continuing without history');
+            });
+
+            // Get conversation context with timeout fallback (same as queue processor)
+            let context = [];
+            try {
+              const contextPromise = getConversationContext(from);
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Context timeout')), 2000)
+              );
+              context = await Promise.race([contextPromise, timeoutPromise]);
+            } catch (error) {
+              console.log('⚠️ Context unavailable - using empty context');
+              context = [];
+            }
+
             const response = await processWithClaudeAgent(messageBody, from, context);
             await sendWhatsAppMessage(from, response);
+
+            // Store agent response in database (non-blocking)
+            storeAgentMessage(from, response).catch(err => {
+              console.log('⚠️ MongoDB unavailable - response sent but not stored');
+            });
           } catch (err) {
             console.error('Error processing message:', err);
           }
