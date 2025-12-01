@@ -116,7 +116,14 @@ class AIProviderManager {
       } catch (error) {
         lastError = error;
 
-        if (error.message?.includes('rate_limit')) {
+        // DETAILED ERROR LOGGING
+        console.error(`❌ Groq Error (key ${this.currentGroqIndex || this.groqClients.length}):`);
+        console.error('Error message:', error.message);
+        console.error('Error response:', error.response?.data || error.response || 'No response data');
+        console.error('Error status:', error.response?.status || 'No status');
+        console.error('Error stack:', error.stack);
+
+        if (error.message?.includes('rate_limit') || error.response?.status === 429) {
           console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rate limit hit, trying next key...`);
           continue; // Try next key
         } else {
@@ -171,6 +178,12 @@ class AIProviderManager {
       this.stats.gemini.failures++;
       this.stats.gemini.lastFailure = new Date();
 
+      // DETAILED ERROR LOGGING
+      console.error('❌ Gemini Error:');
+      console.error('Error message:', error.message);
+      console.error('Error response:', error.response?.data || error.response || 'No response data');
+      console.error('Error status:', error.response?.status || 'No status');
+
       if (error.response?.status === 429) {
         console.log('⚠️ Gemini rate limit hit');
         throw new Error('RATE_LIMIT');
@@ -208,6 +221,14 @@ class AIProviderManager {
     } catch (error) {
       this.stats.claude.failures++;
       this.stats.claude.lastFailure = new Date();
+
+      // DETAILED ERROR LOGGING
+      console.error('❌ Claude Error:');
+      console.error('Error message:', error.message);
+      console.error('Error response:', error.response?.data || error.response || 'No response data');
+      console.error('Error status:', error.response?.status || 'No status');
+      console.error('Error type:', error.error?.type || 'No type');
+
       throw error;
     }
   }
