@@ -550,8 +550,8 @@ async function getConversationContext(phoneNumber) {
       });
 
       if (conversation) {
-        // Get last 6 messages for context (reduced from 12 for token efficiency)
-        const recentMessages = conversation.getRecentMessages(6);
+        // Get last 10 messages for context (optimized for Claude's 200k token limit)
+        const recentMessages = conversation.getRecentMessages(10);
 
         if (recentMessages.length > 0) {
           // Format for Claude API
@@ -626,10 +626,10 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     });
 
     // Use multi-provider AI manager with automatic failover
-    // Send last 6 messages for token efficiency (reduced from 12 to fit within Groq's 12k limit)
+    // Send last 10 messages for better context (Claude has 200k limit, Groq fallback still safe)
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
-      fullContext.slice(-6), // Last 6 messages (including new message)
+      fullContext.slice(-10), // Last 10 messages (including new message)
       message
     );
 
