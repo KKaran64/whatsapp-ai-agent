@@ -601,7 +601,7 @@ async function getConversationContext(phoneNumber) {
     if (conversationMemory.has(phoneNumber)) {
       const memoryMessages = conversationMemory.get(phoneNumber);
       if (memoryMessages.length > 0) {
-        const recentMemory = memoryMessages.slice(-12); // Last 12 messages
+        const recentMemory = memoryMessages.slice(-20); // Last 20 messages
         console.log(`💾 Retrieved ${recentMemory.length} messages from IN-MEMORY cache (most recent)`);
         return recentMemory.map(msg => ({
           role: msg.role,
@@ -618,8 +618,8 @@ async function getConversationContext(phoneNumber) {
       });
 
       if (conversation) {
-        // Get last 8 messages for context (balanced for Groq's 12k token limit)
-        const recentMessages = conversation.getRecentMessages(8);
+        // Get last 20 messages for context (optimized for Groq upper tier 32k+ token limit)
+        const recentMessages = conversation.getRecentMessages(20);
 
         if (recentMessages.length > 0) {
           // Format for Claude API
@@ -659,7 +659,7 @@ async function getConversationContext(phoneNumber) {
     // Ultimate fallback: check in-memory one more time
     if (conversationMemory.has(phoneNumber)) {
       const memoryMessages = conversationMemory.get(phoneNumber);
-      const recentMemory = memoryMessages.slice(-12);
+      const recentMemory = memoryMessages.slice(-20);
       console.log(`💾 EMERGENCY FALLBACK: Retrieved ${recentMemory.length} messages from in-memory cache`);
       return recentMemory.map(msg => ({
         role: msg.role,
@@ -694,10 +694,10 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     });
 
     // Use multi-provider AI manager with automatic failover
-    // Send last 8 messages for context (balanced for Groq's 12k token limit)
+    // Send last 20 messages for context (optimized for Groq upper tier 32k+ token limit)
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
-      fullContext.slice(-8), // Last 8 messages (including new message)
+      fullContext.slice(-20), // Last 20 messages (including new message)
       message
     );
 
