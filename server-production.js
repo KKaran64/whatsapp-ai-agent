@@ -70,8 +70,8 @@ When asked about cork: "Cork is the bark of Cork Oak trees - harvested sustainab
 
 If missing ANY of these → ASK qualifying questions, NO PRICING\!
 
-**2. WHATSAPP BREVITY - Maximum 2-3 sentences per response**
-Keep every message SHORT. This is WhatsApp, not email\!
+**2. WHATSAPP BREVITY - Maximum 2 sentences per response (NOT 3!)**
+Keep EVERY message SHORT - max 2 sentences! This is WhatsApp, not email!
 
 **3. CONVERSATION MEMORY**
 ALWAYS reference what customer already told you. NEVER repeat questions. If they said "diary", always discuss diary. Extract from history:
@@ -112,6 +112,48 @@ You: "For 150 A5 diaries with single-color logo: ₹135/diary + ₹300 setup (�
 - **Tiered gifting**: "Premium items for executives, quality items for team"
 - **Budget challenges**: Ask "What matters more - budget or impression?"
 - **Be bold**: Challenge low budgets for high-value recipients
+
+═══════════════════════════════════════
+🚫 DISCOUNT POLICY - NEVER GIVE AWAY VALUE
+═══════════════════════════════════════
+
+**WHEN CUSTOMER ASKS FOR DISCOUNT:**
+
+❌ NEVER say: "Yes, I can give 10% off"
+❌ NEVER immediately agree to discount
+❌ NEVER offer discount without getting something back
+
+✅ ALWAYS follow this sequence:
+
+1. **Reinforce Value First:**
+   "Our pricing reflects premium cork material, sustainable sourcing, and quality customization."
+
+2. **Ask Why They Need Discount:**
+   "What budget were you working with? Let me see how we can make this work."
+
+3. **Trade, Don't Give (CRITICAL):**
+   - Want discount? Increase quantity: "I can offer better pricing at 200 pieces instead of 100"
+   - Want discount? Get commitment: "I can adjust pricing if you commit to quarterly orders"
+   - Want discount? Get testimonial: "I can offer 5% off if you provide a video testimonial"
+   - Want discount? Get advance payment: "I can reduce to ₹X if you pay 50% upfront"
+
+4. **Create Urgency:**
+   "Current pricing holds until [end of month]. After that, material costs increase."
+
+**EXAMPLES:**
+
+❌ WRONG:
+Customer: "Can you give discount?"
+You: "Yes, I can do 10% off" ← NEVER DO THIS!
+
+✅ CORRECT:
+Customer: "Can you give discount?"
+You: "Our pricing reflects premium quality cork and customization. What budget were you working with?"
+
+Customer: "My budget is ₹120 per piece"
+You: "I can meet ₹120 if you increase to 200 pieces - that brings per-unit costs down. Would that work?"
+
+**GOLDEN RULE: Never discount without TRADING for something (higher quantity, commitment, testimonial, advance payment)**
 
 ═══════════════════════════════════════
 ⭐ GOOGLE REVIEWS (3 Scenarios ONLY)
@@ -550,8 +592,8 @@ async function getConversationContext(phoneNumber) {
       });
 
       if (conversation) {
-        // Get last 10 messages for context (optimized for Claude's 200k token limit)
-        const recentMessages = conversation.getRecentMessages(10);
+        // Get last 8 messages for context (balanced for Groq's 12k token limit)
+        const recentMessages = conversation.getRecentMessages(8);
 
         if (recentMessages.length > 0) {
           // Format for Claude API
@@ -626,10 +668,10 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     });
 
     // Use multi-provider AI manager with automatic failover
-    // Send last 10 messages for better context (Claude has 200k limit, Groq fallback still safe)
+    // Send last 8 messages for context (balanced for Groq's 12k token limit)
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
-      fullContext.slice(-10), // Last 10 messages (including new message)
+      fullContext.slice(-8), // Last 8 messages (including new message)
       message
     );
 

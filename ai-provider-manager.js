@@ -276,25 +276,25 @@ class AIProviderManager {
       return { provider: 'cache', response: cachedResponse };
     }
 
-    // 2. Try Claude FIRST (Primary - PAID but best quality & 200k token limit)
-    try {
-      return await this.tryClaude(systemPrompt, conversationHistory, userMessage);
-    } catch (error) {
-      console.log('❌ Claude failed:', error.message);
-    }
-
-    // 3. Try Groq (Secondary - FREE fallback)
+    // 2. Try Groq FIRST (Primary - FREE & Fast)
     try {
       return await this.tryGroq(systemPrompt, conversationHistory, userMessage);
     } catch (error) {
       console.log('❌ Groq failed:', error.message);
     }
 
-    // 4. Try Gemini (Tertiary - FREE but may have rate limits)
+    // 3. Try Gemini (Secondary - FREE fallback)
     try {
       return await this.tryGemini(systemPrompt, conversationHistory, userMessage);
     } catch (error) {
       console.log('❌ Gemini failed:', error.message);
+    }
+
+    // 4. Try Claude (Tertiary - PAID, only if configured)
+    try {
+      return await this.tryClaude(systemPrompt, conversationHistory, userMessage);
+    } catch (error) {
+      console.log('❌ Claude failed:', error.message);
     }
 
     // 5. Fallback to rule-based
