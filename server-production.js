@@ -734,7 +734,7 @@ async function getConversationContext(phoneNumber) {
     if (conversationMemory.has(phoneNumber)) {
       const memoryMessages = conversationMemory.get(phoneNumber);
       if (memoryMessages.length > 0) {
-        const recentMemory = memoryMessages.slice(-20); // Last 20 messages
+        const recentMemory = memoryMessages.slice(-50); // Last 50 messages
         console.log(`💾 Retrieved ${recentMemory.length} messages from IN-MEMORY cache (most recent)`);
         return recentMemory.map(msg => ({
           role: msg.role,
@@ -751,8 +751,8 @@ async function getConversationContext(phoneNumber) {
       });
 
       if (conversation) {
-        // Get last 20 messages for context (optimized for Groq upper tier 32k+ token limit)
-        const recentMessages = conversation.getRecentMessages(20);
+        // Get last 50 messages for context (optimized for Groq upper tier 32k+ token limit)
+        const recentMessages = conversation.getRecentMessages(50);
 
         if (recentMessages.length > 0) {
           // Format for Claude API
@@ -792,7 +792,7 @@ async function getConversationContext(phoneNumber) {
     // Ultimate fallback: check in-memory one more time
     if (conversationMemory.has(phoneNumber)) {
       const memoryMessages = conversationMemory.get(phoneNumber);
-      const recentMemory = memoryMessages.slice(-20);
+      const recentMemory = memoryMessages.slice(-50);
       console.log(`💾 EMERGENCY FALLBACK: Retrieved ${recentMemory.length} messages from in-memory cache`);
       return recentMemory.map(msg => ({
         role: msg.role,
@@ -827,10 +827,10 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     });
 
     // Use multi-provider AI manager with automatic failover
-    // Send last 20 messages for context (optimized for Groq upper tier 32k+ token limit)
+    // Send last 50 messages for context (optimized for Groq upper tier 32k+ token limit)
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
-      fullContext.slice(-20), // Last 20 messages (including new message)
+      fullContext.slice(-50), // Last 50 messages (including new message)
       message
     );
 
