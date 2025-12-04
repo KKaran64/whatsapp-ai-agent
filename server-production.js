@@ -15,6 +15,9 @@ const Conversation = require('./models/Conversation');
 // Import AI Provider Manager (Multi-provider with fallbacks)
 const AIProviderManager = require('./ai-provider-manager');
 
+// Import Vision Handler (Image recognition & processing)
+const VisionHandler = require('./vision-handler');
+
 const app = express();
 
 // Trust proxy for rate limiting when behind ngrok/reverse proxy
@@ -46,6 +49,13 @@ const aiManager = new AIProviderManager({
   GROQ_API_KEY: CONFIG.GROQ_API_KEY,
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
   ANTHROPIC_API_KEY: null // Disabled for Option B (FREE tier only)
+});
+
+// Initialize Vision Handler (Image recognition & processing)
+const visionHandler = new VisionHandler({
+  WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
+  GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
+  PHONE_NUMBER_ID: CONFIG.WHATSAPP_PHONE_NUMBER_ID
 });
 
 // System Prompt for AI Agent (extracted for reuse)
@@ -89,7 +99,14 @@ If customer asks "How much?" and you're missing info → "Happy to share pricing
 Keep EVERY message SHORT - max 2 sentences AND under 200 chars! This is WhatsApp, not email!
 Count your words. If response is getting long, CUT IT. One qualifying question at a time is enough!
 
-**3. CONVERSATION MEMORY - CRITICAL**
+**3. IMAGE RECOGNITION - When customers send photos**
+✅ Cork product photos → Identify the product: "That's our [product name]! Are you looking for this or something similar?"
+✅ Logo files → Acknowledge for customization: "Perfect! I can get you a quote for [quantity] [product] with your logo. Single or multi-color?"
+✅ Quality issues → Sympathize: "I see the concern. Let me help resolve this right away. When did you receive it?"
+✅ Unclear images → Ask: "I can see your image! What would you like to know about it?"
+Keep responses SHORT even with images - 2 sentences max!
+
+**4. CONVERSATION MEMORY - CRITICAL**
 ALWAYS reference what customer JUST told you in previous messages. NEVER repeat questions. NEVER ask for information already provided.
 
 Before EVERY response, CHECK conversation history:
@@ -483,20 +500,10 @@ function setupMessageProcessor() {
   if (!messageQueue) return;
 
   messageQueue.process('process-message', async (job) => {
-    const { from, messageBody, messageId } = job.data;
+    const { from, messageBody, messageId, messageType, mediaId } = job.data;
 
     try {
-      console.log(`🔄 Processing message from queue: ${from}`);
-
-      // Store customer message in database (non-blocking - don't await)
-      storeCustomerMessage(from, messageBody, messageId).catch(err => {
-        console.log('⚠️ MongoDB unavailable - continuing without history');
-      });
-
-      // Typing indicator disabled - WhatsApp Business API doesn't support it
-      // sendTypingIndicator(from).catch(err => {
-      //   console.log('⚠️ Typing indicator failed - continuing');
-      // });
+      console.log(`🔄 Processing ${messageType || 'text'} message from queue: ${from}`);
 
       // Get conversation context with timeout fallback
       let context = [];
@@ -511,16 +518,33 @@ function setupMessageProcessor() {
         context = [];
       }
 
-      // Process message with Claude agent (ALWAYS runs)
-      const agentResponse = await processWithClaudeAgent(messageBody, from, context);
+      let agentResponse;
+
+      // Handle IMAGE messages with vision AI
+      if (messageType === 'image' && mediaId) {
+        console.log('📸 Processing image message with vision AI from queue...');
+        const result = await visionHandler.handleImageMessage(
+          mediaId,
+          messageBody,
+          from,
+          context,
+          SYSTEM_PROMPT
+        );
+        agentResponse = result.response;
+
+        // Store image indicator in conversation
+        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
+      } else {
+        // Handle TEXT messages normally
+        agentResponse = await processWithClaudeAgent(messageBody, from, context);
+        await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+      }
 
       // Send response back to customer
       await sendWhatsAppMessage(from, agentResponse);
 
-      // Store agent response in database (non-blocking - don't await)
-      storeAgentMessage(from, agentResponse).catch(err => {
-        console.log('⚠️ MongoDB unavailable - response sent but not stored');
-      });
+      // Store agent response in database (non-blocking)
+      await storeAgentMessage(from, agentResponse).catch(() => {});
 
       console.log('✅ Message processed successfully');
     } catch (error) {
@@ -610,20 +634,23 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
     if (messages && messages[0]) {
       const message = messages[0];
       const from = message.from; // Customer's phone number
-      const messageBody = message.text?.body;
+      const messageBody = message.text?.body || message.image?.caption || '';
       const messageType = message.type;
       const messageId = message.id;
+      const mediaId = message.image?.id; // For image messages
 
-      console.log(`📱 Message from ${from}: ${messageBody}`);
+      console.log(`📱 Message from ${from} (${messageType}): ${messageBody || '[IMAGE]'}`);
 
-      // Only process text messages
-      if (messageType === 'text' && messageBody) {
+      // Process text messages AND image messages
+      if ((messageType === 'text' && messageBody) || messageType === 'image') {
         // Add to queue for processing (if queue is available)
         if (messageQueue) {
           await messageQueue.add('process-message', {
             from,
-            messageBody,
+            messageBody: messageBody || 'What is this?', // Default question for images without caption
             messageId,
+            messageType,
+            mediaId, // Include media ID for images
             timestamp: new Date()
           });
           console.log('✅ Message added to queue');
@@ -631,12 +658,7 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
           console.log('⚠️  Queue unavailable - processing directly');
           // Process directly without queue
           try {
-            // Store customer message in database (non-blocking)
-            storeCustomerMessage(from, messageBody, messageId).catch(err => {
-              console.log('⚠️ MongoDB unavailable - continuing without history');
-            });
-
-            // Get conversation context with timeout fallback (same as queue processor)
+            // Get conversation context with timeout fallback
             let context = [];
             try {
               const contextPromise = getConversationContext(from);
@@ -649,13 +671,30 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
               context = [];
             }
 
-            const response = await processWithClaudeAgent(messageBody, from, context);
-            await sendWhatsAppMessage(from, response);
+            let response;
+            // Handle IMAGE messages with vision AI
+            if (messageType === 'image' && mediaId) {
+              console.log('📸 Processing image message with vision AI...');
+              const result = await visionHandler.handleImageMessage(
+                mediaId,
+                messageBody || 'What is this?',
+                from,
+                context,
+                SYSTEM_PROMPT
+              );
+              response = result.response;
 
-            // Store agent response in database (non-blocking)
-            storeAgentMessage(from, response).catch(err => {
-              console.log('⚠️ MongoDB unavailable - response sent but not stored');
-            });
+              // Store image indicator in conversation (not the image itself)
+              await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
+            } else {
+              // Handle TEXT messages normally
+              response = await processWithClaudeAgent(messageBody, from, context);
+              await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+            }
+
+            await sendWhatsAppMessage(from, response);
+            await storeAgentMessage(from, response).catch(() => {});
+
           } catch (err) {
             console.error('Error processing message:', err);
           }
