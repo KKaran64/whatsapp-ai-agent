@@ -35,6 +35,7 @@ const CONFIG = {
   GROQ_API_KEY: (process.env.GROQ_API_KEY || 'your_groq_api_key').trim(),
   GEMINI_API_KEY: (process.env.GEMINI_API_KEY || '').trim(),
   ANTHROPIC_API_KEY: (process.env.ANTHROPIC_API_KEY || '').trim(),
+  GOOGLE_CLOUD_VISION_KEY: (process.env.GOOGLE_CLOUD_VISION_KEY || '').trim(),
   MONGODB_URI: (process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales').trim(),
   REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
   SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
@@ -51,11 +52,12 @@ const aiManager = new AIProviderManager({
   ANTHROPIC_API_KEY: null // Disabled for Option B (FREE tier only)
 });
 
-// Initialize Vision Handler (Image recognition & processing)
+// Initialize Vision Handler (Multi-provider: Gemini → Claude → Google Cloud)
 const visionHandler = new VisionHandler({
   WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
-  PHONE_NUMBER_ID: CONFIG.WHATSAPP_PHONE_NUMBER_ID
+  ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY,
+  GOOGLE_CLOUD_VISION_KEY: CONFIG.GOOGLE_CLOUD_VISION_KEY
 });
 
 // System Prompt for AI Agent (extracted for reuse)
