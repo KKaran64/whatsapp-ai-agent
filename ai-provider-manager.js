@@ -50,18 +50,30 @@ class AIProviderManager {
   checkCache(message) {
     const normalizedMsg = message.toLowerCase().trim();
 
-    // Common queries with instant responses
-    const commonResponses = {
+    // CRITICAL: Only cache EXACT greetings, not messages that contain greetings + product questions
+    // "hi" → cache ✅  |  "hi do you have coasters" → NO cache, send to AI ✅
+    const exactGreetings = {
       'hi': '👋 Welcome to 9 Cork Sustainable Products! What brings you here - personal use, corporate gifting, or for your business?',
       'hello': '👋 Hello! I\'m from 9 Cork Sustainable Products. Are you looking for retail items, corporate gifts, or HORECA solutions?',
-      'price': 'I\'d love to help with pricing! What product are you interested in, and how many pieces are you looking for?',
+      'hey': '👋 Welcome to 9 Cork Sustainable Products! What brings you here - personal use, corporate gifting, or for your business?',
+    };
+
+    // Check EXACT match for greetings only
+    if (exactGreetings[normalizedMsg]) {
+      console.log('⚡ Cache hit - exact greeting match');
+      return exactGreetings[normalizedMsg];
+    }
+
+    // For all other queries, check partial matches (but NOT greetings)
+    const partialMatchResponses = {
       'catalog': 'I\'d be happy to share our catalog! Please share your email or WhatsApp number and I\'ll send you detailed product images right away. 🌿',
       'catalogue': 'I\'d be happy to share our catalog! Please share your email or WhatsApp number and I\'ll send you detailed product images right away. 🌿',
     };
 
-    // Check exact matches
-    for (const [key, response] of Object.entries(commonResponses)) {
+    // Check partial matches for non-greeting queries
+    for (const [key, response] of Object.entries(partialMatchResponses)) {
       if (normalizedMsg.includes(key)) {
+        console.log(`⚡ Cache hit - partial match for "${key}"`);
         return response;
       }
     }
