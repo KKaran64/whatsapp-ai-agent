@@ -28,3 +28,11 @@ services:
         sync: false
       - key: SENTRY_DSN
         sync: false
+      - key: GOOGLE_CLOUD_VISION_KEY
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: GROQ_API_KEY_4
+        sync: false
