@@ -464,6 +464,13 @@ async function connectDatabase() {
 
 // Initialize Redis queue (non-blocking)
 async function connectQueue() {
+  // Skip Redis entirely if using Upstash with potential quota issues
+  if (!CONFIG.REDIS_URL || CONFIG.REDIS_URL.includes('localhost') || CONFIG.REDIS_URL === 'redis://localhost:6379') {
+    console.log('⚠️  Redis not configured - messages will be processed directly');
+    messageQueue = null;
+    return;
+  }
+
   try {
     messageQueue = new Bull('whatsapp-messages', CONFIG.REDIS_URL, {
       redis: {
@@ -488,6 +495,8 @@ async function connectQueue() {
     // Add error handlers BEFORE testing connection
     messageQueue.on('error', (error) => {
       console.error('❌ Queue error:', error.message);
+      // On error, disable queue to prevent crashes
+      messageQueue = null;
     });
 
     messageQueue.on('failed', (job, err) => {
