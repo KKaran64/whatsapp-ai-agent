@@ -470,7 +470,9 @@ async function connectQueue() {
         tls: {
           rejectUnauthorized: false
         },
-        connectTimeout: 5000 // 5 second timeout
+        connectTimeout: 5000, // 5 second timeout
+        maxRetriesPerRequest: 1, // Fail fast instead of retrying
+        enableReadyCheck: false // Skip ready check to avoid blocking
       },
       defaultJobOptions: {
         attempts: 3,
@@ -483,8 +485,21 @@ async function connectQueue() {
       }
     });
 
-    // Test the connection
-    await messageQueue.isReady();
+    // Add error handlers BEFORE testing connection
+    messageQueue.on('error', (error) => {
+      console.error('❌ Queue error:', error.message);
+    });
+
+    messageQueue.on('failed', (job, err) => {
+      console.error(`❌ Job ${job.id} failed:`, err.message);
+    });
+
+    // Test the connection with timeout
+    await Promise.race([
+      messageQueue.isReady(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 10000))
+    ]);
+
     console.log('✅ Message queue initialized');
 
     // Set up message processor
