@@ -171,20 +171,75 @@ class VisionHandler {
 
       const fullPrompt = `${systemPrompt}
 
-IMPORTANT: Customer sent an IMAGE. Analyze it and respond.
+IMPORTANT: Customer sent an IMAGE. Analyze it carefully and identify the 9 Cork product.
+
+🔍 VISUAL PRODUCT IDENTIFICATION GUIDE (9cork.com):
+
+**COASTERS** (Round, 10cm diameter unless noted):
+- Heart Coasters: Round with heart-shaped patterns, cutouts, or embossed hearts
+- Leaf Coasters: Round with leaf patterns, leaf-shaped cutouts, or botanical designs
+- Hexagon Coasters: 6-sided geometric shape (not round)
+- Bread Coasters: Textured surface resembling bread texture
+- Set of 4 with Case: Multiple coasters with storage box/case
+- Premium Square Fabric: Square shape with fabric backing
+- Olive/Chocochip/Natural: Natural cork texture with visible grain patterns
+
+**DIARIES & NOTEBOOKS**:
+- Cork Diary: Book-like with pages visible, cork cover (front/back), may have elastic band closure
+- A5 Diary: Larger (21x15cm), thick cork cover
+- A6 Diary: Smaller (15x10.5cm), pocket-sized
+- Look for: Binding, pages, elastic band, pen loop
+
+**DESK ORGANIZERS**:
+- Multiple compartments for pens/pencils/items
+- 3D structure (not flat), stands upright
+- May have sections, dividers, or slots
+- Desk Organizer vs Pen Holder: Organizer has multiple compartments, pen holder is single cylinder/section
+
+**CARD HOLDERS**:
+- Card Holder (₹120): Wallet-style, folds, holds credit/debit cards in slots, pocket-sized
+- Business Card Case (₹95): Flat box/case for storing business cards on desk (NOT a wallet)
+- Look for: Slots/pockets (Card Holder) vs box shape (Business Card Case)
+
+**PLANTERS**:
+- Test Tube Planters: Cork base with glass test tubes for plants/flowers
+- Fridge Magnet Planter: Small, compact (16.5x4.5x4.5cm), has magnet backing
+- Table Top Planters: Cork pot/container for plants (10x10cm typically)
+- Look for: Test tubes, plant space, decorative patterns
+
+**BAGS & WALLETS**:
+- Laptop Bag/Sleeve: Large, rectangular, for laptop storage
+- Wallets: Bi-fold (folds once), Tri-fold (folds twice)
+- Clutch: Small handbag, no straps
+- Tote/Handbag: Has handles or shoulder straps
+
+**OTHER PRODUCTS**:
+- Photo Frames: Cork border around photo opening (4x6, 5x7, 8x10 sizes)
+- Serving Trays: Flat surface with raised edges or handles
+- Table Mats/Placemats: Flat, rectangular, for dining
+- Mouse Pad: Flat, rectangular, desk accessory
+- Clocks: Round or square, has clock face/hands
+- Yoga Mat: Large rolled mat
 
 Conversation History:
 ${conversationText}
 
 Customer: ${userMessage}
 
-Based on the image:
-1. Cork product → Identify & suggest similar items
-2. Logo → Offer customization quote
-3. Quality issue → Sympathize & resolve
-4. Unclear → Ask clarifying questions
+IDENTIFICATION STEPS:
+1. Analyze shape, size, structure (flat/3D, round/square/rectangular)
+2. Look for distinctive features (hearts, leaves, compartments, pages, test tubes)
+3. Check for functional clues (holds cards, has pens, stores items)
+4. Match to specific product from guide above
+5. If product has multiple variants (like coasters), identify the specific type
 
-Respond in 2 sentences as Priya.`;
+Based on the image analysis:
+- If CORK PRODUCT → Identify exact product name and ask qualification questions
+- If LOGO → "I can customize that! Single or multi-color logo?"
+- If QUALITY ISSUE → Sympathize and ask for details
+- If UNCLEAR → Ask what they're looking for
+
+Respond in 2 sentences maximum as Priya (sales expert).`;
 
       // Try providers in order: Gemini → Claude → Google Cloud → Fallback
 
