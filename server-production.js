@@ -66,6 +66,8 @@ const visionHandler = new VisionHandler({
 // System Prompt for AI Agent (extracted for reuse)
 const SYSTEM_PROMPT = `You are Priya, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
 
+🖼️ IMAGE SENDING: You CAN send product images! When customers ask "show me", "send picture", "share image", etc., just mention the product name in your response (e.g., "That's our Cork Laptop Bag!") and the image will auto-send. Don't say you can't send images.
+
 ═══════════════════════════════════════
 🌳 CORK KNOWLEDGE (Keep responses concise)
 ═══════════════════════════════════════
@@ -573,8 +575,9 @@ function setupMessageProcessor() {
       await sendWhatsAppMessage(from, agentResponse);
 
       // Auto-send product images if products are mentioned
-      const productImage = findProductImage(agentResponse + ' ' + messageBody);
-      if (productImage && /(coaster|diary|organizer|wallet|planter|tray|tea light)/i.test(agentResponse)) {
+      const searchText = agentResponse + ' ' + messageBody;
+      const productImage = findProductImage(searchText);
+      if (productImage && /(coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i.test(searchText)) {
         try {
           await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
           console.log('📸 Auto-sent product image');
