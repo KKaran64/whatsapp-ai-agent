@@ -105,6 +105,7 @@ function getCatalogImages(category) {
   const categories = {
     'coasters': ['4 piece cork coasters', 'large grain cork coasters', 'heart coasters', 'leaf coasters'],
     'desk': ['cork desk organizer', 'cork pen holder', 'cork desk mat', 'cork diary'],
+    'diaries': ['cork diary'], // Single product but customer might ask specifically
     'bags': ['cork laptop bag', 'cork wallet', 'cork card holder', 'cork passport holder'],
     'planters': ['test tube planter', 'fridge magnet planter', 'round cork planter'],
     'all': ['cork laptop bag', 'cork coaster set', 'cork desk organizer', 'cork wallet', 'cork diary', 'test tube planter']
