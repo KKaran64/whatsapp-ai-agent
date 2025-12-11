@@ -18,8 +18,8 @@ const AIProviderManager = require('./ai-provider-manager');
 // Import Vision Handler (Image recognition & processing)
 const VisionHandler = require('./vision-handler');
 
-// Import Product Image Database
-const { findProductImage } = require('./product-images');
+// Import Product Image Database (STRICT: Cork products only)
+const { findProductImage, getCatalogImages, isValidCorkProductUrl } = require('./product-images');
 
 const app = express();
 
@@ -66,7 +66,12 @@ const visionHandler = new VisionHandler({
 // System Prompt for AI Agent (extracted for reuse)
 const SYSTEM_PROMPT = `You are Priya, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
 
-🖼️ IMAGE SENDING: You CAN send product images! When customers ask "show me", "send picture", "share image", etc., just mention the product name in your response (e.g., "That's our Cork Laptop Bag!") and the image will auto-send. Don't say you can't send images.
+🖼️ IMAGE SENDING - STRICT RULES:
+- You CAN send product images from our verified cork catalog ONLY
+- When customers ask for images, mention SPECIFIC product names: "Cork Laptop Bag", "Cork Coasters", "Cork Desk Organizer"
+- For catalog requests: Say "catalog:coasters" or "catalog:bags" or "catalog:all" to trigger multiple images
+- NEVER promise images for products not in our cork catalog
+- If unsure, ask customer to specify which cork product they want to see
 
 ═══════════════════════════════════════
 🌳 CORK KNOWLEDGE (Keep responses concise)
@@ -574,18 +579,43 @@ function setupMessageProcessor() {
       // Send response back to customer
       await sendWhatsAppMessage(from, agentResponse);
 
-      // Auto-send product images if products are mentioned
+      // STRICT: Auto-send ONLY verified cork product images
       const searchText = agentResponse + ' ' + messageBody;
-      const productImage = findProductImage(searchText);
-      console.log(`🔍 Image search: "${searchText.substring(0, 100)}" -> ${productImage ? 'FOUND' : 'NOT FOUND'}`);
 
-      if (productImage && /(coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i.test(searchText)) {
+      // Check for catalog request (e.g., "catalog:coasters", "catalog:all")
+      const catalogMatch = agentResponse.match(/catalog:(coasters|desk|bags|planters|all)/i);
+      if (catalogMatch) {
+        const category = catalogMatch[1];
+        const catalogImages = getCatalogImages(category);
+        console.log(`📚 Catalog request: ${category} (${catalogImages.length} images)`);
+
         try {
-          console.log(`📤 Sending image: ${productImage}`);
-          await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
-          console.log('✅ Image sent successfully');
+          for (const imageUrl of catalogImages.slice(0, 6)) { // Max 6 images
+            if (isValidCorkProductUrl(imageUrl)) {
+              await sendWhatsAppImage(from, imageUrl, `${category} collection 🌿`);
+              await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between images
+            }
+          }
+          console.log(`✅ Sent ${catalogImages.length} catalog images`);
         } catch (err) {
-          console.error('❌ Image send failed:', err.response?.data || err.message);
+          console.error('❌ Catalog send failed:', err.response?.data || err.message);
+        }
+      }
+      // Single product image request
+      else {
+        const productImage = findProductImage(searchText);
+        console.log(`🔍 Image search: "${searchText.substring(0, 100)}" -> ${productImage ? 'FOUND' : 'NOT FOUND'}`);
+
+        // Only send if: 1) Valid cork URL found, 2) Cork product keywords present
+        if (productImage && isValidCorkProductUrl(productImage) &&
+            /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i.test(searchText)) {
+          try {
+            console.log(`📤 Sending verified cork product: ${productImage}`);
+            await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
+            console.log('✅ Image sent successfully');
+          } catch (err) {
+            console.error('❌ Image send failed:', err.response?.data || err.message);
+          }
         }
       }
 

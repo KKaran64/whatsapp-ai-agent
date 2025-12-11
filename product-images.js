@@ -1,5 +1,6 @@
-// Product Image Database - Condensed
-const PRODUCT_IMAGES = {
+// Product Image Database - VERIFIED CORK PRODUCTS ONLY (9cork.com)
+// STRICT: Only send images that are verified cork products from official catalog
+const VERIFIED_CORK_PRODUCTS = {
   // Coasters
   "4 piece cork coasters": "https://9cork.com/wp-content/uploads/2023/12/DSC05667-1024x683.jpg",
   "large grain cork coasters": "https://9cork.com/wp-content/uploads/2023/12/DSC05922-1024x683.jpg",
@@ -56,18 +57,31 @@ const PRODUCT_IMAGES = {
   "cork cube tea light": "https://9cork.com/wp-content/uploads/2024/04/img_0007_DSC04613.jpg"
 };
 
-// Smart product matching - finds closest match
+// STRICT: Validate URL is from official cork domain
+function isValidCorkProductUrl(url) {
+  return url && url.startsWith('https://9cork.com/');
+}
+
+// Conservative product matching - ONLY verified cork products
 function findProductImage(productName) {
   const search = productName.toLowerCase().trim();
 
-  // Direct match
-  if (PRODUCT_IMAGES[search]) return PRODUCT_IMAGES[search];
+  // 1. Direct exact match (preferred)
+  if (VERIFIED_CORK_PRODUCTS[search]) {
+    const url = VERIFIED_CORK_PRODUCTS[search];
+    if (isValidCorkProductUrl(url)) {
+      console.log(`✅ Exact match found: "${search}"`);
+      return url;
+    }
+  }
 
-  // Fuzzy match - find best keyword overlap
+  // 2. Partial match (conservative - requires 2+ keyword matches)
   let bestMatch = null;
   let bestScore = 0;
 
-  for (const [name, url] of Object.entries(PRODUCT_IMAGES)) {
+  for (const [name, url] of Object.entries(VERIFIED_CORK_PRODUCTS)) {
+    if (!isValidCorkProductUrl(url)) continue; // Skip invalid URLs
+
     const keywords = search.split(/\s+/).filter(w => w.length > 3);
     const score = keywords.filter(k => name.includes(k)).length;
     if (score > bestScore) {
@@ -76,7 +90,28 @@ function findProductImage(productName) {
     }
   }
 
-  return bestScore >= 2 ? bestMatch : null;
+  // Require at least 2 keyword matches (conservative)
+  if (bestScore >= 2) {
+    console.log(`✅ Partial match found (score: ${bestScore})`);
+    return bestMatch;
+  }
+
+  console.log(`⚠️ No verified cork product match for: "${search}"`);
+  return null;
 }
 
-module.exports = { PRODUCT_IMAGES, findProductImage };
+// Get catalog images by category
+function getCatalogImages(category) {
+  const categories = {
+    'coasters': ['4 piece cork coasters', 'large grain cork coasters', 'heart coasters', 'leaf coasters'],
+    'desk': ['cork desk organizer', 'cork pen holder', 'cork desk mat', 'cork diary'],
+    'bags': ['cork laptop bag', 'cork wallet', 'cork card holder', 'cork passport holder'],
+    'planters': ['test tube planter', 'fridge magnet planter', 'round cork planter'],
+    'all': ['cork laptop bag', 'cork coaster set', 'cork desk organizer', 'cork wallet', 'cork diary', 'test tube planter']
+  };
+
+  const products = categories[category.toLowerCase()] || categories['all'];
+  return products.map(p => VERIFIED_CORK_PRODUCTS[p]).filter(url => isValidCorkProductUrl(url));
+}
+
+module.exports = { findProductImage, getCatalogImages, isValidCorkProductUrl };
