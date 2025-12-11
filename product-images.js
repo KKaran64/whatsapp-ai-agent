@@ -29,6 +29,9 @@ const PRODUCT_IMAGES = {
   "cork wallet for men": "https://9cork.com/wp-content/uploads/2023/12/DSC09256-1024x683.jpg",
   "cork passport holder": "https://9cork.com/wp-content/uploads/2023/12/DSC09244-1024x683.jpg",
   "cork laptop bag": "https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg",
+  "laptop bag": "https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg",
+  "13 laptop bag": "https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg",
+  "15 laptop bag": "https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg",
   "cork wallet for women": "https://9cork.com/wp-content/uploads/2023/12/DSC06368-1024x683.jpg",
   "cork wallet": "https://9cork.com/wp-content/uploads/2023/12/DSC05918-1024x683.jpg",
 

@@ -577,12 +577,15 @@ function setupMessageProcessor() {
       // Auto-send product images if products are mentioned
       const searchText = agentResponse + ' ' + messageBody;
       const productImage = findProductImage(searchText);
+      console.log(`🔍 Image search: "${searchText.substring(0, 100)}" -> ${productImage ? 'FOUND' : 'NOT FOUND'}`);
+
       if (productImage && /(coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i.test(searchText)) {
         try {
+          console.log(`📤 Sending image: ${productImage}`);
           await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
-          console.log('📸 Auto-sent product image');
+          console.log('✅ Image sent successfully');
         } catch (err) {
-          console.log('⚠️ Could not send product image:', err.message);
+          console.error('❌ Image send failed:', err.response?.data || err.message);
         }
       }
 
