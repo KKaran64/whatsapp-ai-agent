@@ -67,11 +67,12 @@ const visionHandler = new VisionHandler({
 const SYSTEM_PROMPT = `You are Priya, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
 
 🖼️ IMAGE SENDING - STRICT RULES:
-- You CAN send product images from our verified cork catalog ONLY
-- When customers ask for images, mention SPECIFIC product names: "Cork Laptop Bag", "Cork Coasters", "Cork Desk Organizer"
-- For catalog requests: Say "catalog:coasters" or "catalog:bags" or "catalog:all" to trigger multiple images
+- You CAN send product images from verified cork catalog ONLY
+- When customers ask for specific products, mention the product name naturally: "Yes, we have Cork Laptop Bags!"
+- When customers ask for catalog/multiple products, respond naturally like: "Let me show you our coasters collection!" (images will auto-send)
+- NEVER use technical terms like "catalog:", "trigger", or internal commands in customer-facing responses
 - NEVER promise images for products not in our cork catalog
-- If unsure, ask customer to specify which cork product they want to see
+- If unsure, ask customer to specify which cork product
 
 ═══════════════════════════════════════
 🌳 CORK KNOWLEDGE (Keep responses concise)
@@ -582,18 +583,24 @@ function setupMessageProcessor() {
       // STRICT: Auto-send ONLY verified cork product images
       const searchText = agentResponse + ' ' + messageBody;
 
-      // Check for catalog request (e.g., "catalog:coasters", "catalog:all")
-      const catalogMatch = agentResponse.match(/catalog:(coasters|desk|bags|planters|all)/i);
-      if (catalogMatch) {
-        const category = catalogMatch[1];
-        const catalogImages = getCatalogImages(category);
-        console.log(`📚 Catalog request: ${category} (${catalogImages.length} images)`);
+      // Detect catalog request from natural responses (e.g., "show you our coasters", "here are our diaries")
+      let catalogCategory = null;
+      if (/\b(coasters?|coaster collection)\b/i.test(agentResponse)) catalogCategory = 'coasters';
+      else if (/\b(diary|diaries)\b/i.test(agentResponse) && /\b(show|here|have|our)\b/i.test(agentResponse)) catalogCategory = 'diaries';
+      else if (/\b(desk|organizers?)\b/i.test(agentResponse) && /\b(show|here|collection|our)\b/i.test(agentResponse)) catalogCategory = 'desk';
+      else if (/\b(bags?|wallets?|laptop)\b/i.test(agentResponse) && /\b(show|here|collection|our)\b/i.test(agentResponse)) catalogCategory = 'bags';
+      else if (/\b(planters?)\b/i.test(agentResponse) && /\b(show|here|collection|our)\b/i.test(agentResponse)) catalogCategory = 'planters';
+      else if (/\b(catalog|catalogue|all products|full range)\b/i.test(agentResponse)) catalogCategory = 'all';
+
+      if (catalogCategory) {
+        const catalogImages = getCatalogImages(catalogCategory);
+        console.log(`📚 Catalog detected: ${catalogCategory} (${catalogImages.length} images)`);
 
         try {
           for (const imageUrl of catalogImages.slice(0, 6)) { // Max 6 images
             if (isValidCorkProductUrl(imageUrl)) {
-              await sendWhatsAppImage(from, imageUrl, `${category} collection 🌿`);
-              await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between images
+              await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
+              await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
             }
           }
           console.log(`✅ Sent ${catalogImages.length} catalog images`);
