@@ -18,6 +18,9 @@ const AIProviderManager = require('./ai-provider-manager');
 // Import Vision Handler (Image recognition & processing)
 const VisionHandler = require('./vision-handler');
 
+// Import Product Image Database
+const { findProductImage } = require('./product-images');
+
 const app = express();
 
 // Trust proxy for rate limiting when behind ngrok/reverse proxy
@@ -569,6 +572,17 @@ function setupMessageProcessor() {
       // Send response back to customer
       await sendWhatsAppMessage(from, agentResponse);
 
+      // Auto-send product images if products are mentioned
+      const productImage = findProductImage(agentResponse + ' ' + messageBody);
+      if (productImage && /(coaster|diary|organizer|wallet|planter|tray|tea light)/i.test(agentResponse)) {
+        try {
+          await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
+          console.log('📸 Auto-sent product image');
+        } catch (err) {
+          console.log('⚠️ Could not send product image:', err.message);
+        }
+      }
+
       // Store agent response in database (non-blocking)
       await storeAgentMessage(from, agentResponse).catch(() => {});
 
@@ -951,6 +965,29 @@ async function sendWhatsAppMessage(to, text) {
     return response.data;
   } catch (error) {
     console.error('❌ Error sending WhatsApp message:', error.response?.data || error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    throw error;
+  }
+}
+
+// Send WhatsApp image
+async function sendWhatsAppImage(to, imageUrl, caption = '') {
+  try {
+    const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'image',
+        image: { link: imageUrl, caption: caption }
+      },
+      { headers: { 'Authorization': `Bearer ${cleanToken}`, 'Content-Type': 'application/json' } }
+    );
+    console.log('📸 Image sent successfully');
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error sending image:', error.response?.data || error.message);
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
     throw error;
   }
