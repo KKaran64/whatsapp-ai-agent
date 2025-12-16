@@ -461,9 +461,12 @@ const conversationMemory = new Map();
 // Initialize MongoDB connection (non-blocking)
 async function connectDatabase() {
   try {
+    // Validate MongoDB URI in production
+    if (CONFIG.NODE_ENV === 'production' && CONFIG.MONGODB_URI.includes('localhost')) {
+      throw new Error('Production environment requires cloud MongoDB URI, not localhost');
+    }
+
     await mongoose.connect(CONFIG.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 5000 // 5 second timeout
     });
     console.log('✅ MongoDB connected');
