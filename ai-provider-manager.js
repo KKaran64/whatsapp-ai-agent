@@ -302,12 +302,8 @@ class AIProviderManager {
       console.log('❌ Gemini failed:', error.message);
     }
 
-    // 4. Try Claude (Tertiary - PAID, only if configured)
-    try {
-      return await this.tryClaude(systemPrompt, conversationHistory, userMessage);
-    } catch (error) {
-      console.log('❌ Claude failed:', error.message);
-    }
+    // 4. Claude SKIPPED (removed to use only free providers: Groq + Gemini)
+    // If both Groq and Gemini fail, fallback to rule-based responses
 
     // 5. Fallback to rule-based
     const fallbackResponse = this.getFallbackResponse(userMessage);
