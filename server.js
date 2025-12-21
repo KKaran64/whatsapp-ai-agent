@@ -588,14 +588,15 @@ function setupMessageProcessor() {
       // STRICT: Auto-send ONLY verified cork product images
       const searchText = agentResponse + ' ' + messageBody;
 
-      // Detect catalog request from natural responses (e.g., "show you our coasters", "here are our diaries")
+      // Detect catalog request from BOTH AI response AND user message
+      // This handles cases where user asks "pls share picture" after already discussing a product
       let catalogCategory = null;
-      if (/\b(coasters?|coaster collection)\b/i.test(agentResponse)) catalogCategory = 'coasters';
-      else if (/\b(diary|diaries)\b/i.test(agentResponse) && /\b(show|here|have|our)\b/i.test(agentResponse)) catalogCategory = 'diaries';
-      else if (/\b(desk|organizers?)\b/i.test(agentResponse) && /\b(show|here|collection|our)\b/i.test(agentResponse)) catalogCategory = 'desk';
-      else if (/\b(bags?|wallets?|laptop)\b/i.test(agentResponse) && /\b(show|here|collection|our)\b/i.test(agentResponse)) catalogCategory = 'bags';
-      else if (/\b(planters?)\b/i.test(agentResponse) && /\b(show|here|collection|our)\b/i.test(agentResponse)) catalogCategory = 'planters';
-      else if (/\b(catalog|catalogue|all products|full range)\b/i.test(agentResponse)) catalogCategory = 'all';
+      if (/\b(coasters?|coaster collection)\b/i.test(searchText) && /\b(show|here|have|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'coasters';
+      else if (/\b(diary|diaries)\b/i.test(searchText) && /\b(show|here|have|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'diaries';
+      else if (/\b(desk|organizers?)\b/i.test(searchText) && /\b(show|here|collection|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'desk';
+      else if (/\b(bags?|wallets?|laptop)\b/i.test(searchText) && /\b(show|here|collection|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'bags';
+      else if (/\b(planters?)\b/i.test(searchText) && /\b(show|here|collection|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'planters';
+      else if (/\b(catalog|catalogue|all products|full range)\b/i.test(searchText)) catalogCategory = 'all';
 
       if (catalogCategory) {
         const catalogImages = getCatalogImages(catalogCategory);
