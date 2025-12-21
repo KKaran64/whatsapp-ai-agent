@@ -551,8 +551,10 @@ async function connectQueue() {
 
 // SHARED: Image detection and sending logic (used by BOTH queue and direct paths)
 async function handleImageDetectionAndSending(from, agentResponse, messageBody) {
-  // STRICT: Auto-send ONLY verified cork product images
-  const searchText = agentResponse + ' ' + messageBody;
+  try {
+    // STRICT: Auto-send ONLY verified cork product images
+    // Add null checks to prevent "undefined" in string concatenation
+    const searchText = (agentResponse || '') + ' ' + (messageBody || '');
 
   // DEBUG: Log the search text and detection results
   console.log('🔍 IMAGE DETECTION DEBUG:');
@@ -613,6 +615,12 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
         console.error('❌ Image send failed:', err.response?.data || err.message);
       }
     }
+  }
+  } catch (error) {
+    // Critical: Catch ALL errors to prevent bot from stopping
+    console.error('❌ Error in image detection and sending:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    // Don't throw - let caller handle user communication
   }
 }
 
@@ -825,6 +833,13 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
 
           } catch (err) {
             console.error('Error processing message:', err);
+            if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
+
+            // CRITICAL FIX: Send error message to customer so they know bot is working
+            await sendWhatsAppMessage(
+              from,
+              "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
+            ).catch(e => console.error('Failed to send error message:', e));
           }
         }
       }
@@ -1113,7 +1128,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'FIXED-IMAGE-SENDING-v4',
+    version: 'CRITICAL-FIXES-v5',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
@@ -1151,7 +1166,10 @@ if (CONFIG.SENTRY_DSN) {
 process.on('SIGTERM', async () => {
   console.log('🛑 SIGTERM received, shutting down gracefully...');
 
-  await messageQueue.close();
+  // Fix null reference crash - only close queue if it exists
+  if (messageQueue) {
+    await messageQueue.close();
+  }
   await mongoose.connection.close();
 
   process.exit(0);
