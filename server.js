@@ -557,7 +557,9 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i;
 
     const searchText = (agentResponse || '') + ' ' + (messageBody || '');
-    const hasTrigger = TRIGGER_WORDS.test(searchText);
+    // CRITICAL FIX: Only check trigger words in USER message, not bot response
+    // This prevents bot's own words like "We have coasters" from triggering images
+    const hasTrigger = TRIGGER_WORDS.test(messageBody || '');
 
     // Catalog detection with condensed pattern matching
     const catalogPatterns = {
@@ -1112,7 +1114,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'VALUE-SELLING-SSN-DPS-v8',
+    version: 'TRIGGER-FIX-v9',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
