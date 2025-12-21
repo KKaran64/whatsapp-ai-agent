@@ -553,7 +553,8 @@ async function connectQueue() {
 async function handleImageDetectionAndSending(from, agentResponse, messageBody) {
   try {
     // Pattern constants (defined once, used multiple times)
-    const TRIGGER_WORDS = /\b(show|here|have|our|look|see|pictures?|photos?|images?|send|share)\b/i;
+    // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
+    const TRIGGER_WORDS = /\b(show|pictures?|photos?|images?|send|share|look at|see (the|some)?)\b/i;
     const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i;
 
     const searchText = (agentResponse || '') + ' ' + (messageBody || '');
@@ -1114,7 +1115,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'TRIGGER-FIX-v9',
+    version: 'TRIGGER-FIX-v10-STRICT',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
