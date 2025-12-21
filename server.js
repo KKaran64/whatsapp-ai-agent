@@ -604,8 +604,12 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     const productImage = findProductImage(searchText);
     console.log(`🔍 Image search: "${searchText.substring(0, 100)}" -> ${productImage ? 'FOUND' : 'NOT FOUND'}`);
 
-    // Only send if: 1) Valid cork URL found, 2) Cork product keywords present
-    if (productImage && isValidCorkProductUrl(productImage) &&
+    // Check for trigger words (REQUIRED to avoid sending images during pricing discussions)
+    const hasTriggerWords = /\b(show|here|have|our|look|see|pictures?|photos?|images?|send|share)\b/i.test(searchText);
+    console.log(`  Has trigger words? ${hasTriggerWords}`);
+
+    // Only send if: 1) Valid cork URL found, 2) Cork product keywords present, 3) Trigger words present
+    if (productImage && isValidCorkProductUrl(productImage) && hasTriggerWords &&
         /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i.test(searchText)) {
       try {
         console.log(`📤 Sending verified cork product: ${productImage}`);
@@ -1128,7 +1132,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'CRITICAL-FIXES-v5',
+    version: 'TRIGGER-WORDS-FIX-v6',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
