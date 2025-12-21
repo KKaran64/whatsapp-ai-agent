@@ -552,79 +552,59 @@ async function connectQueue() {
 // SHARED: Image detection and sending logic (used by BOTH queue and direct paths)
 async function handleImageDetectionAndSending(from, agentResponse, messageBody) {
   try {
-    // STRICT: Auto-send ONLY verified cork product images
-    // Add null checks to prevent "undefined" in string concatenation
+    // Pattern constants (defined once, used multiple times)
+    const TRIGGER_WORDS = /\b(show|here|have|our|look|see|pictures?|photos?|images?|send|share)\b/i;
+    const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i;
+
     const searchText = (agentResponse || '') + ' ' + (messageBody || '');
+    const hasTrigger = TRIGGER_WORDS.test(searchText);
 
-  // DEBUG: Log the search text and detection results
-  console.log('🔍 IMAGE DETECTION DEBUG:');
-  console.log(`  Search text: "${searchText}"`);
-  console.log(`  Has "coasters"? ${/\b(coasters?|coaster collection)\b/i.test(searchText)}`);
-  console.log(`  Has trigger words? ${/\b(show|here|have|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)}`);
+    // Catalog detection with condensed pattern matching
+    const catalogPatterns = {
+      'coasters': /\b(coasters?|coaster collection)\b/i,
+      'diaries': /\b(diary|diaries)\b/i,
+      'desk': /\b(desk|organizers?)\b/i,
+      'bags': /\b(bags?|wallets?|laptop)\b/i,
+      'planters': /\b(planters?)\b/i,
+      'all': /\b(catalog|catalogue|all products|full range)\b/i
+    };
 
-  // Detect catalog request from BOTH AI response AND user message
-  // This handles cases where user asks "pls share picture" after already discussing a product
-  let catalogCategory = null;
-  if (/\b(coasters?|coaster collection)\b/i.test(searchText) && /\b(show|here|have|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'coasters';
-  else if (/\b(diary|diaries)\b/i.test(searchText) && /\b(show|here|have|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'diaries';
-  else if (/\b(desk|organizers?)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'desk';
-  else if (/\b(bags?|wallets?|laptop)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'bags';
-  else if (/\b(planters?)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'planters';
-  else if (/\b(catalog|catalogue|all products|full range)\b/i.test(searchText)) catalogCategory = 'all';
+    let catalogCategory = null;
+    for (const [category, pattern] of Object.entries(catalogPatterns)) {
+      if (pattern.test(searchText) && (category === 'all' || hasTrigger)) {
+        catalogCategory = category;
+        break;
+      }
+    }
 
-  console.log(`  Catalog category: ${catalogCategory || 'NONE'}`);
+    if (catalogCategory) {
+      const catalogImages = getCatalogImages(catalogCategory);
+      console.log(`📚 Sending ${catalogImages.length} ${catalogCategory} images`);
 
-  if (catalogCategory) {
-    const catalogImages = getCatalogImages(catalogCategory);
-    console.log(`📚 Catalog detected: ${catalogCategory} (${catalogImages.length} images)`);
-    console.log(`  Image URLs:`, catalogImages);
-
-    try {
-      let sentCount = 0;
-      for (const imageUrl of catalogImages.slice(0, 6)) { // Max 6 images
-        console.log(`  Checking image ${sentCount + 1}: ${imageUrl}`);
-        if (isValidCorkProductUrl(imageUrl)) {
-          console.log(`  ✓ Valid URL, sending...`);
-          await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
-          sentCount++;
-          console.log(`  ✓ Image ${sentCount} sent successfully`);
-          await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-        } else {
-          console.log(`  ✗ Invalid URL, skipping`);
+      try {
+        for (const imageUrl of catalogImages.slice(0, 6)) {
+          if (isValidCorkProductUrl(imageUrl)) {
+            await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      } catch (err) {
+        console.error('❌ Catalog send failed:', err.response?.data || err.message);
+      }
+    } else if (hasTrigger && PRODUCT_KEYWORDS.test(searchText)) {
+      // Single product image (only if trigger words present)
+      const productImage = findProductImage(searchText);
+      if (productImage && isValidCorkProductUrl(productImage)) {
+        try {
+          await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
+        } catch (err) {
+          console.error('❌ Image send failed:', err.response?.data || err.message);
         }
       }
-      console.log(`✅ Sent ${sentCount}/${catalogImages.length} catalog images`);
-    } catch (err) {
-      console.error('❌ Catalog send failed:', err.response?.data || err.message);
-      console.error('   Full error:', err);
     }
-  }
-  // Single product image request
-  else {
-    const productImage = findProductImage(searchText);
-    console.log(`🔍 Image search: "${searchText.substring(0, 100)}" -> ${productImage ? 'FOUND' : 'NOT FOUND'}`);
-
-    // Check for trigger words (REQUIRED to avoid sending images during pricing discussions)
-    const hasTriggerWords = /\b(show|here|have|our|look|see|pictures?|photos?|images?|send|share)\b/i.test(searchText);
-    console.log(`  Has trigger words? ${hasTriggerWords}`);
-
-    // Only send if: 1) Valid cork URL found, 2) Cork product keywords present, 3) Trigger words present
-    if (productImage && isValidCorkProductUrl(productImage) && hasTriggerWords &&
-        /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i.test(searchText)) {
-      try {
-        console.log(`📤 Sending verified cork product: ${productImage}`);
-        await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
-        console.log('✅ Image sent successfully');
-      } catch (err) {
-        console.error('❌ Image send failed:', err.response?.data || err.message);
-      }
-    }
-  }
   } catch (error) {
-    // Critical: Catch ALL errors to prevent bot from stopping
-    console.error('❌ Error in image detection and sending:', error);
+    console.error('❌ Error in image detection:', error);
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
-    // Don't throw - let caller handle user communication
   }
 }
 
@@ -1132,7 +1112,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'TRIGGER-WORDS-FIX-v6',
+    version: 'CONDENSED-CODE-v7',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
