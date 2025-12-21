@@ -1086,6 +1086,8 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
+    version: 'IMAGE-FIX-v2',
+    groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
       queue: messageQueue ? 'active' : 'inactive'
