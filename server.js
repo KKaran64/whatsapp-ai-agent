@@ -50,11 +50,23 @@ const groq = new Groq({ apiKey: CONFIG.GROQ_API_KEY });
 
 // Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
 // UPDATED: Claude removed to use only free providers (Groq + Gemini)
+console.log('🔧 Initializing AI Manager with environment variables:');
+console.log(`  - GROQ_API_KEY: ${CONFIG.GROQ_API_KEY ? 'SET (key 1)' : 'NOT SET'}`);
+console.log(`  - GROQ_API_KEY_2: ${process.env.GROQ_API_KEY_2 ? 'SET (key 2)' : 'NOT SET'}`);
+console.log(`  - GROQ_API_KEY_3: ${process.env.GROQ_API_KEY_3 ? 'SET (key 3)' : 'NOT SET'}`);
+console.log(`  - GROQ_API_KEY_4: ${process.env.GROQ_API_KEY_4 ? 'SET (key 4)' : 'NOT SET'}`);
+console.log(`  - GEMINI_API_KEY: ${CONFIG.GEMINI_API_KEY ? 'SET' : 'NOT SET'}`);
+
 const aiManager = new AIProviderManager({
   GROQ_API_KEY: CONFIG.GROQ_API_KEY,
+  GROQ_API_KEY_2: process.env.GROQ_API_KEY_2,
+  GROQ_API_KEY_3: process.env.GROQ_API_KEY_3,
+  GROQ_API_KEY_4: process.env.GROQ_API_KEY_4,
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
   ANTHROPIC_API_KEY: null // Disabled - using only free providers
 });
+
+console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
 
 // Initialize Vision Handler (Multi-provider: Gemini → Claude → Google Cloud)
 const visionHandler = new VisionHandler({
