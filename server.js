@@ -591,11 +591,11 @@ function setupMessageProcessor() {
       // Detect catalog request from BOTH AI response AND user message
       // This handles cases where user asks "pls share picture" after already discussing a product
       let catalogCategory = null;
-      if (/\b(coasters?|coaster collection)\b/i.test(searchText) && /\b(show|here|have|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'coasters';
-      else if (/\b(diary|diaries)\b/i.test(searchText) && /\b(show|here|have|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'diaries';
-      else if (/\b(desk|organizers?)\b/i.test(searchText) && /\b(show|here|collection|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'desk';
-      else if (/\b(bags?|wallets?|laptop)\b/i.test(searchText) && /\b(show|here|collection|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'bags';
-      else if (/\b(planters?)\b/i.test(searchText) && /\b(show|here|collection|our|picture|photo|image|send|share)\b/i.test(searchText)) catalogCategory = 'planters';
+      if (/\b(coasters?|coaster collection)\b/i.test(searchText) && /\b(show|here|have|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'coasters';
+      else if (/\b(diary|diaries)\b/i.test(searchText) && /\b(show|here|have|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'diaries';
+      else if (/\b(desk|organizers?)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'desk';
+      else if (/\b(bags?|wallets?|laptop)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'bags';
+      else if (/\b(planters?)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'planters';
       else if (/\b(catalog|catalogue|all products|full range)\b/i.test(searchText)) catalogCategory = 'all';
 
       if (catalogCategory) {
