@@ -49,10 +49,11 @@ const CONFIG = {
 const groq = new Groq({ apiKey: CONFIG.GROQ_API_KEY });
 
 // Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
+// UPDATED: Claude removed to use only free providers (Groq + Gemini)
 const aiManager = new AIProviderManager({
   GROQ_API_KEY: CONFIG.GROQ_API_KEY,
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
-  ANTHROPIC_API_KEY: null // Disabled for Option B (FREE tier only)
+  ANTHROPIC_API_KEY: null // Disabled - using only free providers
 });
 
 // Initialize Vision Handler (Multi-provider: Gemini → Claude → Google Cloud)
