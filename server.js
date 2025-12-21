@@ -600,6 +600,12 @@ function setupMessageProcessor() {
       // STRICT: Auto-send ONLY verified cork product images
       const searchText = agentResponse + ' ' + messageBody;
 
+      // DEBUG: Log the search text and detection results
+      console.log('🔍 IMAGE DETECTION DEBUG:');
+      console.log(`  Search text: "${searchText}"`);
+      console.log(`  Has "coasters"? ${/\b(coasters?|coaster collection)\b/i.test(searchText)}`);
+      console.log(`  Has trigger words? ${/\b(show|here|have|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)}`);
+
       // Detect catalog request from BOTH AI response AND user message
       // This handles cases where user asks "pls share picture" after already discussing a product
       let catalogCategory = null;
@@ -610,20 +616,31 @@ function setupMessageProcessor() {
       else if (/\b(planters?)\b/i.test(searchText) && /\b(show|here|collection|our|pictures?|photos?|images?|send|share)\b/i.test(searchText)) catalogCategory = 'planters';
       else if (/\b(catalog|catalogue|all products|full range)\b/i.test(searchText)) catalogCategory = 'all';
 
+      console.log(`  Catalog category: ${catalogCategory || 'NONE'}`);
+
       if (catalogCategory) {
         const catalogImages = getCatalogImages(catalogCategory);
         console.log(`📚 Catalog detected: ${catalogCategory} (${catalogImages.length} images)`);
+        console.log(`  Image URLs:`, catalogImages);
 
         try {
+          let sentCount = 0;
           for (const imageUrl of catalogImages.slice(0, 6)) { // Max 6 images
+            console.log(`  Checking image ${sentCount + 1}: ${imageUrl}`);
             if (isValidCorkProductUrl(imageUrl)) {
+              console.log(`  ✓ Valid URL, sending...`);
               await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
+              sentCount++;
+              console.log(`  ✓ Image ${sentCount} sent successfully`);
               await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+            } else {
+              console.log(`  ✗ Invalid URL, skipping`);
             }
           }
-          console.log(`✅ Sent ${catalogImages.length} catalog images`);
+          console.log(`✅ Sent ${sentCount}/${catalogImages.length} catalog images`);
         } catch (err) {
           console.error('❌ Catalog send failed:', err.response?.data || err.message);
+          console.error('   Full error:', err);
         }
       }
       // Single product image request
