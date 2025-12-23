@@ -42,6 +42,7 @@ const CONFIG = {
   MONGODB_URI: (process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales').trim(),
   REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
   SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
+  PDF_CATALOG_URL: (process.env.PDF_CATALOG_URL || '').trim(),
   NODE_ENV: process.env.NODE_ENV || 'development'
 };
 
@@ -561,6 +562,25 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     // This prevents bot saying "Let me show you diaries" from triggering images
     const userMessage = messageBody || '';
     const hasTrigger = TRIGGER_WORDS.test(userMessage);
+
+    // PDF Catalog detection - HIGHEST PRIORITY
+    // If user requests full catalog/catalogue/pdf, send PDF document
+    const pdfCatalogRequest = /\b(catalog|catalogue|pdf|brochure|full range|all products|price list)\b/i;
+    if (pdfCatalogRequest.test(userMessage) && CONFIG.PDF_CATALOG_URL) {
+      try {
+        console.log('📄 Sending PDF catalog to', from);
+        await sendWhatsAppDocument(
+          from,
+          CONFIG.PDF_CATALOG_URL,
+          '9Cork-Product-Catalog.pdf',
+          'Here is our complete product catalog with all products and pricing! 🌿'
+        );
+        return; // Exit after sending PDF, don't send images
+      } catch (error) {
+        console.error('❌ Failed to send PDF catalog:', error.message);
+        // Continue to regular image sending if PDF fails
+      }
+    }
 
     // Catalog detection - check ONLY user message for product keywords
     const catalogPatterns = {
@@ -1101,6 +1121,33 @@ async function sendWhatsAppImage(to, imageUrl, caption = '') {
   }
 }
 
+// Send WhatsApp document (PDF, DOC, etc.)
+async function sendWhatsAppDocument(to, documentUrl, filename, caption = '') {
+  try {
+    const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'document',
+        document: {
+          link: documentUrl,
+          filename: filename,
+          caption: caption
+        }
+      },
+      { headers: { 'Authorization': `Bearer ${cleanToken}`, 'Content-Type': 'application/json' } }
+    );
+    console.log('📄 Document sent successfully:', filename);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error sending document:', error.response?.data || error.message);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+    throw error;
+  }
+}
+
 // Send typing indicator
 async function sendTypingIndicator(to) {
   try {
@@ -1133,7 +1180,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v12',
+    version: 'ROBUST-v13-PDF',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
