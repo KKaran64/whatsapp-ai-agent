@@ -557,12 +557,12 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     const TRIGGER_WORDS = /\b(show|picture|pictures|photo|photos|image|images|send|share)\b/i;
     const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i;
 
-    const searchText = (agentResponse || '') + ' ' + (messageBody || '');
-    // CRITICAL FIX: Only check trigger words in USER message, not bot response
-    // This prevents bot's own words like "We have coasters" from triggering images
-    const hasTrigger = TRIGGER_WORDS.test(messageBody || '');
+    // CRITICAL FIX: Only use USER message for detection, NEVER bot response
+    // This prevents bot saying "Let me show you diaries" from triggering images
+    const userMessage = messageBody || '';
+    const hasTrigger = TRIGGER_WORDS.test(userMessage);
 
-    // Catalog detection with condensed pattern matching
+    // Catalog detection - check ONLY user message for product keywords
     const catalogPatterns = {
       'coasters': /\b(coasters?|coaster collection)\b/i,
       'diaries': /\b(diary|diaries)\b/i,
@@ -574,7 +574,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
 
     let catalogCategory = null;
     for (const [category, pattern] of Object.entries(catalogPatterns)) {
-      if (pattern.test(searchText) && (category === 'all' || hasTrigger)) {
+      // FIXED: Check pattern in USER message only, not bot response
+      if (pattern.test(userMessage) && (category === 'all' || hasTrigger)) {
         catalogCategory = category;
         break;
       }
@@ -1132,7 +1133,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v11',
+    version: 'ROBUST-v12',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
