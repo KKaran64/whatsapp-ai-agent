@@ -554,7 +554,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
   try {
     // Pattern constants (defined once, used multiple times)
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
-    const TRIGGER_WORDS = /\b(show|pictures?|photos?|images?|send|share|look at|see (the|some)?)\b/i;
+    const TRIGGER_WORDS = /\b(show|picture|pictures|photo|photos|image|images|send|share)\b/i;
     const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i;
 
     const searchText = (agentResponse || '') + ' ' + (messageBody || '');
@@ -584,15 +584,22 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
       const catalogImages = getCatalogImages(catalogCategory);
       console.log(`📚 Sending ${catalogImages.length} ${catalogCategory} images`);
 
-      try {
-        for (const imageUrl of catalogImages.slice(0, 6)) {
+      let sentCount = 0;
+      let failedCount = 0;
+      for (const imageUrl of catalogImages.slice(0, 6)) {
+        try {
           if (isValidCorkProductUrl(imageUrl)) {
             await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
+            sentCount++;
             await new Promise(resolve => setTimeout(resolve, 500));
           }
+        } catch (err) {
+          failedCount++;
+          console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
         }
-      } catch (err) {
-        console.error('❌ Catalog send failed:', err.response?.data || err.message);
+      }
+      if (failedCount > 0 && sentCount > 0) {
+        await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
       }
     } else if (hasTrigger && PRODUCT_KEYWORDS.test(searchText)) {
       // Single product image (only if trigger words present)
@@ -688,7 +695,7 @@ const webhookLimiter = rateLimit({
   legacyHeaders: false
 });
 
-// Webhook signature validation middleware
+// Webhook signature validation middleware (SECURE - timing attack protected)
 function validateWebhookSignature(req, res, next) {
   if (!CONFIG.WHATSAPP_APP_SECRET) {
     // Skip validation if no app secret configured (development mode)
@@ -707,8 +714,18 @@ function validateWebhookSignature(req, res, next) {
     .update(JSON.stringify(req.body))
     .digest('hex');
 
-  if (signature !== expectedSignature) {
-    console.error('❌ Invalid webhook signature');
+  // SECURITY FIX: Use timing-safe comparison to prevent timing attacks
+  try {
+    const signatureBuffer = Buffer.from(signature.replace('sha256=', ''), 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature.replace('sha256=', ''), 'hex');
+
+    if (signatureBuffer.length !== expectedBuffer.length ||
+        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+      console.error('❌ Invalid webhook signature');
+      return res.sendStatus(403);
+    }
+  } catch (err) {
+    console.error('❌ Signature validation error:', err.message);
     return res.sendStatus(403);
   }
 
@@ -985,10 +1002,10 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     const fullContext = [...context, { role: 'user', content: message }];
 
     // ALSO store in conversationMemory for in-memory fallback (in case MongoDB fails)
+    // RACE CONDITION FIX: Check existence before pushing
     if (!conversationMemory.has(customerPhone)) {
       conversationMemory.set(customerPhone, []);
     }
-    // Add user message
     conversationMemory.get(customerPhone).push({
       role: 'user',
       content: message,
@@ -1115,7 +1132,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'TRIGGER-FIX-v10-STRICT',
+    version: 'ROBUST-v11',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
