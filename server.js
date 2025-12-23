@@ -43,6 +43,9 @@ const CONFIG = {
   REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
   SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
   PDF_CATALOG_URL: (process.env.PDF_CATALOG_URL || '').trim(),
+  PDF_CATALOG_HORECA: (process.env.PDF_CATALOG_HORECA || '').trim(),
+  PDF_CATALOG_PRODUCTS: (process.env.PDF_CATALOG_PRODUCTS || '').trim(),
+  PDF_CATALOG_COMBOS: (process.env.PDF_CATALOG_COMBOS || '').trim(),
   NODE_ENV: process.env.NODE_ENV || 'development'
 };
 
@@ -564,18 +567,47 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     const hasTrigger = TRIGGER_WORDS.test(userMessage);
 
     // PDF Catalog detection - HIGHEST PRIORITY
-    // If user requests full catalog/catalogue/pdf, send PDF document
+    // Smart routing based on keywords: HORECA, COMBOS/GIFTING, or GENERAL PRODUCTS
     const pdfCatalogRequest = /\b(catalog|catalogue|pdf|brochure|full range|all products|price list)\b/i;
-    if (pdfCatalogRequest.test(userMessage) && CONFIG.PDF_CATALOG_URL) {
+    if (pdfCatalogRequest.test(userMessage)) {
       try {
-        console.log('📄 Sending PDF catalog to', from);
-        await sendWhatsAppDocument(
-          from,
-          CONFIG.PDF_CATALOG_URL,
-          '9Cork-Product-Catalog.pdf',
-          'Here is our complete product catalog with all products and pricing! 🌿'
-        );
-        return; // Exit after sending PDF, don't send images
+        let catalogUrl = '';
+        let catalogName = '';
+        let catalogCaption = '';
+
+        // HORECA catalog detection
+        if (/\b(horeca|hotel|restaurant|cafe|bar|hospitality)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_HORECA) {
+          catalogUrl = CONFIG.PDF_CATALOG_HORECA;
+          catalogName = '9Cork-HORECA-Catalog.pdf';
+          catalogCaption = 'Here is our HORECA catalog for Hotels, Restaurants & Cafes! 🌿';
+          console.log('📄 Sending HORECA catalog to', from);
+        }
+        // Gifting/Combos catalog detection
+        else if (/\b(gifting|gift|combo|combos|corporate gift|present)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
+          catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
+          catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
+          catalogCaption = 'Here is our Gifting Combos catalog - perfect for corporate gifting! 🌿';
+          console.log('📄 Sending Gifting Combos catalog to', from);
+        }
+        // General products catalog (default)
+        else if (CONFIG.PDF_CATALOG_PRODUCTS) {
+          catalogUrl = CONFIG.PDF_CATALOG_PRODUCTS;
+          catalogName = '9Cork-Products-Catalog.pdf';
+          catalogCaption = 'Here is our complete cork products catalog! 🌿';
+          console.log('📄 Sending Products catalog to', from);
+        }
+        // Fallback to legacy single catalog URL
+        else if (CONFIG.PDF_CATALOG_URL) {
+          catalogUrl = CONFIG.PDF_CATALOG_URL;
+          catalogName = '9Cork-Catalog.pdf';
+          catalogCaption = 'Here is our product catalog! 🌿';
+          console.log('📄 Sending catalog to', from);
+        }
+
+        if (catalogUrl) {
+          await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
+          return; // Exit after sending PDF, don't send images
+        }
       } catch (error) {
         console.error('❌ Failed to send PDF catalog:', error.message);
         // Continue to regular image sending if PDF fails
@@ -1180,7 +1212,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v13-PDF',
+    version: 'ROBUST-v14-MULTI-PDF',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
