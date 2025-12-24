@@ -560,7 +560,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     // Pattern constants (defined once, used multiple times)
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
     const TRIGGER_WORDS = /\b(show|picture|pictures|photo|photos|image|images|send|share)\b/i;
-    const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport)/i;
+    const PRODUCT_KEYWORDS = /(cork|coaster|diary|organizer|wallet|planter|tray|tea light|laptop bag|pen holder|desk mat|card holder|passport|water|bottle|borosil)/i;
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
@@ -1213,7 +1213,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v19-IMAGE-DATABASE',
+    version: 'ROBUST-v20-PRODUCT-KEYWORDS-FIX',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
