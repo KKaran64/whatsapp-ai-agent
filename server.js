@@ -560,8 +560,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     // Pattern constants (defined once, used multiple times)
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
     const TRIGGER_WORDS = /\b(show|picture|pictures|photo|photos|image|images|send|share)\b/i;
-    // AUTO-GENERATED from product-image-database.json - includes ALL product keywords
-    const PRODUCT_KEYWORDS = /(bag|bohemian|borosil|bottle|breakfast|bridge|business|calendar|candle|card|choco|chocochip|clutch|coaster|coasters|combo|cube|desk|desktop|diamond|diaries|diary|dining|drinkware|fabric|fridge|glass|grain|heart|holder|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|mouse|mousepad|multicolor|natural|notebook|organizer|pad|passport|pen|pencil|piece|placemat|plain|planner|plant|planter|planters|plants|print|round|runner|serving|set|shaped|sleeve|small|square|stand|striped|succulent|table|tabletop|tea|tealight|test|texture|textured|tote|travel|tray|triple|trivet|tube|veneer|wallet|water|women)/i;
+    // AUTO-GENERATED from product-image-database.json v1.1 - includes ALL product keywords
+    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|and|bag|bifold|bohemian|breakfast|bridge|business|calendar|candle|card|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|desk|desktop|diamond|diaries|diary|dining|fabric|for|fridge|grain|heart|holder|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|mouse|mousepad|multicolor|multicolored|natural|notebook|organizer|pad|passport|pen|pencil|piece|placemat|plain|planner|plant|planter|planters|plants|print|round|runner|serving|set|shaped|sleeve|small|square|stand|striped|succulent|table|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|triple|trivet|tube|ushaped|wallet|with|women)/i;
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
@@ -1214,7 +1214,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v21-ALL-PRODUCTS-KEYWORDS',
+    version: 'ROBUST-v22-FIX-DUPLICATE-IMAGES',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
