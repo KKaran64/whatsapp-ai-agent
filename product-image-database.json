@@ -1,0 +1,307 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "lastUpdated": "2024-12-24",
+    "source": "9cork.com",
+    "totalProducts": 120,
+    "totalCategories": 12
+  },
+  "categories": {
+    "coasters": {
+      "displayName": "Cork Coasters",
+      "keywords": ["coaster", "coasters", "trivet", "mat"],
+      "products": [
+        {
+          "id": "coaster-001",
+          "name": "4 Piece Cork Coasters Set",
+          "aliases": ["4 piece coasters", "coaster set", "heart coasters"],
+          "images": [
+            "https://9cork.com/wp-content/uploads/2023/12/DSC05667-1024x683.jpg",
+            "https://9cork.com/wp-content/uploads/2024/05/DSC04953-1-1024x683.jpg"
+          ],
+          "price": 120,
+          "tags": ["set", "4pcs", "heart"]
+        },
+        {
+          "id": "coaster-002",
+          "name": "Large Grain Cork Coasters",
+          "aliases": ["large grain", "natural grain", "textured coasters"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC05922-1024x683.jpg"],
+          "price": 50,
+          "tags": ["natural", "grain"]
+        },
+        {
+          "id": "coaster-003",
+          "name": "Natural Cork Coasters",
+          "aliases": ["natural coasters", "plain coasters", "leaf coasters"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC06226-1024x684.jpg"],
+          "price": 45,
+          "tags": ["natural", "plain"]
+        },
+        {
+          "id": "coaster-004",
+          "name": "Square Bridge Cork Coasters",
+          "aliases": ["square coasters", "bridge coasters"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC06352-1024x684.jpg"],
+          "price": 50,
+          "tags": ["square", "bridge"]
+        },
+        {
+          "id": "coaster-005",
+          "name": "Square Striped Cork Coaster",
+          "aliases": ["striped coasters", "fabric coasters"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/05/DSC04758-1-1024x683.jpg"],
+          "price": 50,
+          "tags": ["square", "striped"]
+        }
+      ]
+    },
+    "desk_organizers": {
+      "displayName": "Desk Organizers & Accessories",
+      "keywords": ["desk", "organizer", "pen", "holder", "stand", "mat"],
+      "products": [
+        {
+          "id": "desk-001",
+          "name": "Cork Desk Organizer",
+          "aliases": ["desk organizer", "desktop organizer", "organizer tray"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC08781-1024x683.jpg"],
+          "price": 390,
+          "tags": ["organizer", "desk"]
+        },
+        {
+          "id": "desk-002",
+          "name": "Cork Pen Holder",
+          "aliases": ["pen holder", "pen stand", "pencil holder"],
+          "images": [
+            "https://9cork.com/wp-content/uploads/2024/04/img_0006_DSC06108.jpg",
+            "https://9cork.com/wp-content/uploads/2024/04/img_0001_DSC04807.jpg"
+          ],
+          "price": 180,
+          "tags": ["pen", "holder"]
+        },
+        {
+          "id": "desk-003",
+          "name": "Cork Desk Mat",
+          "aliases": ["desk mat", "desktop mat", "mouse pad", "mousepad"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/04/img_0002_DSC04828.jpg"],
+          "price": 250,
+          "tags": ["mat", "desk", "mouse"]
+        },
+        {
+          "id": "desk-004",
+          "name": "Cork Pen and Card Holder",
+          "aliases": ["pen and card holder", "combo holder", "3 in 1"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC08971-1024x683.jpg"],
+          "price": 415,
+          "tags": ["pen", "card", "combo"]
+        },
+        {
+          "id": "desk-005",
+          "name": "3-in-One Organizer",
+          "aliases": ["3 in 1 organizer", "triple organizer"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC08961-1024x683.jpg"],
+          "price": 550,
+          "tags": ["organizer", "3in1"]
+        }
+      ]
+    },
+    "diaries": {
+      "displayName": "Cork Diaries & Notebooks",
+      "keywords": ["diary", "diaries", "notebook", "journal", "planner"],
+      "products": [
+        {
+          "id": "diary-001",
+          "name": "Cork A5 Diary",
+          "aliases": ["a5 diary", "diary", "notebook", "journal"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/04/img_0004_DSC06108.jpg"],
+          "price": 135,
+          "tags": ["a5", "diary"]
+        },
+        {
+          "id": "diary-002",
+          "name": "Cork Desk Calendar",
+          "aliases": ["desk calendar", "calendar with pen holder"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/04/img_0000_DSC05846.jpg"],
+          "price": 200,
+          "tags": ["calendar", "desk"]
+        }
+      ]
+    },
+    "planters": {
+      "displayName": "Cork Planters",
+      "keywords": ["planter", "planters", "plant", "plants", "succulent", "test tube"],
+      "products": [
+        {
+          "id": "planter-001",
+          "name": "Test Tube Planter",
+          "aliases": ["test tube planter", "test tube", "u shaped planter", "cork test tube", "planters", "cork planters"],
+          "images": [
+            "https://9cork.com/wp-content/uploads/2023/12/U-Shaped-Planter-1024x683.jpg",
+            "https://9cork.com/wp-content/uploads/2023/12/DSC08998-1024x683.jpg"
+          ],
+          "price": 180,
+          "tags": ["test tube", "u-shaped", "planters"]
+        },
+        {
+          "id": "planter-002",
+          "name": "Fridge Magnet Planter",
+          "aliases": ["fridge magnet", "magnet planter", "small planter"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/Small-Fridge-Magnet-1024x683.jpg"],
+          "price": 130,
+          "tags": ["magnet", "fridge", "small"]
+        },
+        {
+          "id": "planter-003",
+          "name": "Round Cork Planter",
+          "aliases": ["round planter", "table top planter", "desktop planter"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/Round-Planter-1024x683.jpg"],
+          "price": 280,
+          "tags": ["round", "tabletop"]
+        },
+        {
+          "id": "planter-004",
+          "name": "Multicolored Cork Planter",
+          "aliases": ["multicolored planter", "diamond print", "bohemian planter"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/Diamond-Print-1024x769.jpg"],
+          "price": 310,
+          "tags": ["multicolor", "diamond"]
+        },
+        {
+          "id": "planter-005",
+          "name": "Choco Chip Cork Planter",
+          "aliases": ["choco chip", "chocochip planter", "textured planter"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/Chocochip-Texture-1024x683.jpg"],
+          "price": 290,
+          "tags": ["chocochip", "texture"]
+        }
+      ]
+    },
+    "bags_wallets": {
+      "displayName": "Bags, Wallets & Accessories",
+      "keywords": ["bag", "wallet", "card holder", "passport", "laptop", "clutch", "tote"],
+      "products": [
+        {
+          "id": "bag-001",
+          "name": "Cork Laptop Bag",
+          "aliases": ["laptop bag", "13 inch laptop bag", "15 inch laptop bag", "laptop sleeve"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg"],
+          "price": 850,
+          "tags": ["laptop", "bag", "13inch", "15inch"]
+        },
+        {
+          "id": "wallet-001",
+          "name": "Cork Card Holder",
+          "aliases": ["card holder", "business card holder", "keychain"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC09266-1024x683.jpg"],
+          "price": 120,
+          "tags": ["card", "holder"]
+        },
+        {
+          "id": "wallet-002",
+          "name": "Cork Wallet for Men",
+          "aliases": ["wallet", "men wallet", "bi-fold wallet"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC09256-1024x683.jpg"],
+          "price": 280,
+          "tags": ["wallet", "men"]
+        },
+        {
+          "id": "wallet-003",
+          "name": "Cork Wallet for Women",
+          "aliases": ["women wallet", "ladies wallet"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC06368-1024x683.jpg"],
+          "price": 280,
+          "tags": ["wallet", "women"]
+        },
+        {
+          "id": "wallet-004",
+          "name": "Cork Passport Holder",
+          "aliases": ["passport holder", "travel wallet"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC09244-1024x683.jpg"],
+          "price": 240,
+          "tags": ["passport", "travel"]
+        }
+      ]
+    },
+    "serving_decor": {
+      "displayName": "Serving Trays & Table Décor",
+      "keywords": ["tray", "serving", "table", "mat", "placemat", "runner"],
+      "products": [
+        {
+          "id": "serve-001",
+          "name": "Cork Serving Tray",
+          "aliases": ["serving tray", "tray", "breakfast tray"],
+          "images": [
+            "https://9cork.com/wp-content/uploads/2023/12/IMG_5575-1024x682.jpg",
+            "https://9cork.com/wp-content/uploads/2023/12/DSC07580-1024x684.jpg"
+          ],
+          "price": 220,
+          "tags": ["tray", "serving"]
+        },
+        {
+          "id": "serve-002",
+          "name": "Cork Table Mat",
+          "aliases": ["table mat", "placemat", "dining mat"],
+          "images": [
+            "https://9cork.com/wp-content/uploads/2023/12/MAIN-IMAGE-1024x767.jpeg",
+            "https://9cork.com/wp-content/uploads/2023/12/IMG_0465-1024x683.jpg",
+            "https://9cork.com/wp-content/uploads/2023/12/IMG_0459-1024x683.jpg"
+          ],
+          "price": 38,
+          "tags": ["mat", "table", "placemat"]
+        }
+      ]
+    },
+    "tea_lights": {
+      "displayName": "Tea Light Holders & Candles",
+      "keywords": ["tea light", "candle", "holder", "tea lights"],
+      "products": [
+        {
+          "id": "light-001",
+          "name": "Cork Tea Light Holder",
+          "aliases": ["tea light holder", "candle holder"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/04/img_0008_DSC09319-1.jpg"],
+          "price": 120,
+          "tags": ["tealight", "candle"]
+        },
+        {
+          "id": "light-002",
+          "name": "Cork Tea Light Set",
+          "aliases": ["tea light set", "set of 3 tea lights"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/04/img_0006_DSC04617.jpg"],
+          "price": 280,
+          "tags": ["tealight", "set"]
+        },
+        {
+          "id": "light-003",
+          "name": "Cork Cube Tea Light",
+          "aliases": ["cube tea light", "cubic holder"],
+          "images": ["https://9cork.com/wp-content/uploads/2024/04/img_0007_DSC04613.jpg"],
+          "price": 120,
+          "tags": ["cube", "tealight"]
+        }
+      ]
+    },
+    "bottles": {
+      "displayName": "Water Bottles & Drinkware",
+      "keywords": ["bottle", "water", "borosil", "glass bottle", "drinkware"],
+      "products": [
+        {
+          "id": "bottle-001",
+          "name": "Borosil Glass Bottle with Cork Veneer",
+          "aliases": ["water bottle", "borosil bottle", "glass bottle", "cork bottle"],
+          "images": ["https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg"],
+          "price": 180,
+          "tags": ["borosil", "glass", "water"]
+        }
+      ]
+    }
+  },
+  "fallbackImages": {
+    "generic_coasters": "https://9cork.com/wp-content/uploads/2024/05/DSC04953-1-1024x683.jpg",
+    "generic_desk": "https://9cork.com/wp-content/uploads/2023/12/DSC08781-1024x683.jpg",
+    "generic_diary": "https://9cork.com/wp-content/uploads/2024/04/img_0004_DSC06108.jpg",
+    "generic_planter": "https://9cork.com/wp-content/uploads/2023/12/U-Shaped-Planter-1024x683.jpg",
+    "generic_wallet": "https://9cork.com/wp-content/uploads/2023/12/DSC09256-1024x683.jpg",
+    "generic_all": "https://9cork.com/wp-content/uploads/2024/05/DSC04953-1-1024x683.jpg"
+  }
+}
