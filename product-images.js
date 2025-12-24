@@ -54,7 +54,14 @@ const VERIFIED_CORK_PRODUCTS = {
   // Tea Lights
   "cork tea light holder": "https://9cork.com/wp-content/uploads/2024/04/img_0008_DSC09319-1.jpg",
   "cork tea light set": "https://9cork.com/wp-content/uploads/2024/04/img_0006_DSC04617.jpg",
-  "cork cube tea light": "https://9cork.com/wp-content/uploads/2024/04/img_0007_DSC04613.jpg"
+  "cork cube tea light": "https://9cork.com/wp-content/uploads/2024/04/img_0007_DSC04613.jpg",
+
+  // Additional Products
+  "water bottle": "https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg", // Using laptop bag as placeholder
+  "borosil water bottle": "https://9cork.com/wp-content/uploads/2023/12/DSC09172-1024x683.jpg",
+  "desktop mat": "https://9cork.com/wp-content/uploads/2024/04/img_0002_DSC04828.jpg",
+  "planter": "https://9cork.com/wp-content/uploads/2023/12/U-Shaped-Planter-1024x683.jpg",
+  "planters": "https://9cork.com/wp-content/uploads/2023/12/U-Shaped-Planter-1024x683.jpg"
 };
 
 // STRICT: Validate URL is from official cork domain
@@ -75,14 +82,14 @@ function findProductImage(productName) {
     }
   }
 
-  // 2. Partial match (conservative - requires 2+ keyword matches)
+  // 2. Partial match (requires at least 1 keyword match for single words, 2+ for multiple words)
   let bestMatch = null;
   let bestScore = 0;
 
   for (const [name, url] of Object.entries(VERIFIED_CORK_PRODUCTS)) {
     if (!isValidCorkProductUrl(url)) continue; // Skip invalid URLs
 
-    const keywords = search.split(/\s+/).filter(w => w.length > 3);
+    const keywords = search.split(/\s+/).filter(w => w.length > 2); // Lowered from 3 to 2
     const score = keywords.filter(k => name.includes(k)).length;
     if (score > bestScore) {
       bestScore = score;
@@ -90,9 +97,12 @@ function findProductImage(productName) {
     }
   }
 
-  // Require at least 2 keyword matches (conservative)
-  if (bestScore >= 2) {
-    console.log(`✅ Partial match found (score: ${bestScore})`);
+  // For single-word searches, require 1 match; for multi-word, require 2+
+  const keywords = search.split(/\s+/).filter(w => w.length > 2);
+  const minScore = keywords.length === 1 ? 1 : 2;
+
+  if (bestScore >= minScore) {
+    console.log(`✅ Partial match found (score: ${bestScore}/${keywords.length} keywords)`);
     return bestMatch;
   }
 
