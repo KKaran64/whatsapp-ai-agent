@@ -19,7 +19,8 @@ const AIProviderManager = require('./ai-provider-manager');
 const VisionHandler = require('./vision-handler');
 
 // Import Product Image Database (STRICT: Cork products only)
-const { findProductImage, getCatalogImages, isValidCorkProductUrl } = require('./product-images');
+// Use V2 image system with JSON database
+const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseStats } = require('./product-images-v2');
 
 const app = express();
 
@@ -1212,7 +1213,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v18-IMAGE-SEND-FIX',
+    version: 'ROBUST-v19-IMAGE-DATABASE',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
