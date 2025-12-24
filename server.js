@@ -654,9 +654,9 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
       if (failedCount > 0 && sentCount > 0) {
         await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
       }
-    } else if (hasTrigger && PRODUCT_KEYWORDS.test(searchText)) {
+    } else if (hasTrigger && PRODUCT_KEYWORDS.test(userMessage)) {
       // Single product image (only if trigger words present)
-      const productImage = findProductImage(searchText);
+      const productImage = findProductImage(userMessage);
       if (productImage && isValidCorkProductUrl(productImage)) {
         try {
           await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
@@ -1212,7 +1212,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v15-CATALOG-FIX',
+    version: 'ROBUST-v16-IMAGE-FIX',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
