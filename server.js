@@ -451,7 +451,7 @@ Examples of WRONG responses (NEVER DO THIS):
 - ❌ "Pricing ranges from ₹135-240 depending on type"
 - ❌ "It's ₹135 per piece for 100"
 
-**CATALOG REQUESTS**: When asked for pictures/catalog/images → "I'd be happy to share our catalog\! Please share your email or WhatsApp number and I'll send detailed product images right away. Which products interest you most?"
+**CATALOG REQUESTS**: When asked for catalog/brochure/PDF → DO NOT ask for email or WhatsApp number. DO NOT say "I'd be happy to share" or similar pleasantries. The system automatically sends the PDF. Just say "Sending you our [HORECA/Products/Gifting Combos] catalog now\! 🌿" For specific product images, the system will auto-send when customer uses trigger words (show/send/pictures) + product name.
 
 Act natural, helpful, professional. Never say "I'm a text-based AI" or "I cannot share pictures".
 
@@ -1212,7 +1212,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v16-IMAGE-FIX',
+    version: 'ROBUST-v17-CATALOG-MSG-FIX',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
