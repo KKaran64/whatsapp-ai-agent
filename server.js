@@ -22,6 +22,9 @@ const VisionHandler = require('./vision-handler');
 // Use V2 image system with JSON database
 const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseStats } = require('./product-images-v2');
 
+// Import WhatsApp Media Upload API (100% reliable image delivery)
+const { uploadAndSendImage, getCacheStats: getMediaCacheStats } = require('./whatsapp-media-upload');
+
 const app = express();
 
 // Trust proxy for rate limiting when behind ngrok/reverse proxy
@@ -560,8 +563,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
     // Pattern constants (defined once, used multiple times)
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
     const TRIGGER_WORDS = /\b(show|picture|pictures|photo|photos|image|images|send|share)\b/i;
-    // AUTO-GENERATED from product-image-database.json v1.1 - includes ALL product keywords
-    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|and|bag|bifold|bohemian|breakfast|bridge|business|calendar|candle|card|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|desk|desktop|diamond|diaries|diary|dining|fabric|for|fridge|grain|heart|holder|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|mouse|mousepad|multicolor|multicolored|natural|notebook|organizer|pad|passport|pen|pencil|piece|placemat|plain|planner|plant|planter|planters|plants|print|round|runner|serving|set|shaped|sleeve|small|square|stand|striped|succulent|table|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|triple|trivet|tube|ushaped|wallet|with|women)/i;
+    // AUTO-GENERATED from product-image-database.json v1.3 - includes ALL product keywords from 9cork.com AND homedecorzstore.com - 41 products, 123 keywords
+    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|bifold|bohemian|box|breakfast|bridge|business|calendar|candle|card|case|catchall|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|for|frame|frames|fridge|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|minimalistic|mouse|mousepad|multicolor|multicolored|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|photo|picture|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|round|rubberized|runner|serving|set|shaped|sleeve|small|square|stand|stationery|striped|succulent|table|tablemat|tablemats|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|trinket|triple|trivet|trivets|tube|ushaped|wall|wallet|with|women|workspace)/i;
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
@@ -1132,9 +1135,27 @@ async function sendWhatsAppMessage(to, text) {
   }
 }
 
-// Send WhatsApp image
+// Send WhatsApp image using Media Upload API with fallback to direct URL
 async function sendWhatsAppImage(to, imageUrl, caption = '') {
   try {
+    console.log(`📸 Attempting Media Upload API: ${imageUrl.slice(0, 50)}...`);
+
+    // PRIMARY: Try WhatsApp Media Upload API (100% reliable)
+    const result = await uploadAndSendImage(to, imageUrl, caption);
+
+    if (result.success) {
+      console.log('✅ Image sent successfully via Media Upload API');
+      return result.response;
+    } else {
+      console.log('⚠️ Media Upload failed, trying direct URL fallback...');
+    }
+  } catch (uploadError) {
+    console.log('⚠️ Media Upload error, trying direct URL fallback:', uploadError.message);
+  }
+
+  // FALLBACK: Use direct URL method (original method)
+  try {
+    console.log('📸 Sending via direct URL fallback');
     const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
     const response = await axios.post(
       `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -1146,10 +1167,10 @@ async function sendWhatsAppImage(to, imageUrl, caption = '') {
       },
       { headers: { 'Authorization': `Bearer ${cleanToken}`, 'Content-Type': 'application/json' } }
     );
-    console.log('📸 Image sent successfully');
+    console.log('✅ Image sent successfully via direct URL fallback');
     return response.data;
   } catch (error) {
-    console.error('❌ Error sending image:', error.response?.data || error.message);
+    console.error('❌ Both image sending methods failed:', error.response?.data || error.message);
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
     throw error;
   }
@@ -1214,7 +1235,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v22-FIX-DUPLICATE-IMAGES',
+    version: 'ROBUST-v25-MEDIA-UPLOAD-API',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
