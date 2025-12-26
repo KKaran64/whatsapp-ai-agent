@@ -14,6 +14,14 @@ The following keys were exposed and must be regenerated:
 - **MongoDB URI** (contains password) - Change password at https://cloud.mongodb.com/
 - **Redis URL** (contains password) - Change password at https://upstash.com/
 
+**AUTOMATED ROTATION**: Use the `rotate-keys.js` script to streamline this process:
+
+```bash
+node rotate-keys.js
+```
+
+See `KEY-ROTATION-GUIDE.md` for full instructions.
+
 ### 2. Ensure WHATSAPP_APP_SECRET is Set
 
 For production deployments, `WHATSAPP_APP_SECRET` **MUST** be set in your environment variables. This is required for webhook signature verification to prevent spoofing attacks.
