@@ -4,6 +4,7 @@
 const Groq = require('groq-sdk');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
+const crypto = require('crypto');
 
 class AIProviderManager {
   constructor(config) {
@@ -46,8 +47,38 @@ class AIProviderManager {
     return client;
   }
 
+  // Generate secure cache key (user-specific + message hash)
+  getCacheKey(message, userId = 'global') {
+    const messageHash = crypto.createHash('sha256')
+      .update(`${userId}:${message.toLowerCase().trim()}`)
+      .digest('hex')
+      .substring(0, 32);
+    return messageHash;
+  }
+
+  // Validate response before caching (prevent malicious content caching)
+  isValidResponse(response) {
+    if (!response || typeof response !== 'string') {
+      return false;
+    }
+
+    // Check for suspicious patterns
+    const suspiciousPatterns = [
+      /<script>/i,
+      /javascript:/i,
+      /onerror=/i,
+      /onclick=/i,
+      /\$where/i,
+      /<iframe>/i,
+      /eval\(/i,
+      /document\.cookie/i
+    ];
+
+    return !suspiciousPatterns.some(pattern => pattern.test(response));
+  }
+
   // Check cache for common queries
-  checkCache(message) {
+  checkCache(message, userId = null) {
     const normalizedMsg = message.toLowerCase().trim();
 
     // CRITICAL: Only cache EXACT greetings, not messages that contain greetings + product questions
@@ -78,11 +109,24 @@ class AIProviderManager {
       }
     }
 
-    // Check cache
-    if (this.responseCache.has(normalizedMsg)) {
-      const cached = this.responseCache.get(normalizedMsg);
-      if (Date.now() - cached.timestamp < 10800000) { // 3 hour cache (extended from 1 hour)
-        return cached.response;
+    // Check cache with user-specific key
+    const cacheKey = this.getCacheKey(message, userId);
+    if (this.responseCache.has(cacheKey)) {
+      const cached = this.responseCache.get(cacheKey);
+
+      // Check expiry
+      if (Date.now() - cached.timestamp < 10800000) { // 3 hour cache
+        // Validate cached response is still safe
+        if (this.isValidResponse(cached.response)) {
+          console.log('⚡ Cache hit - validated response');
+          return cached.response;
+        } else {
+          console.warn('[CACHE SECURITY] Removing suspicious cached response');
+          this.responseCache.delete(cacheKey);
+        }
+      } else {
+        // Expired - remove from cache
+        this.responseCache.delete(cacheKey);
       }
     }
 
@@ -310,19 +354,29 @@ class AIProviderManager {
     return { provider: 'fallback', response: fallbackResponse };
   }
 
-  // Cache response
-  cacheResponse(message, response) {
-    const normalizedMsg = message.toLowerCase().trim();
-    this.responseCache.set(normalizedMsg, {
+  // Cache response (with validation and user-specific keys)
+  cacheResponse(message, response, userId = null) {
+    // Validate response before caching
+    if (!this.isValidResponse(response)) {
+      console.warn('[CACHE SECURITY] Refusing to cache suspicious response');
+      return false;
+    }
+
+    const cacheKey = this.getCacheKey(message, userId);
+
+    this.responseCache.set(cacheKey, {
       response,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      userId // Track which user this cache belongs to
     });
 
-    // Limit cache size
+    // Limit cache size with LRU eviction
     if (this.responseCache.size > 1000) {
       const firstKey = this.responseCache.keys().next().value;
       this.responseCache.delete(firstKey);
     }
+
+    return true;
   }
 
   // Get statistics

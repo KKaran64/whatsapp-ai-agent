@@ -3,7 +3,10 @@
  *
  * Provides JSON-formatted logging with levels, timestamps, and context
  * For production environments with log aggregation (DataDog, CloudWatch, etc.)
+ * Includes PII redaction for GDPR/CCPA compliance
  */
+
+const crypto = require('crypto');
 
 const LOG_LEVELS = {
   error: 0,
@@ -12,18 +15,77 @@ const LOG_LEVELS = {
   debug: 3
 };
 
+// Sensitive fields that should be redacted in logs
+const SENSITIVE_FIELDS = [
+  'phoneNumber', 'phone', 'from', 'to', 'email', 'password',
+  'token', 'apiKey', 'secret', 'authorization', 'cookie',
+  'creditCard', 'ssn', 'address', 'gstNumber', 'name'
+];
+
 const CURRENT_LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 const currentLevelValue = LOG_LEVELS[CURRENT_LOG_LEVEL] || LOG_LEVELS.info;
 
 /**
- * Format log entry as JSON
+ * Hash phone number for privacy-preserving logging
+ * Uses first 8 chars of SHA-256 hash for traceability without exposing PII
+ */
+function hashPhoneNumber(phoneNumber) {
+  if (!phoneNumber) return '[UNKNOWN]';
+
+  // Keep last 4 digits visible for debugging, hash the rest
+  const visiblePart = phoneNumber.slice(-4);
+  const hash = crypto.createHash('sha256')
+    .update(phoneNumber)
+    .digest('hex')
+    .substring(0, 8);
+
+  return `***${visiblePart}(${hash})`;
+}
+
+/**
+ * Redact sensitive fields from object
+ * Replaces PII with [REDACTED] or hashed values
+ */
+function redactSensitiveData(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+
+  const redacted = Array.isArray(obj) ? [...obj] : { ...obj };
+
+  for (const key in redacted) {
+    const lowerKey = key.toLowerCase();
+
+    // Check if field is sensitive
+    if (SENSITIVE_FIELDS.some(field => lowerKey.includes(field.toLowerCase()))) {
+      if (lowerKey.includes('phone') || lowerKey.includes('from') || lowerKey.includes('to')) {
+        // Hash phone numbers for traceability
+        redacted[key] = hashPhoneNumber(String(redacted[key]));
+      } else {
+        // Redact other sensitive fields
+        redacted[key] = '[REDACTED]';
+      }
+    }
+
+    // Recursively redact nested objects
+    if (typeof redacted[key] === 'object' && redacted[key] !== null) {
+      redacted[key] = redactSensitiveData(redacted[key]);
+    }
+  }
+
+  return redacted;
+}
+
+/**
+ * Format log entry as JSON with PII redaction
  */
 function formatLog(level, message, context = {}) {
+  // Redact sensitive data from context
+  const redactedContext = redactSensitiveData(context);
+
   const logEntry = {
     timestamp: new Date().toISOString(),
     level: level.toUpperCase(),
     message,
-    ...context
+    ...redactedContext
   };
 
   // Add environment info
@@ -31,7 +93,7 @@ function formatLog(level, message, context = {}) {
     logEntry.environment = process.env.NODE_ENV;
   }
 
-  // Add request ID if available
+  // Add request ID if available (already in redactedContext, but ensure it's there)
   if (context.requestId) {
     logEntry.requestId = context.requestId;
   }
@@ -132,12 +194,12 @@ function logRequest(req, res, duration) {
 }
 
 /**
- * Log WhatsApp message
+ * Log WhatsApp message (with phone number hashing for privacy)
  */
 function logWhatsAppMessage(direction, phoneNumber, messageType, requestId) {
   info('WhatsApp Message', {
     direction, // 'incoming' or 'outgoing'
-    phoneNumber,
+    phoneNumber: hashPhoneNumber(phoneNumber), // Hash phone number for privacy
     messageType,
     requestId
   });
@@ -191,5 +253,8 @@ module.exports = {
   logWhatsAppMessage,
   logAIProviderUsage,
   logDatabaseOperation,
-  logSecurityEvent
+  logSecurityEvent,
+  // PII redaction utilities
+  hashPhoneNumber,
+  redactSensitiveData
 };

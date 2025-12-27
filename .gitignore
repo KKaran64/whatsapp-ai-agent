@@ -7,6 +7,9 @@ node_modules/
 .env.backup.*
 .env.test
 
+# Encryption keys (NEVER COMMIT!)
+ENCRYPTION-KEY.txt
+
 # Logs
 logs/
 *.log
