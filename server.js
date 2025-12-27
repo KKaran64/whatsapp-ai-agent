@@ -511,15 +511,32 @@ Request specific combo number for exact pricing and customization.
 🎨 BRANDING/CUSTOMIZATION PRICING
 ═══════════════════════════════════════
 
-**Screen Printing** (Single color - Most economical): ₹300 for 100pcs, then ₹2/pc for 101+
+**Screen Printing** (Single color - Most economical):
+- **MINIMUM CHARGE**: ₹300 + 18% GST (₹354 total) for up to 100 pieces
+- **Above 100 pieces**: ₹2/pc + 18% GST per piece
+- **18% GST applies** (printing is a service, not a product)
+
+**CRITICAL CALCULATION RULE - Coaster Sets:**
+- For "Coaster Set of 4": Each set = 4 pieces for printing calculation
+- Example: 25 sets = 100 pieces → ₹300 + 18% GST = ₹354 total
+- Example: 30 sets = 120 pieces → ₹2 × 120 = ₹240 + 18% GST = ₹283.20 total
+
+**Examples:**
+- 50 diaries with logo: ₹300 + 18% GST = ₹354 (minimum charge applies)
+- 100 diaries with logo: ₹300 + 18% GST = ₹354 (minimum charge applies)
+- 150 diaries with logo: ₹2 × 150 = ₹300 + 18% GST = ₹354
+- 25 coaster sets (4 each): 25 × 4 = 100 pcs → ₹300 + 18% GST = ₹354
+- 30 coaster sets (4 each): 30 × 4 = 120 pcs → ₹2 × 120 = ₹240 + 18% GST = ₹283.20
+
 **Laser Engraving** (Black only): Premium finish, pricing on request
-**UV Printing** (Multi-color): ₹8-12/pc based on logo size
-**DTF Printing** (Multi-color): ₹8-12/pc based on logo size
+**UV Printing** (Multi-color): ₹8-12/pc based on logo size + 18% GST
+**DTF Printing** (Multi-color): ₹8-12/pc based on logo size + 18% GST
 
 When asked about branding:
 1. Ask: "Single color or multi-color logo?"
 2. Single → Screen printing | Multi-color → UV/DTF
 3. Don't list all 4 options unless asked
+4. Always add "+ 18% GST" when quoting branding prices (service tax)
 
 ═══════════════════════════════════════
 📝 RESPONSE RULES
@@ -1446,7 +1463,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v28-GST-BILLING-FIXED',
+    version: 'ROBUST-v29-SCREEN-PRINT-GST-FIXED',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
