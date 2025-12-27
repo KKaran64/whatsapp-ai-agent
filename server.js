@@ -557,7 +557,7 @@ mongoose.connection.on('reconnected', () => {
 
 // Initialize Redis queue (non-blocking)
 async function connectQueue() {
-  // Skip Redis entirely if using Upstash with potential quota issues
+  // Skip Redis if not configured
   if (!CONFIG.REDIS_URL || CONFIG.REDIS_URL.includes('localhost') || CONFIG.REDIS_URL === 'redis://localhost:6379') {
     console.log('⚠️  Redis not configured - messages will be processed directly');
     messageQueue = null;
@@ -565,15 +565,29 @@ async function connectQueue() {
   }
 
   try {
+    // Detect if SSL is required based on URL
+    const requiresSSL = CONFIG.REDIS_URL.startsWith('rediss://');
+
+    // Build Redis config based on SSL requirement
+    const redisConfig = {
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+      enableReadyCheck: false
+    };
+
+    // Only add TLS config if using rediss:// (SSL)
+    if (requiresSSL) {
+      redisConfig.tls = {
+        rejectUnauthorized: false,
+        requestCert: true,
+        agent: false
+      };
+    }
+
+    console.log(`🔧 Initializing queue with ${requiresSSL ? 'SSL (rediss://)' : 'non-SSL (redis://)'}`);
+
     messageQueue = new Bull('whatsapp-messages', CONFIG.REDIS_URL, {
-      redis: {
-        tls: {
-          rejectUnauthorized: false
-        },
-        connectTimeout: 5000, // 5 second timeout
-        maxRetriesPerRequest: 1, // Fail fast instead of retrying
-        enableReadyCheck: false // Skip ready check to avoid blocking
-      },
+      redis: redisConfig,
       defaultJobOptions: {
         attempts: 3,
         backoff: {
@@ -602,7 +616,7 @@ async function connectQueue() {
       new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 10000))
     ]);
 
-    console.log('✅ Message queue initialized');
+    console.log('✅ Message queue initialized and connected');
 
     // Set up message processor
     setupMessageProcessor();
@@ -1382,7 +1396,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v26-PRODUCTION-HARDENED',
+    version: 'ROBUST-v27-REDIS-SSL-FIXED',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
