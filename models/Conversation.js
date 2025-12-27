@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { encryptionPlugin } = require('../mongodb-encryption');
+const { encryptionPlugin, encrypt, decrypt } = require('../mongodb-encryption');
 
 const messageSchema = new mongoose.Schema({
   role: {
@@ -52,6 +52,24 @@ const conversationSchema = new mongoose.Schema({
   }
 });
 
+// SECURITY FIX: Encrypt message content before saving (GDPR/CCPA compliance)
+conversationSchema.pre('save', function(next) {
+  // Encrypt message content for all modified messages
+  if (this.isModified('messages')) {
+    this.messages.forEach((msg) => {
+      // Only encrypt if not already encrypted (check for encryption format)
+      if (msg.content && !msg.content.includes(':')) {
+        try {
+          msg.content = encrypt(msg.content);
+        } catch (err) {
+          console.error('❌ Failed to encrypt message content:', err.message);
+        }
+      }
+    });
+  }
+  next();
+});
+
 // Update lastMessageAt on save
 conversationSchema.pre('save', function(next) {
   if (this.messages.length > 0) {
@@ -76,8 +94,43 @@ conversationSchema.methods.getRecentMessages = function(limit = 10) {
   return this.messages.slice(-limit);
 };
 
+// SECURITY FIX: Decrypt message content after reading (GDPR/CCPA compliance)
+conversationSchema.post('find', function(docs) {
+  if (!Array.isArray(docs)) return;
+
+  docs.forEach(doc => {
+    if (doc.messages && Array.isArray(doc.messages)) {
+      doc.messages.forEach(msg => {
+        if (msg.content) {
+          try {
+            msg.content = decrypt(msg.content);
+          } catch (err) {
+            console.error('❌ Failed to decrypt message content:', err.message);
+          }
+        }
+      });
+    }
+  });
+});
+
+conversationSchema.post('findOne', function(doc) {
+  if (!doc) return;
+
+  if (doc.messages && Array.isArray(doc.messages)) {
+    doc.messages.forEach(msg => {
+      if (msg.content) {
+        try {
+          msg.content = decrypt(msg.content);
+        } catch (err) {
+          console.error('❌ Failed to decrypt message content:', err.message);
+        }
+      }
+    });
+  }
+});
+
 // Apply field-level encryption to PII (GDPR/CCPA compliance)
-// Encrypts customer phone number - message content kept unencrypted for AI context
+// Encrypts customer phone number AND message content (both encrypted for GDPR)
 conversationSchema.plugin(encryptionPlugin, {
   fields: ['customerPhone']
 });
