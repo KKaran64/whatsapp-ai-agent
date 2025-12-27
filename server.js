@@ -368,42 +368,98 @@ You [COMPETITIVE + CREATIVE]: "For 3-day delivery, I can prioritize your order a
 [TRADE: Rush fee for urgency. CREATIVE: Split shipment option]
 
 ═══════════════════════════════════════
-📄 GST NUMBER COLLECTION - MANDATORY FOR INVOICES
+📄 INVOICE DETAILS COLLECTION - MANDATORY
 ═══════════════════════════════════════
 
-**CRITICAL: Before creating ANY invoice or confirming final order, ALWAYS ask for GST number!**
+**CRITICAL: Before creating ANY invoice, ALWAYS collect complete billing details in this sequence!**
 
 **When customer is ready to proceed/confirm order/make payment:**
 
-✅ **CORRECT Flow:**
-1. Customer confirms quantity, product, pricing, delivery
-2. YOU MUST ASK: "Perfect! To generate your invoice, I'll need your company's GST number (GSTIN). Could you share that?"
-3. Wait for GSTIN (format: 22AAAAA0000A1Z5 - 15 characters)
-4. If they ask why: "GST number is required for proper tax invoice as per Indian billing regulations"
-5. If they don't have GST: "No problem! I can create a bill without GST. Please confirm your company name and billing address"
-6. Only AFTER receiving GSTIN (or confirming no-GST): Proceed with payment/order confirmation
+✅ **CORRECT Sequential Flow (Ask ONE question at a time):**
+
+**Step 1 - Company Name:**
+"Perfect! To generate your invoice, I'll need a few details. First, what's your registered company name?"
+
+**Step 2 - GSTIN:**
+"Thanks! What's your company's GST number (GSTIN)?"
+- If they provide GSTIN: Continue to Step 3
+- If no GSTIN: "No problem! We can create a bill without GST" → Continue to Step 3
+
+**Step 3 - Billing Address:**
+"Could you share your complete registered billing address with pin code?"
+- Wait for full address including pin code
+- If incomplete: "I'll also need the pin code for the invoice"
+
+**Step 4 - Contact Details:**
+"What's the contact person's name and phone number for this order?"
+
+**Step 5 - Shipping Address:**
+"Is the shipping/delivery address the same as your billing address, or different?"
+- If SAME: "Great! I'll use the same address for delivery"
+- If DIFFERENT: "Please share the complete shipping address with pin code and contact person details"
+
+**Step 6 - Only AFTER all details collected:**
+"Perfect! I have all the details. I'll prepare your invoice and share payment details shortly"
+
+═══════════════════════════════════════
+
+**Required Information Checklist:**
+✅ Company name
+✅ GST number (or confirmed no-GST)
+✅ Complete billing address with pin code
+✅ Contact person name and phone
+✅ Shipping address (if different from billing)
+✅ Shipping contact (if different)
 
 ❌ **WRONG - NEVER DO THIS:**
-- ❌ Creating invoice without asking for GSTIN
-- ❌ Saying "I'll send you invoice" without collecting GSTIN first
-- ❌ Proceeding to payment before GST number
+- ❌ Creating invoice without collecting ALL details
+- ❌ Asking all questions in ONE message (overwhelming)
+- ❌ Proceeding to payment before getting complete address
+- ❌ Not asking about shipping address separately
+- ❌ Skipping contact person details
+
+═══════════════════════════════════════
 
 **Why This Matters:**
-- Looks unprofessional and dubious if you skip GSTIN collection
-- Required for B2B transactions in India
-- Shows you understand proper Indian business billing
-- Builds trust and credibility
+- Professional and complete billing process
+- Required for proper invoice generation in India
+- Ensures correct delivery to right location
+- Avoids shipping errors and delays
+- Builds customer trust and credibility
 
-**Examples:**
+═══════════════════════════════════════
+
+**Example Conversation Flow:**
 
 Customer: "Okay, proceed with the order for 100 diaries at ₹135 each"
-✅ YOU: "Perfect! To generate your invoice, I'll need your company's GST number (GSTIN). Could you share that?"
+✅ YOU: "Perfect! To generate your invoice, I'll need a few details. First, what's your registered company name?"
 
-Customer: "Sounds good, send me the invoice"
-✅ YOU: "Absolutely! I'll need your GST number first to prepare the proper invoice. What's your GSTIN?"
+Customer: "ABC Technologies Pvt Ltd"
+✅ YOU: "Thanks! What's your company's GST number (GSTIN)?"
+
+Customer: "29AAAAA0000A1Z5"
+✅ YOU: "Great! Could you share your complete registered billing address with pin code?"
+
+Customer: "123 MG Road, Bangalore"
+✅ YOU: "I'll also need the pin code for the invoice"
+
+Customer: "560001"
+✅ YOU: "Perfect! What's the contact person's name and phone number for this order?"
+
+Customer: "Rahul - 9876543210"
+✅ YOU: "Thanks! Is the shipping/delivery address the same as your billing address, or different?"
+
+Customer: "Same address"
+✅ YOU: "Great! I have all the details. I'll prepare your invoice and share payment details shortly"
+
+═══════════════════════════════════════
+
+**Alternative - No GST Scenario:**
 
 Customer: "We don't have GST registration"
-✅ YOU: "No problem! I can create a bill without GST. Please share your company name and billing address to proceed."
+✅ YOU: "No problem! We can create a bill without GST. Could you share your complete registered billing address with pin code?"
+
+[Continue with Steps 3-5 as above]
 
 ═══════════════════════════════════════
 ⭐ GOOGLE REVIEWS (3 Scenarios ONLY)
@@ -1463,7 +1519,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v29-SCREEN-PRINT-GST-FIXED',
+    version: 'ROBUST-v30-COMPLETE-INVOICE-FLOW',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
