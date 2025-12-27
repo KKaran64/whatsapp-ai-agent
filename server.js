@@ -1115,23 +1115,17 @@ function checkPhoneRateLimit(phoneNumber, messageContent = '') {
   const now = Date.now();
   const lastMessage = phoneRateLimits.get(phoneNumber) || 0;
 
-  // UX FIX: Reduced from 3s to 1s - allows natural quick messages
-  const minInterval = 1000; // 1 second (allows typing speed)
+  // UX FIX v41: Only block ACTUAL spam (multiple messages within 500ms)
+  // Normal typing/impatience is OK - don't punish customers!
+  const minInterval = 500; // 0.5 seconds - only catches true spam
 
   if (now - lastMessage < minInterval) {
-    const waitTime = Math.ceil((minInterval - (now - lastMessage)) / 1000);
-    console.warn(`⚠️ Rate limit triggered for ${phoneNumber} - ${waitTime}s since last`);
+    const timeSinceLastMs = now - lastMessage;
+    console.warn(`⚠️ Possible spam detected for ${phoneNumber} - ${timeSinceLastMs}ms since last message`);
 
-    // UX FIX: Check if message is just punctuation/emphasis (?, !, ., ...)
-    // These are often user impatience, not spam - silently ignore them
-    const isPunctuation = /^[?.!\/,\s]{1,5}$/.test(messageContent.trim());
-
-    if (isPunctuation) {
-      console.log(`💡 Ignoring punctuation-only message (user impatience): "${messageContent}"`);
-      return 'silent_drop'; // Special return value - drop silently, no rude message
-    }
-
-    return false; // Block spam, will send rate limit message
+    // ALWAYS silently drop - NEVER send rude "Please wait" messages
+    console.log(`💡 Silently dropping rapid message: "${messageContent.substring(0, 50)}..."`);
+    return 'silent_drop';
   }
 
   // Update last message time
@@ -1275,19 +1269,12 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
         return; // Skip processing invalid messages
       }
 
-      // FIX #4: Check rate limit (UX-friendly - ignores punctuation spam)
+      // FIX #4: Check rate limit (v41 - NEVER sends rude messages, only blocks true spam)
       const rateLimitCheck = checkPhoneRateLimit(from, messageBody);
 
       if (rateLimitCheck === 'silent_drop') {
-        // User sent quick punctuation (?, !, ...) - silently ignore, no rude message
-        console.log(`[${requestId}] 💡 Silently dropping punctuation-only follow-up: "${messageBody}"`);
-        return;
-      }
-
-      if (rateLimitCheck === false) {
-        // Actual spam - send rate limit warning
-        console.warn(`[${requestId}] ⚠️ Rate limit exceeded for ${from}`);
-        await sendWhatsAppMessage(from, "Please wait a moment before sending another message. 🙏").catch(() => {});
+        // Rapid message detected (<500ms) - silently ignore, NO rude message sent
+        console.log(`[${requestId}] 💡 Silently dropping rapid message (${messageBody.length} chars)`);
         return;
       }
 
