@@ -892,7 +892,7 @@ async function connectQueue() {
 }
 
 // SHARED: Image detection and sending logic (used by BOTH queue and direct paths)
-async function handleImageDetectionAndSending(from, agentResponse, messageBody) {
+async function handleImageDetectionAndSending(from, agentResponse, messageBody, conversationContext = []) {
   try {
     // Pattern constants (defined once, used multiple times)
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
@@ -902,8 +902,30 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody) 
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
-    const userMessage = messageBody || '';
+    let userMessage = messageBody || '';
     const hasTrigger = TRIGGER_WORDS.test(userMessage);
+
+    // v42 FIX: Context-aware image detection
+    // When user says "the same", "them", "it", look at conversation history to find product context
+    const pronounReferences = /\b(the same|them|it|those|these)\b/i;
+    if (pronounReferences.test(userMessage) && hasTrigger) {
+      console.log('🔍 Pronoun reference detected, checking conversation context...');
+      // Look at last 5 messages to find product mentions
+      const recentMessages = conversationContext.slice(-5);
+      for (let i = recentMessages.length - 1; i >= 0; i--) {
+        const msg = recentMessages[i];
+        const content = msg.content || '';
+        // Extract product keywords from recent conversation
+        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|holder)\b/i);
+        if (productMatch) {
+          const productContext = productMatch[0];
+          console.log(`✅ Found product context from conversation: "${productContext}"`);
+          // Append product context to user message for better matching
+          userMessage = `${messageBody} ${productContext}`;
+          break;
+        }
+      }
+    }
 
     // PDF Catalog detection - HIGHEST PRIORITY
     // Smart routing based on keywords: HORECA, COMBOS/GIFTING, or GENERAL PRODUCTS
@@ -1059,7 +1081,8 @@ function setupMessageProcessor() {
       await sendWhatsAppMessage(from, agentResponse);
 
       // Handle image detection and sending (SHARED FUNCTION - works for both queue and direct paths)
-      await handleImageDetectionAndSending(from, agentResponse, messageBody);
+      // v42: Pass conversation context for pronoun resolution
+      await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
 
       // Store agent response in database (non-blocking)
       await storeAgentMessage(from, agentResponse).catch(() => {});
@@ -1334,7 +1357,8 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
             await sendWhatsAppMessage(from, response);
 
             // Handle image detection and sending (SHARED FUNCTION - works for both queue and direct paths)
-            await handleImageDetectionAndSending(from, response, messageBody);
+            // v42: Pass conversation context for pronoun resolution
+            await handleImageDetectionAndSending(from, response, messageBody, context);
 
             await storeAgentMessage(from, response).catch(() => {});
 
