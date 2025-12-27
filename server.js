@@ -1062,8 +1062,14 @@ function checkPhoneRateLimit(phoneNumber) {
 
 // Webhook signature validation middleware (SECURE - timing attack protected)
 function validateWebhookSignature(req, res, next) {
+  // SECURITY FIX: Fail-fast in production if app secret not configured
   if (!CONFIG.WHATSAPP_APP_SECRET) {
-    // Skip validation if no app secret configured (development mode)
+    if (CONFIG.NODE_ENV === 'production') {
+      console.error('❌ FATAL: WHATSAPP_APP_SECRET required in production for webhook security');
+      return res.status(500).json({ error: 'Server misconfiguration' });
+    }
+    // Only allow bypass in development mode
+    console.warn('⚠️ WARNING: Webhook signature validation disabled (development mode)');
     return next();
   }
 
@@ -1383,8 +1389,9 @@ async function getConversationContext(phoneNumber) {
           console.log(`📚 Retrieved ${formattedMessages.length} messages from MongoDB`);
 
           // IMPORTANT: Also populate in-memory cache from MongoDB
-          if (!conversationMemory.has(phoneNumber)) {
-            conversationMemory.set(phoneNumber, recentMessages.map(msg => ({
+          // SECURITY FIX: Use sanitizedPhone consistently for Map keys
+          if (!conversationMemory.has(sanitizedPhone)) {
+            conversationMemory.set(sanitizedPhone, recentMessages.map(msg => ({
               role: msg.role === 'customer' ? 'user' : 'assistant',
               content: msg.content,
               timestamp: msg.timestamp || new Date()
@@ -1409,14 +1416,21 @@ async function getConversationContext(phoneNumber) {
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
 
     // Ultimate fallback: check in-memory one more time
-    if (conversationMemory.has(phoneNumber)) {
-      const memoryMessages = conversationMemory.get(phoneNumber);
-      const recentMemory = memoryMessages.slice(-50);
-      console.log(`💾 EMERGENCY FALLBACK: Retrieved ${recentMemory.length} messages from in-memory cache`);
-      return recentMemory.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+    // SECURITY FIX: Use sanitizedPhone consistently for Map keys
+    try {
+      const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+      if (conversationMemory.has(sanitizedPhone)) {
+        const memoryMessages = conversationMemory.get(sanitizedPhone);
+        const recentMemory = memoryMessages.slice(-50);
+        console.log(`💾 EMERGENCY FALLBACK: Retrieved ${recentMemory.length} messages from in-memory cache`);
+        return recentMemory.map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+      }
+    } catch (sanitizeError) {
+      // If sanitization fails in error handler, just return empty
+      console.error('⚠️ Phone sanitization failed in fallback');
     }
 
     console.log('⚠️ No conversation context available - returning empty array');
@@ -1429,6 +1443,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
   try {
     console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
     console.log(`📊 Context size: ${context.length} messages`);
+
+    // SECURITY FIX: Sanitize phone number consistently for Map keys
+    const sanitizedPhone = sanitizePhoneNumber(customerPhone);
 
     // Sanitize message to prevent prompt injection attacks
     const sanitizedMessage = sanitizeAIPrompt(message);
@@ -1444,11 +1461,12 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     const fullContext = [...context, { role: 'user', content: sanitizedMessage }];
 
     // ALSO store in conversationMemory for in-memory fallback (in case MongoDB fails)
-    // RACE CONDITION FIX: Check existence before pushing
-    if (!conversationMemory.has(customerPhone)) {
-      conversationMemory.set(customerPhone, []);
+    // SECURITY FIX: Use atomic operation to prevent race condition
+    if (!conversationMemory.has(sanitizedPhone)) {
+      conversationMemory.set(sanitizedPhone, []);
     }
-    conversationMemory.get(customerPhone).push({
+    const customerMemory = conversationMemory.get(sanitizedPhone);
+    customerMemory.push({
       role: 'user',
       content: sanitizedMessage,
       timestamp: new Date()
@@ -1465,16 +1483,15 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
 
     // Store AI response in in-memory cache
-    conversationMemory.get(customerPhone).push({
+    customerMemory.push({
       role: 'assistant',
       content: result.response,
       timestamp: new Date()
     });
 
     // Limit in-memory cache to last 20 messages per customer
-    const customerMemory = conversationMemory.get(customerPhone);
     if (customerMemory.length > 20) {
-      conversationMemory.set(customerPhone, customerMemory.slice(-20));
+      conversationMemory.set(sanitizedPhone, customerMemory.slice(-20));
     }
 
     return result.response;
