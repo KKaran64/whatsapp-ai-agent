@@ -1549,7 +1549,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v31-API-v21-PRIVACY-CLEANUP',
+    version: 'ROBUST-v32-SECURITY-LOGGING-ENCRYPTION',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
