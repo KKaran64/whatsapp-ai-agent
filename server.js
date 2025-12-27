@@ -473,6 +473,36 @@ Request at EXACTLY these moments:
 Keep to 1 sentence. Be polite, not pushy.
 
 ═══════════════════════════════════════
+📜 PRIVACY POLICY & TERMS OF SERVICE
+═══════════════════════════════════════
+
+**When customer asks about privacy, data protection, terms, or policies:**
+
+**Privacy Policy:**
+"Our privacy policy is available at: https://9cork.com/privacy-policy
+
+We protect your data and only use it for order processing. Your information is never shared with third parties."
+
+**Terms of Service:**
+"Our terms of service are available at: https://9cork.com/terms-of-service
+
+All sales are subject to our terms. We ensure quality products and professional service."
+
+**Return/Refund Policy:**
+"Our return policy is available at: https://9cork.com/return-policy
+
+We stand behind our products. If there's any quality issue, we'll make it right."
+
+**When to Share:**
+- Customer asks: "What's your privacy policy?"
+- Customer asks: "Do you have terms and conditions?"
+- Customer asks: "What's your return policy?"
+- Customer asks: "How do you handle my data?"
+- Before collecting billing details (optional): "We protect your privacy as per our policy: https://9cork.com/privacy-policy"
+
+**Keep responses SHORT:** Share the relevant link + one sentence explanation.
+
+═══════════════════════════════════════
 🚨 CATALOG LOCK - NEVER INVENT PRODUCTS/SPECS
 ═══════════════════════════════════════
 
@@ -1396,7 +1426,7 @@ async function sendWhatsAppMessage(to, text) {
     const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
 
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: to,
@@ -1442,7 +1472,7 @@ async function sendWhatsAppImage(to, imageUrl, caption = '') {
     console.log('📸 Sending via direct URL fallback');
     const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: to,
@@ -1465,7 +1495,7 @@ async function sendWhatsAppDocument(to, documentUrl, filename, caption = '') {
   try {
     const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: to,
@@ -1494,7 +1524,7 @@ async function sendTypingIndicator(to) {
     const cleanToken = CONFIG.WHATSAPP_TOKEN.replace(/[\r\n\t\s]/g, '');
 
     await axios.post(
-      `https://graph.facebook.com/v18.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${CONFIG.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -1519,7 +1549,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v30-COMPLETE-INVOICE-FLOW',
+    version: 'ROBUST-v31-API-v21-PRIVACY-CLEANUP',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',

@@ -396,12 +396,21 @@ function cleanExpiredCache() {
 }
 
 // Clean cache every hour
-setInterval(cleanExpiredCache, 60 * 60 * 1000);
+const cacheCleanupInterval = setInterval(cleanExpiredCache, 60 * 60 * 1000);
 
 // Log stats every hour
-setInterval(() => {
+const statsLogInterval = setInterval(() => {
   console.log('[MEDIA] Statistics:', getCacheStats());
 }, 60 * 60 * 1000);
+
+/**
+ * Clean up intervals (call this when shutting down the server)
+ */
+function cleanup() {
+  if (cacheCleanupInterval) clearInterval(cacheCleanupInterval);
+  if (statsLogInterval) clearInterval(statsLogInterval);
+  console.log('[MEDIA] Intervals cleaned up');
+}
 
 module.exports = {
   uploadImageToWhatsApp,
@@ -409,5 +418,6 @@ module.exports = {
   uploadAndSendImage,
   sendProductImage,
   getCacheStats,
-  cleanExpiredCache
+  cleanExpiredCache,
+  cleanup
 };
