@@ -7,7 +7,6 @@ const Bull = require('bull');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const Sentry = require('@sentry/node');
-const Groq = require('groq-sdk');
 
 // Import models
 const Customer = require('./models/Customer');
@@ -71,7 +70,8 @@ app.use(helmet({
 // Remove X-Powered-By header
 app.disable('x-powered-by');
 
-app.use(express.json());
+// SECURITY: Limit JSON payload size to prevent large payload attacks
+app.use(express.json({ limit: '100kb' }));
 
 // Configuration
 const CONFIG = {
@@ -125,9 +125,6 @@ validateRequiredEnvVars();
 function generateRequestId() {
   return crypto.randomBytes(6).toString('hex');
 }
-
-// Initialize Groq AI (legacy - kept for compatibility)
-const groq = new Groq({ apiKey: CONFIG.GROQ_API_KEY });
 
 // Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
 // UPDATED: Claude removed to use only free providers (Groq + Gemini)
@@ -771,22 +768,14 @@ async function connectQueue() {
 
     // Only add TLS config if using rediss:// (SSL)
     if (requiresSSL) {
-      // SECURITY: Always validate TLS certificates in production
-      const shouldValidateTLS = CONFIG.NODE_ENV === 'production' ||
-                                process.env.REDIS_DISABLE_TLS_VERIFY !== 'true';
-
+      // SECURITY: Always validate TLS certificates (no bypass option)
       redisConfig.tls = {
-        rejectUnauthorized: shouldValidateTLS, // true in production (prevents MITM)
+        rejectUnauthorized: true, // Always true - prevents MITM attacks
         requestCert: true,
         agent: false
       };
 
-      if (!shouldValidateTLS) {
-        console.warn('⚠️ WARNING: Redis TLS certificate validation DISABLED (development only)');
-        console.warn('⚠️ This is INSECURE - only use in local development');
-      }
-
-      console.log(`🔒 Redis TLS: certificate validation ${shouldValidateTLS ? 'ENABLED' : 'DISABLED'}`);
+      console.log('🔒 Redis TLS: certificate validation ENABLED (mandatory)');
     }
 
     console.log(`🔧 Initializing queue with ${requiresSSL ? 'SSL (rediss://)' : 'non-SSL (redis://)'}`);
@@ -1025,6 +1014,15 @@ const webhookLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 30, // Limit each IP to 30 requests per minute (prevents DDoS)
   message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Monitoring endpoints rate limiter (more permissive for health checks)
+const monitoringLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 60, // Limit each IP to 60 requests per minute (allows monitoring tools)
+  message: 'Too many monitoring requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -1616,8 +1614,8 @@ async function sendTypingIndicator(to) {
   }
 }
 
-// Health check endpoint
-app.get('/health', async (req, res) => {
+// Health check endpoint (SECURITY: Rate limited to 60 req/min)
+app.get('/health', monitoringLimiter, async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -1632,8 +1630,8 @@ app.get('/health', async (req, res) => {
   res.json(health);
 });
 
-// Stats endpoint
-app.get('/stats', async (req, res) => {
+// Stats endpoint (SECURITY: Rate limited to 60 req/min)
+app.get('/stats', monitoringLimiter, async (req, res) => {
   try {
     const totalCustomers = await Customer.countDocuments();
     const activeConversations = await Conversation.countDocuments({ status: 'active' });
