@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Bull = require('bull');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const Sentry = require('@sentry/node');
 const Groq = require('groq-sdk');
 
@@ -25,10 +26,50 @@ const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseSt
 // Import WhatsApp Media Upload API (100% reliable image delivery)
 const { uploadAndSendImage, getCacheStats: getMediaCacheStats } = require('./whatsapp-media-upload');
 
+// Import Input Sanitizer (NoSQL injection, XSS, prompt injection prevention)
+const {
+  sanitizeMongoInput,
+  sanitizePhoneNumber,
+  sanitizeMessageContent,
+  sanitizeAIPrompt,
+  detectSuspiciousInput
+} = require('./input-sanitizer');
+
 const app = express();
 
 // Trust proxy for rate limiting when behind ngrok/reverse proxy
 app.set('trust proxy', 1);
+
+// Security headers middleware using Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", 'https://graph.facebook.com', 'https://api.groq.com', 'https://generativelanguage.googleapis.com'],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"]
+    }
+  },
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true
+  },
+  frameguard: {
+    action: 'deny' // Prevent clickjacking
+  },
+  noSniff: true, // Prevent MIME sniffing
+  xssFilter: true, // Enable XSS filter
+  referrerPolicy: {
+    policy: 'strict-origin-when-cross-origin'
+  }
+}));
+
+// Remove X-Powered-By header
+app.disable('x-powered-by');
 
 app.use(express.json());
 
@@ -730,11 +771,22 @@ async function connectQueue() {
 
     // Only add TLS config if using rediss:// (SSL)
     if (requiresSSL) {
+      // SECURITY: Always validate TLS certificates in production
+      const shouldValidateTLS = CONFIG.NODE_ENV === 'production' ||
+                                process.env.REDIS_DISABLE_TLS_VERIFY !== 'true';
+
       redisConfig.tls = {
-        rejectUnauthorized: false,
+        rejectUnauthorized: shouldValidateTLS, // true in production (prevents MITM)
         requestCert: true,
         agent: false
       };
+
+      if (!shouldValidateTLS) {
+        console.warn('⚠️ WARNING: Redis TLS certificate validation DISABLED (development only)');
+        console.warn('⚠️ This is INSECURE - only use in local development');
+      }
+
+      console.log(`🔒 Redis TLS: certificate validation ${shouldValidateTLS ? 'ENABLED' : 'DISABLED'}`);
     }
 
     console.log(`🔧 Initializing queue with ${requiresSSL ? 'SSL (rediss://)' : 'non-SSL (redis://)'}`);
@@ -968,10 +1020,10 @@ function setupMessageProcessor() {
   });
 }
 
-// Rate limiting middleware
+// Rate limiting middleware (SECURITY: Reduced from 100 to 30 req/min)
 const webhookLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100, // Limit each IP to 100 requests per minute
+  max: 30, // Limit each IP to 30 requests per minute (prevents DDoS)
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false
@@ -1229,11 +1281,15 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
 // Store customer message in database
 async function storeCustomerMessage(phoneNumber, message, messageId) {
   try {
+    // Sanitize inputs to prevent NoSQL injection
+    const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+    const sanitizedMessage = sanitizeMessageContent(message);
+
     // Find or create customer
-    let customer = await Customer.findOne({ phoneNumber });
+    let customer = await Customer.findOne({ phoneNumber: { $eq: sanitizedPhone } });
     if (!customer) {
       customer = new Customer({
-        phoneNumber,
+        phoneNumber: sanitizedPhone,
         lastContactedAt: new Date()
       });
       await customer.save();
@@ -1244,18 +1300,18 @@ async function storeCustomerMessage(phoneNumber, message, messageId) {
 
     // Find or create conversation
     let conversation = await Conversation.findOne({
-      customerPhone: phoneNumber,
+      customerPhone: { $eq: sanitizedPhone },
       status: 'active'
     });
 
     if (!conversation) {
       conversation = new Conversation({
-        customerPhone: phoneNumber
+        customerPhone: sanitizedPhone
       });
     }
 
-    // Add message
-    await conversation.addMessage('customer', message, messageId);
+    // Add message (use sanitized message)
+    await conversation.addMessage('customer', sanitizedMessage, messageId);
 
     console.log('✅ Customer message stored in database');
   } catch (error) {
@@ -1267,13 +1323,17 @@ async function storeCustomerMessage(phoneNumber, message, messageId) {
 // Store agent message in database
 async function storeAgentMessage(phoneNumber, message) {
   try {
+    // Sanitize inputs to prevent NoSQL injection
+    const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+    const sanitizedMessage = sanitizeMessageContent(message);
+
     const conversation = await Conversation.findOne({
-      customerPhone: phoneNumber,
+      customerPhone: { $eq: sanitizedPhone },
       status: 'active'
     });
 
     if (conversation) {
-      await conversation.addMessage('agent', message);
+      await conversation.addMessage('agent', sanitizedMessage);
       console.log('✅ Agent message stored in database');
     }
   } catch (error) {
@@ -1285,12 +1345,15 @@ async function storeAgentMessage(phoneNumber, message) {
 // Get conversation context for Claude
 async function getConversationContext(phoneNumber) {
   try {
+    // Sanitize phone number to prevent NoSQL injection
+    const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+
     // STRATEGY: Check in-memory FIRST (most recent, fastest)
     // Then fall back to MongoDB if in-memory is empty
 
     // Step 1: Check in-memory cache first (fastest and most up-to-date)
-    if (conversationMemory.has(phoneNumber)) {
-      const memoryMessages = conversationMemory.get(phoneNumber);
+    if (conversationMemory.has(sanitizedPhone)) {
+      const memoryMessages = conversationMemory.get(sanitizedPhone);
       if (memoryMessages.length > 0) {
         const recentMemory = memoryMessages.slice(-50); // Last 50 messages
         console.log(`💾 Retrieved ${recentMemory.length} messages from IN-MEMORY cache (most recent)`);
@@ -1304,7 +1367,7 @@ async function getConversationContext(phoneNumber) {
     // Step 2: Try MongoDB (persistent storage)
     try {
       const conversation = await Conversation.findOne({
-        customerPhone: phoneNumber,
+        customerPhone: { $eq: sanitizedPhone },
         status: 'active'
       });
 
@@ -1369,9 +1432,18 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
     console.log(`📊 Context size: ${context.length} messages`);
 
+    // Sanitize message to prevent prompt injection attacks
+    const sanitizedMessage = sanitizeAIPrompt(message);
+
+    // Detect suspicious input patterns
+    if (detectSuspiciousInput(message)) {
+      console.warn('⚠️ Suspicious input detected - potential attack attempt');
+      // Log security event but still process (sanitized version)
+    }
+
     // CRITICAL: Add current message to context for AI processing
     // context already has history, we just need to add the new user message
-    const fullContext = [...context, { role: 'user', content: message }];
+    const fullContext = [...context, { role: 'user', content: sanitizedMessage }];
 
     // ALSO store in conversationMemory for in-memory fallback (in case MongoDB fails)
     // RACE CONDITION FIX: Check existence before pushing
@@ -1380,7 +1452,7 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     }
     conversationMemory.get(customerPhone).push({
       role: 'user',
-      content: message,
+      content: sanitizedMessage,
       timestamp: new Date()
     });
 
@@ -1389,7 +1461,7 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     const result = await aiManager.getResponse(
       SYSTEM_PROMPT,
       fullContext.slice(-50), // Last 50 messages (including new message)
-      message
+      sanitizedMessage
     );
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
@@ -1549,7 +1621,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v32-SECURITY-LOGGING-ENCRYPTION',
+    version: 'ROBUST-v34-CRITICAL-FIXES-COMPLETE',
     groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',

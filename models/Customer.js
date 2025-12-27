@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { encryptionPlugin } = require('../mongodb-encryption');
 
 const customerSchema = new mongoose.Schema({
   phoneNumber: {
@@ -38,6 +39,11 @@ const customerSchema = new mongoose.Schema({
 customerSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
+});
+
+// Apply field-level encryption to PII (GDPR/CCPA compliance)
+customerSchema.plugin(encryptionPlugin, {
+  fields: ['phoneNumber', 'email', 'name']
 });
 
 module.exports = mongoose.model('Customer', customerSchema);

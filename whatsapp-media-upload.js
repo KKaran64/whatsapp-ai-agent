@@ -13,6 +13,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns').promises;
 
 // Security Configuration
 const MAX_CACHE_SIZE = 1000; // Prevent unbounded memory growth
@@ -44,6 +45,25 @@ const ALLOWED_DOMAINS = [
   'lh3.googleusercontent.com',
   'i.pinimg.com',
   'pinimg.com'
+];
+
+// Blacklisted IP ranges (SSRF protection - prevent access to private/internal IPs)
+const BLACKLISTED_IP_PATTERNS = [
+  /^127\./,           // 127.0.0.0/8 - Loopback
+  /^10\./,            // 10.0.0.0/8 - Private
+  /^172\.(1[6-9]|2[0-9]|3[01])\./,  // 172.16.0.0/12 - Private
+  /^192\.168\./,      // 192.168.0.0/16 - Private
+  /^169\.254\./,      // 169.254.0.0/16 - Link-local (AWS metadata)
+  /^0\./,             // 0.0.0.0/8 - Invalid
+  /^(224|225|226|227|228|229|230|231|232|233|234|235|236|237|238|239)\./,  // Multicast
+  /^(240|241|242|243|244|245|246|247|248|249|250|251|252|253|254|255)\./   // Reserved
+];
+
+// Blacklisted hostnames
+const BLACKLISTED_HOSTNAMES = [
+  'localhost',
+  'metadata.google.internal',  // GCP metadata
+  'instance-data'              // AWS metadata alternative
 ];
 
 // Cache for media IDs (in-memory, use Redis for production)
@@ -99,30 +119,71 @@ async function rateLimit() {
 }
 
 /**
- * Validate image URL against whitelist (prevents SSRF attacks)
- * @param {string} url - URL to validate
- * @returns {boolean} - True if URL is allowed
+ * Validate IP address is not in blacklisted ranges
+ * @param {string} ip - IP address to validate
+ * @returns {boolean} - True if IP is safe (not blacklisted)
  */
-function isValidImageUrl(url) {
+function isIPSafe(ip) {
+  // Check against blacklist patterns
+  for (const pattern of BLACKLISTED_IP_PATTERNS) {
+    if (pattern.test(ip)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Validate image URL against whitelist and check for SSRF attacks
+ * @param {string} url - URL to validate
+ * @returns {Promise<boolean>} - True if URL is allowed and safe
+ */
+async function isValidImageUrl(url) {
   try {
     const urlObj = new URL(url);
 
-    // Only allow HTTP/HTTPS protocols
+    // 1. Protocol validation - Only allow HTTP/HTTPS
     if (!['http:', 'https:'].includes(urlObj.protocol)) {
       console.error(`[SECURITY] Blocked non-HTTP(S) protocol: ${urlObj.protocol}`);
       return false;
     }
 
-    // Check if domain is in whitelist
+    // 2. Hostname blacklist check
+    const hostname = urlObj.hostname.toLowerCase();
+    if (BLACKLISTED_HOSTNAMES.some(blocked => hostname.includes(blocked))) {
+      console.error(`[SECURITY] Blocked blacklisted hostname: ${hostname}`);
+      return false;
+    }
+
+    // 3. Domain whitelist check
     const isAllowed = ALLOWED_DOMAINS.some(domain =>
-      urlObj.hostname === domain || urlObj.hostname.endsWith('.' + domain)
+      hostname === domain || hostname.endsWith('.' + domain)
     );
 
     if (!isAllowed) {
-      console.error(`[SECURITY] Blocked unauthorized domain: ${urlObj.hostname}`);
+      console.error(`[SECURITY] Blocked unauthorized domain: ${hostname}`);
+      return false;
     }
 
-    return isAllowed;
+    // 4. DNS resolution check (prevent DNS rebinding attacks)
+    try {
+      const addresses = await dns.resolve4(hostname);
+
+      for (const ip of addresses) {
+        if (!isIPSafe(ip)) {
+          console.error(`[SECURITY] Blocked private/internal IP: ${ip} for domain ${hostname}`);
+          stats.securityBlocked++;
+          return false;
+        }
+      }
+
+      console.log(`[SECURITY] DNS validated: ${hostname} → ${addresses.join(', ')}`);
+    } catch (dnsError) {
+      console.error(`[SECURITY] DNS resolution failed for ${hostname}: ${dnsError.message}`);
+      return false;
+    }
+
+    return true;
   } catch (error) {
     console.error(`[SECURITY] Invalid URL format: ${error.message}`);
     return false;
@@ -194,10 +255,11 @@ async function uploadImageToWhatsApp(imageUrl) {
   const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID;
   const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 
-  // SECURITY: Validate URL against whitelist (prevents SSRF attacks)
-  if (!isValidImageUrl(imageUrl)) {
+  // SECURITY: Validate URL against whitelist and check for SSRF attacks
+  const isValid = await isValidImageUrl(imageUrl);
+  if (!isValid) {
     stats.securityBlocked++;
-    throw new Error('URL not allowed - domain not in whitelist');
+    throw new Error('URL not allowed - failed security validation (domain not in whitelist or resolves to private IP)');
   }
 
   // Check cache first (media IDs are valid for 24 hours)
@@ -214,12 +276,17 @@ async function uploadImageToWhatsApp(imageUrl) {
   console.log(`[MEDIA] Downloading image: ${imageUrl.slice(0, 50)}...`);
 
   try {
-    // Step 1: Download the image
+    // Step 1: Download the image (SECURITY: SSRF protection)
     const imageResponse = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 30000, // 30 seconds
       maxContentLength: MAX_FILE_SIZE,
-      maxBodyLength: MAX_FILE_SIZE
+      maxBodyLength: MAX_FILE_SIZE,
+      maxRedirects: 0, // SECURITY: Disable redirects to prevent SSRF
+      validateStatus: (status) => status === 200, // Only accept 200 OK
+      headers: {
+        'User-Agent': '9CorkWhatsAppBot/1.0'
+      }
     });
 
     const imageBuffer = Buffer.from(imageResponse.data);

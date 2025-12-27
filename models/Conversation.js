@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { encryptionPlugin } = require('../mongodb-encryption');
 
 const messageSchema = new mongoose.Schema({
   role: {
@@ -74,5 +75,11 @@ conversationSchema.methods.addMessage = function(role, content, messageId = null
 conversationSchema.methods.getRecentMessages = function(limit = 10) {
   return this.messages.slice(-limit);
 };
+
+// Apply field-level encryption to PII (GDPR/CCPA compliance)
+// Encrypts customer phone number - message content kept unencrypted for AI context
+conversationSchema.plugin(encryptionPlugin, {
+  fields: ['customerPhone']
+});
 
 module.exports = mongoose.model('Conversation', conversationSchema);
