@@ -1012,8 +1012,16 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
         }
       }
-      if (failedCount > 0 && sentCount > 0) {
-        await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
+
+      // v42: Better error handling - notify user even if ALL images fail
+      if (failedCount > 0) {
+        if (sentCount === 0) {
+          // ALL images failed - apologize and offer description
+          await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Let me describe our ${catalogCategory} instead - would that help?`).catch(() => {});
+        } else {
+          // SOME images failed - let user know
+          await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
+        }
       }
     } else if (hasTrigger && PRODUCT_KEYWORDS.test(userMessage)) {
       // Single product image (only if trigger words present)
