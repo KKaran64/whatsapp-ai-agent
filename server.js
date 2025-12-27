@@ -1042,17 +1042,27 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-function checkPhoneRateLimit(phoneNumber) {
+function checkPhoneRateLimit(phoneNumber, messageContent = '') {
   const now = Date.now();
   const lastMessage = phoneRateLimits.get(phoneNumber) || 0;
 
-  // Allow 1 message per 3 seconds (20 messages per minute max)
-  const minInterval = 3000; // 3 seconds
+  // UX FIX: Reduced from 3s to 1s - allows natural quick messages
+  const minInterval = 1000; // 1 second (allows typing speed)
 
   if (now - lastMessage < minInterval) {
     const waitTime = Math.ceil((minInterval - (now - lastMessage)) / 1000);
-    console.warn(`⚠️ Rate limit exceeded for ${phoneNumber} - must wait ${waitTime}s`);
-    return false;
+    console.warn(`⚠️ Rate limit triggered for ${phoneNumber} - ${waitTime}s since last`);
+
+    // UX FIX: Check if message is just punctuation/emphasis (?, !, ., ...)
+    // These are often user impatience, not spam - silently ignore them
+    const isPunctuation = /^[?.!\/,\s]{1,5}$/.test(messageContent.trim());
+
+    if (isPunctuation) {
+      console.log(`💡 Ignoring punctuation-only message (user impatience): "${messageContent}"`);
+      return 'silent_drop'; // Special return value - drop silently, no rude message
+    }
+
+    return false; // Block spam, will send rate limit message
   }
 
   // Update last message time
@@ -1196,8 +1206,17 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
         return; // Skip processing invalid messages
       }
 
-      // FIX #4: Check rate limit
-      if (!checkPhoneRateLimit(from)) {
+      // FIX #4: Check rate limit (UX-friendly - ignores punctuation spam)
+      const rateLimitCheck = checkPhoneRateLimit(from, messageBody);
+
+      if (rateLimitCheck === 'silent_drop') {
+        // User sent quick punctuation (?, !, ...) - silently ignore, no rude message
+        console.log(`[${requestId}] 💡 Silently dropping punctuation-only follow-up: "${messageBody}"`);
+        return;
+      }
+
+      if (rateLimitCheck === false) {
+        // Actual spam - send rate limit warning
         console.warn(`[${requestId}] ⚠️ Rate limit exceeded for ${from}`);
         await sendWhatsAppMessage(from, "Please wait a moment before sending another message. 🙏").catch(() => {});
         return;
