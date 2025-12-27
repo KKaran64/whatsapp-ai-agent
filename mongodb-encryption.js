@@ -16,19 +16,26 @@ const AUTH_TAG_LENGTH = 16;
 const SALT_LENGTH = 64;
 
 /**
- * Get encryption key from environment or generate one
- * CRITICAL: In production, ENCRYPTION_KEY must be set in environment variables
+ * Get encryption key from environment
+ * CRITICAL: ENCRYPTION_KEY must be set in environment variables
+ * SECURITY: Fails fast in production if key is missing (no insecure defaults)
  */
 function getEncryptionKey() {
   const envKey = process.env.MONGODB_ENCRYPTION_KEY;
 
   if (!envKey) {
-    console.warn('⚠️  MONGODB_ENCRYPTION_KEY not set - using default (NOT SECURE FOR PRODUCTION)');
-    console.warn('⚠️  Generate key: openssl rand -hex 32');
-    console.warn('⚠️  Set in .env: MONGODB_ENCRYPTION_KEY=<your-key>');
+    const errorMsg = 'FATAL: MONGODB_ENCRYPTION_KEY must be set in environment variables';
+    console.error('❌', errorMsg);
+    console.error('💡 Generate key: openssl rand -hex 32');
+    console.error('💡 Add to Render: Environment → MONGODB_ENCRYPTION_KEY=<your-key>');
 
-    // Default key for development ONLY
-    return Buffer.from('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex');
+    // SECURITY: Fail-fast - never use default keys
+    throw new Error(errorMsg);
+  }
+
+  // Validate key format (must be 64 hex characters = 32 bytes)
+  if (envKey.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(envKey)) {
+    throw new Error('Invalid MONGODB_ENCRYPTION_KEY format - must be 64 hex characters (32 bytes)');
   }
 
   // Convert hex string to buffer
