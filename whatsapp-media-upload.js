@@ -18,6 +18,18 @@ const path = require('path');
 const MAX_CACHE_SIZE = 1000; // Prevent unbounded memory growth
 const MAX_FILE_SIZE = 18 * 1024 * 1024; // 18MB limit (WhatsApp allows up to 16MB, adding buffer)
 
+// Allowed image MIME types (prevents malicious file uploads)
+const ALLOWED_IMAGE_TYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif'
+];
+
+// Allowed file extensions
+const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+
 // Rate Limiting Configuration (prevents hitting WhatsApp API limits)
 const RATE_LIMIT_WINDOW = 60000; // 1 minute window
 const MAX_REQUESTS_PER_WINDOW = 30; // WhatsApp allows ~80/min, set conservative limit
@@ -118,6 +130,50 @@ function isValidImageUrl(url) {
 }
 
 /**
+ * Validate content type is an allowed image format (prevents malicious uploads)
+ * @param {string} contentType - Content-Type header value
+ * @param {string} url - Image URL for logging
+ * @returns {boolean} - True if content type is allowed
+ */
+function isValidImageContentType(contentType, url) {
+  // Normalize content type (remove charset, etc.)
+  const normalizedType = contentType.split(';')[0].trim().toLowerCase();
+
+  // Check if content type is in allowed list
+  const isAllowed = ALLOWED_IMAGE_TYPES.includes(normalizedType);
+
+  if (!isAllowed) {
+    console.error(`[SECURITY] Blocked invalid content-type: ${contentType} for URL: ${url.slice(0, 50)}`);
+    stats.securityBlocked++;
+  }
+
+  return isAllowed;
+}
+
+/**
+ * Validate file extension from URL (additional security layer)
+ * @param {string} url - Image URL
+ * @returns {boolean} - True if extension is allowed
+ */
+function hasValidImageExtension(url) {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname.toLowerCase();
+
+    // Check if URL ends with allowed extension
+    const hasValidExt = ALLOWED_EXTENSIONS.some(ext => pathname.endsWith(ext));
+
+    if (!hasValidExt) {
+      console.warn(`[SECURITY] Suspicious file extension in URL: ${url.slice(0, 50)}`);
+    }
+
+    return hasValidExt;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
  * Enforce cache size limit with LRU eviction
  */
 function enforceCacheLimit() {
@@ -168,6 +224,11 @@ async function uploadImageToWhatsApp(imageUrl) {
 
     const imageBuffer = Buffer.from(imageResponse.data);
     const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
+
+    // SECURITY: Validate content type (prevents malicious file uploads)
+    if (!isValidImageContentType(contentType, imageUrl)) {
+      throw new Error(`Invalid content type: ${contentType}. Only image formats allowed.`);
+    }
 
     // SECURITY: Validate file size
     if (imageBuffer.length > MAX_FILE_SIZE) {
