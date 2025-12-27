@@ -38,6 +38,8 @@ const MIN_REQUEST_INTERVAL = 100; // Minimum 100ms between requests
 
 // Whitelist of allowed domains (prevents SSRF attacks)
 const ALLOWED_DOMAINS = [
+  '9cork.com',               // Primary product image source
+  'www.9cork.com',
   'homedecorzstore.com',
   'www.homedecorzstore.com',
   'drive.google.com',
