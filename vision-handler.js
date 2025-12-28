@@ -63,7 +63,12 @@ class VisionHandler {
 
     } catch (error) {
       this.stats.gemini.failures++;
-      console.error('❌ Gemini Vision failed:', error.message);
+      console.error('❌ Gemini Vision failed:', error.response?.data || error.message);
+      console.error('   Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        message: error.message
+      });
       throw error;
     }
   }
@@ -105,7 +110,11 @@ class VisionHandler {
 
     } catch (error) {
       this.stats.claude.failures++;
-      console.error('❌ Claude Vision failed:', error.message);
+      console.error('❌ Claude Vision failed:', error.response?.data || error.message);
+      console.error('   Error details:', {
+        status: error.response?.status,
+        message: error.message
+      });
       throw error;
     }
   }
@@ -160,9 +169,11 @@ class VisionHandler {
   async handleImageMessage(mediaId, userMessage, phoneNumber, conversationHistory, systemPrompt) {
     try {
       console.log(`📸 Processing image: ${mediaId}`);
+      console.log(`🔑 API Keys configured: Gemini=${!!this.geminiApiKey}, Claude=${!!this.anthropicApiKey}, GoogleCloud=${!!this.googleCloudKey}`);
 
       // Download image once
       const { base64, mimeType } = await this.downloadImage(mediaId);
+      console.log(`✅ Image downloaded: ${mimeType}, size=${Math.round(base64.length / 1024)}KB`);
 
       // Build prompt
       const conversationText = conversationHistory
