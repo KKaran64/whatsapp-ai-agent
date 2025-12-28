@@ -1195,15 +1195,27 @@ const monitoringLimiter = rateLimit({
 // FIX #4: Per-Phone Rate Limiting (prevents spam from individual users)
 const phoneRateLimits = new Map();
 
+// v49: Message deduplication cache (prevent processing same message twice)
+// Meta sometimes sends duplicate webhooks for reliability - causes duplicate AI responses
+const processedMessageIds = new Set();
+const MESSAGE_DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
+
 // Cleanup old entries every 5 minutes to prevent memory leak
 setInterval(() => {
   const now = Date.now();
   const cleanupAge = 5 * 60 * 1000; // 5 minutes
 
+  // Clean up rate limit timestamps
   for (const [phone, timestamp] of phoneRateLimits.entries()) {
     if (now - timestamp > cleanupAge) {
       phoneRateLimits.delete(phone);
     }
+  }
+
+  // v49: Clean up message deduplication cache
+  if (processedMessageIds.size > 500) {
+    console.log(`🧹 Clearing message deduplication cache (${processedMessageIds.size} entries)`);
+    processedMessageIds.clear();
   }
 }, 5 * 60 * 1000);
 
@@ -1367,6 +1379,15 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
       // FIX #7: Add request ID for tracking
       const requestId = generateRequestId();
       console.log(`[${requestId}] 📨 Incoming webhook from ${from} (${messageType})`);
+
+      // v49: Message deduplication - prevent processing same message twice
+      // Meta sometimes sends duplicate webhooks → causes bot to send multiple different responses
+      if (processedMessageIds.has(messageId)) {
+        console.log(`[${requestId}] 🔄 Duplicate message detected (already processed) - skipping`);
+        return; // Skip duplicate message
+      }
+      processedMessageIds.add(messageId);
+      console.log(`[${requestId}] ✅ Message ${messageId} marked as processing (cache size: ${processedMessageIds.size})`);
 
       // FIX #2: Validate message before processing
       const validation = validateWhatsAppMessage(message);
