@@ -71,7 +71,15 @@ app.use(helmet({
 app.disable('x-powered-by');
 
 // SECURITY: Limit JSON payload size to prevent large payload attacks
-app.use(express.json({ limit: '100kb' }));
+// CRITICAL FIX v47: Capture raw body for webhook signature validation
+// Meta/Facebook calculates HMAC on RAW bytes, not re-stringified JSON
+app.use(express.json({
+  limit: '100kb',
+  verify: (req, res, buf, encoding) => {
+    // Store raw body buffer for signature validation
+    req.rawBody = buf.toString('utf8');
+  }
+}));
 
 // Configuration
 const CONFIG = {
@@ -1214,9 +1222,13 @@ function validateWebhookSignature(req, res, next) {
     return res.sendStatus(401);
   }
 
+  // CRITICAL FIX v47: Use raw body (not re-stringified JSON) for signature validation
+  // Meta/Facebook calculates signature on RAW request bytes
+  const bodyToVerify = req.rawBody || JSON.stringify(req.body);
+
   const expectedSignature = 'sha256=' + crypto
     .createHmac('sha256', CONFIG.WHATSAPP_APP_SECRET)
-    .update(JSON.stringify(req.body))
+    .update(bodyToVerify)
     .digest('hex');
 
   // SECURITY FIX: Use timing-safe comparison to prevent timing attacks
@@ -1226,7 +1238,12 @@ function validateWebhookSignature(req, res, next) {
 
     if (signatureBuffer.length !== expectedBuffer.length ||
         !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+      // Enhanced logging for debugging (v47)
       console.error('❌ Invalid webhook signature');
+      console.error('   Received signature:', signature.substring(0, 20) + '...');
+      console.error('   Expected signature:', expectedSignature.substring(0, 20) + '...');
+      console.error('   Body length:', bodyToVerify.length, 'bytes');
+      console.error('   Using rawBody:', !!req.rawBody);
       return res.sendStatus(403);
     }
   } catch (err) {
@@ -1234,6 +1251,7 @@ function validateWebhookSignature(req, res, next) {
     return res.sendStatus(403);
   }
 
+  console.log('✅ Webhook signature validated successfully');
   next();
 }
 
