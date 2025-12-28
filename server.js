@@ -34,6 +34,30 @@ const {
   detectSuspiciousInput
 } = require('./input-sanitizer');
 
+// Import Error Handling (Standardized error classes and middleware)
+const { AppError, ValidationError, ExternalServiceError } = require('./errors/AppError');
+const {
+  errorHandler,
+  notFoundHandler,
+  handleUnhandledRejection,
+  handleUncaughtException
+} = require('./middleware/errorHandler');
+
+// Import Request ID Middleware (Request tracking)
+const { requestIdMiddleware, generateRequestId } = require('./middleware/requestId');
+
+// Import Database Utilities (Atomic updates and optimized queries)
+const {
+  updateConversationHistory,
+  updateLeadQualification,
+  getConversationHistory,
+  getOrCreateCustomer,
+  updateCustomerMetadata
+} = require('./utils/database');
+
+// Import Constants (Centralized configuration)
+const { RATE_LIMITS, DATABASE, MESSAGE } = require('./config/constants');
+
 const app = express();
 
 // Trust proxy for rate limiting when behind ngrok/reverse proxy
@@ -80,6 +104,9 @@ app.use(express.json({
     req.rawBody = buf.toString('utf8');
   }
 }));
+
+// FIX ISSUE #8: Add request ID middleware for tracking (must be after body parser)
+app.use(requestIdMiddleware);
 
 // Configuration
 const CONFIG = {
@@ -250,6 +277,39 @@ Example:
 Customer: "Card holder... 300 pcs"
 ✅ CORRECT: "For 300 card holders, what's the occasion?"
 ❌ WRONG: "What product and how many?" ← They JUST told you!
+
+**RULE 4: GREETING HANDLING (v52 - CRITICAL FIX)**
+When customer sends ONLY a greeting (no product/question mentioned):
+Examples: "hi", "hello", "hey", "ho there", "good morning", "namaste"
+
+✅ ALWAYS respond with: Warm greeting + ONE qualification question
+✅ Use: "👋 Welcome to 9 Cork! What brings you here today?"
+OR: "Hello! Are you looking for corporate gifting or personal use?"
+
+❌ NEVER jump into product education ("Cork is tree bark...")
+❌ NEVER mention specific products they didn't ask for
+❌ NEVER assume they want to learn about cork material
+
+Example:
+Customer: "Hi" → You: "👋 Welcome to 9 Cork! What brings you here today?" ✅
+(NOT: "Cork is tree bark harvested..." ← They didn't ask about cork!)
+
+Customer: "Ho there" → You: "Hello! Looking for something specific?" ✅
+(NOT: "Cork is tree bark..." ← Wrong!)
+
+**RULE 5: NEVER INVENT PRODUCTS (v52 - CRITICAL FIX)**
+❌ ❌ ❌ NEVER mention specific products unless customer EXPLICITLY asked for them
+
+Example:
+Customer: "Hi" → You: "Welcome! What brings you here?" ✅
+(NOT: "Cork diaries are available!" ← They didn't ask for diaries!)
+
+Customer: "Looking for corporate gifts" → You: "Great! What type of products interest you?" ✅
+(NOT: "We have cork coasters and diaries!" ← Don't suggest yet, ask first!)
+
+✅ ONLY mention products when:
+1. Customer explicitly asked: "Do you have diaries?"
+2. Customer described need: "Need something for desk" → "Desk organizers or mouse pads?"
 
 ═══════════════════════════════════════
 📋 SALES QUALIFICATION FLOW
@@ -519,10 +579,15 @@ async function connectDatabase() {
       throw new Error('Production environment requires cloud MongoDB URI, not localhost');
     }
 
+    // FIX ISSUE #6: Add connection pooling limits for better scalability
     await mongoose.connect(CONFIG.MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000 // 5 second timeout
+      maxPoolSize: 10,               // Max 10 connections in pool
+      minPoolSize: 2,                // Keep 2 warm connections
+      serverSelectionTimeoutMS: 5000, // 5 second timeout
+      socketTimeoutMS: 45000,        // Close sockets after 45s of inactivity
+      family: 4                      // Use IPv4, avoid IPv6 issues
     });
-    console.log('✅ MongoDB connected');
+    console.log('✅ MongoDB connected with connection pooling (2-10 connections)');
   } catch (err) {
     console.error('❌ MongoDB connection error:', err.message);
     console.log('⚠️  Continuing without MongoDB - conversation history disabled');
@@ -788,6 +853,15 @@ function setupMessageProcessor() {
     const { from, messageBody, messageId, messageType, mediaId } = job.data;
 
     try {
+      // v52 FIX: Check if we already sent a response to this message successfully
+      // Prevents queue retries from sending duplicate responses
+      if (sentResponses.has(messageId)) {
+        const previousResponse = sentResponses.get(messageId);
+        console.log(`✅ Message ${messageId} already processed successfully at ${previousResponse.timestamp.toISOString()}`);
+        console.log(`   Skipping resend (queue retry detected)`);
+        return; // Skip this job, message was already sent
+      }
+
       console.log(`🔄 Processing ${messageType || 'text'} message from queue: ${from}`);
 
       // Get conversation context with timeout fallback
@@ -827,6 +901,14 @@ function setupMessageProcessor() {
 
       // Send response back to customer
       await sendWhatsAppMessage(from, agentResponse);
+
+      // v52 FIX: Mark message as successfully sent to prevent queue retries from resending
+      sentResponses.set(messageId, {
+        timestamp: new Date(),
+        responseText: agentResponse.substring(0, 100), // Store first 100 chars for logging
+        phoneNumber: from
+      });
+      console.log(`✅ Marked message ${messageId} as sent successfully`);
 
       // Handle image detection and sending (SHARED FUNCTION - works for both queue and direct paths)
       // v42: Pass conversation context for pronoun resolution
@@ -874,6 +956,10 @@ const phoneRateLimits = new Map();
 // Meta sometimes sends duplicate webhooks for reliability - causes duplicate AI responses
 const processedMessageIds = new Set();
 const MESSAGE_DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
+
+// v52 FIX: Track successfully sent responses to prevent queue retries from resending
+// When Bull queue retries a failed job, it must NOT resend if message was already sent
+const sentResponses = new Map(); // Map<messageId, { timestamp: Date, responseText: string }>
 
 // Cleanup old entries every 5 minutes to prevent memory leak
 setInterval(() => {
@@ -1097,6 +1183,14 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
           console.log('✅ Message added to queue');
         } else {
           console.log('⚠️  Queue unavailable - processing directly');
+
+          // v52 FIX: Check if already sent (same check as queue processor)
+          if (sentResponses.has(messageId)) {
+            const previousResponse = sentResponses.get(messageId);
+            console.log(`✅ Message ${messageId} already sent at ${previousResponse.timestamp.toISOString()}`);
+            return; // Skip duplicate processing
+          }
+
           // Process directly without queue
           try {
             // Get conversation context with timeout fallback
