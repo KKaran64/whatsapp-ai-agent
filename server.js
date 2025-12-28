@@ -156,11 +156,6 @@ function validateRequiredEnvVars() {
 
 validateRequiredEnvVars();
 
-// FIX #7: Request ID Generation (for tracking and debugging)
-function generateRequestId() {
-  return crypto.randomBytes(6).toString('hex');
-}
-
 // Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
 // UPDATED: Claude removed to use only free providers (Groq + Gemini)
 console.log('🔧 Initializing AI Manager with environment variables:');
