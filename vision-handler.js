@@ -172,7 +172,7 @@ class VisionHandler {
       const imageBuffer = Buffer.from(base64Image, 'base64');
 
       const response = await axios.post(
-        'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
+        'https://router.huggingface.co/models/Salesforce/blip-image-captioning-large',
         imageBuffer,
         {
           headers: {
