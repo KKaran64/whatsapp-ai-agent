@@ -11,6 +11,7 @@ const Sentry = require('@sentry/node');
 // Import models
 const Customer = require('./models/Customer');
 const Conversation = require('./models/Conversation');
+const Product = require('./models/Product');
 
 // Import AI Provider Manager (Multi-provider with fallbacks)
 const AIProviderManager = require('./ai-provider-manager');
@@ -1728,6 +1729,53 @@ app.get('/stats', monitoringLimiter, async (req, res) => {
   } catch (error) {
     console.error('Error getting stats:', error);
     res.status(500).json({ error: 'Error retrieving stats' });
+  }
+});
+
+// Admin endpoint: Import products (one-time setup)
+app.post('/admin/import-products', async (req, res) => {
+  try {
+    // Simple authentication using VERIFY_TOKEN
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    if (token !== CONFIG.VERIFY_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log('📦 Starting product import from admin endpoint...');
+
+    // Load products from JSON file
+    const productsData = require('./scripts/products-data.json');
+    console.log(`📖 Loaded ${productsData.length} products from JSON`);
+
+    // Clear existing products
+    const deleteResult = await Product.deleteMany({});
+    console.log(`🗑️  Deleted ${deleteResult.deletedCount} existing products`);
+
+    // Insert products
+    await Product.insertMany(productsData, { ordered: false });
+    console.log(`✅ Inserted ${productsData.length} products`);
+
+    // Get category summary
+    const categories = await Product.aggregate([
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    const totalCount = await Product.countDocuments();
+
+    res.json({
+      success: true,
+      imported: productsData.length,
+      totalInDatabase: totalCount,
+      categories: categories.map(c => ({ category: c._id, count: c.count }))
+    });
+
+  } catch (error) {
+    console.error('❌ Product import failed:', error);
+    res.status(500).json({
+      error: 'Import failed',
+      message: error.message
+    });
   }
 });
 
