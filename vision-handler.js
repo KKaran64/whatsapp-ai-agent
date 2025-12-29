@@ -1,5 +1,5 @@
 // Vision Handler - Multi-Provider Image Recognition (Condensed)
-// Gemini Vision (free) → Claude Vision (paid) → Google Cloud Vision (free tier)
+// Gemini Vision (free) → Claude Vision (paid) → Google Cloud Vision (free tier) → Hugging Face (free)
 const axios = require('axios');
 
 class VisionHandler {
@@ -8,12 +8,14 @@ class VisionHandler {
     this.geminiApiKey = config.GEMINI_API_KEY;
     this.anthropicApiKey = config.ANTHROPIC_API_KEY;
     this.googleCloudKey = config.GOOGLE_CLOUD_VISION_KEY;
+    this.huggingFaceToken = config.HUGGINGFACE_TOKEN;
 
     // Stats tracking
     this.stats = {
       gemini: { success: 0, failures: 0 },
       claude: { success: 0, failures: 0 },
       googleCloud: { success: 0, failures: 0 },
+      huggingFace: { success: 0, failures: 0 },
       fallback: { success: 0 }
     };
   }
@@ -159,6 +161,44 @@ class VisionHandler {
     }
   }
 
+  // Try Hugging Face Vision (QUATERNARY - Free forever, image captioning)
+  async tryHuggingFaceVision(base64Image) {
+    if (!this.huggingFaceToken) throw new Error('Hugging Face token not configured');
+
+    try {
+      console.log('🟠 Trying Hugging Face Vision...');
+
+      // Convert base64 to binary buffer for HF API
+      const imageBuffer = Buffer.from(base64Image, 'base64');
+
+      const response = await axios.post(
+        'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
+        imageBuffer,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.huggingFaceToken}`,
+            'Content-Type': 'application/octet-stream'
+          },
+          timeout: 30000 // 30 second timeout
+        }
+      );
+
+      const caption = response.data?.[0]?.generated_text;
+      if (!caption) throw new Error('Empty response from Hugging Face');
+
+      // Format caption into helpful response
+      const basicResponse = `I can see: ${caption}. Which cork product are you interested in?`;
+
+      this.stats.huggingFace.success++;
+      return { provider: 'huggingface-vision', response: basicResponse };
+
+    } catch (error) {
+      this.stats.huggingFace.failures++;
+      console.error('❌ Hugging Face Vision failed:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
   // Fallback response (when all vision APIs fail)
   getFallbackResponse() {
     this.stats.fallback.success++;
@@ -169,7 +209,7 @@ class VisionHandler {
   async handleImageMessage(mediaId, userMessage, phoneNumber, conversationHistory, systemPrompt) {
     try {
       console.log(`📸 Processing image: ${mediaId}`);
-      console.log(`🔑 API Keys configured: Gemini=${!!this.geminiApiKey}, Claude=${!!this.anthropicApiKey}, GoogleCloud=${!!this.googleCloudKey}`);
+      console.log(`🔑 API Keys configured: Gemini=${!!this.geminiApiKey}, Claude=${!!this.anthropicApiKey}, GoogleCloud=${!!this.googleCloudKey}, HuggingFace=${!!this.huggingFaceToken}`);
 
       // Download image once
       const { base64, mimeType } = await this.downloadImage(mediaId);
@@ -278,11 +318,21 @@ Respond in 2 sentences maximum as Priya (sales expert).`;
           const result = await this.tryGoogleCloudVision(base64);
           return { ...result, imageProcessed: true };
         } catch (error) {
-          console.log('⚠️ Google Cloud Vision unavailable, using fallback...');
+          console.log('⚠️ Google Cloud Vision unavailable, trying Hugging Face...');
         }
       }
 
-      // 4. Fallback response
+      // 4. Try Hugging Face Vision (FREE FOREVER - image captioning)
+      if (this.huggingFaceToken) {
+        try {
+          const result = await this.tryHuggingFaceVision(base64);
+          return { ...result, imageProcessed: true };
+        } catch (error) {
+          console.log('⚠️ Hugging Face Vision unavailable, using fallback...');
+        }
+      }
+
+      // 5. Fallback response
       return {
         provider: 'fallback',
         response: this.getFallbackResponse(),
