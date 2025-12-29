@@ -119,6 +119,7 @@ const CONFIG = {
   GEMINI_API_KEY: (process.env.GEMINI_API_KEY || '').trim(),
   ANTHROPIC_API_KEY: (process.env.ANTHROPIC_API_KEY || '').trim(),
   GOOGLE_CLOUD_VISION_KEY: (process.env.GOOGLE_CLOUD_VISION_KEY || '').trim(),
+  HUGGINGFACE_TOKEN: (process.env.HUGGINGFACE_TOKEN || '').trim(),
   MONGODB_URI: (process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales').trim(),
   REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
   SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
@@ -176,12 +177,13 @@ const aiManager = new AIProviderManager({
 
 console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
 
-// Initialize Vision Handler (Multi-provider: Gemini → Claude → Google Cloud)
+// Initialize Vision Handler (Multi-provider: Gemini → Claude → Google Cloud → Hugging Face)
 const visionHandler = new VisionHandler({
   WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
   ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY,
-  GOOGLE_CLOUD_VISION_KEY: CONFIG.GOOGLE_CLOUD_VISION_KEY
+  GOOGLE_CLOUD_VISION_KEY: CONFIG.GOOGLE_CLOUD_VISION_KEY,
+  HUGGINGFACE_TOKEN: CONFIG.HUGGINGFACE_TOKEN
 });
 
 // System Prompt for AI Agent - v51 CONSOLIDATED (658→480 lines)
