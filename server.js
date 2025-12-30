@@ -1735,9 +1735,12 @@ app.get('/stats', monitoringLimiter, async (req, res) => {
 // Admin endpoint: Import products (one-time setup)
 app.post('/admin/import-products', async (req, res) => {
   try {
+    console.log('📥 Admin import endpoint called');
+
     // Simple authentication using VERIFY_TOKEN
     const token = req.headers['authorization']?.replace('Bearer ', '');
     if (token !== CONFIG.VERIFY_TOKEN) {
+      console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -1803,7 +1806,8 @@ app.listen(CONFIG.PORT, () => {
   console.log(`📡 Server running on port ${CONFIG.PORT}`);
   console.log(`🔗 Webhook URL: https://your-domain.com/webhook`);
   console.log(`🏥 Health check: http://localhost:${CONFIG.PORT}/health`);
-  console.log(`📊 Stats: http://localhost:${CONFIG.PORT}/stats\n`);
+  console.log(`📊 Stats: http://localhost:${CONFIG.PORT}/stats`);
+  console.log(`📦 Admin import: http://localhost:${CONFIG.PORT}/admin/import-products\n`);
 
   // Connect to services in the background (non-blocking)
   console.log('🔄 Connecting to databases...');
