@@ -20,8 +20,62 @@ const AIProviderManager = require('./ai-provider-manager');
 const VisionHandler = require('./vision-handler');
 
 // Import Product Image Database (STRICT: Cork products only)
-// Use V2 image system with JSON database
+// Use V2 image system with JSON database (DEPRECATED - will migrate to MongoDB)
 const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseStats } = require('./product-images-v2');
+
+// MongoDB Product Query Helpers
+async function findProductsByCategory(category, limit = 6) {
+  try {
+    const products = await Product.find({
+      category: new RegExp(category, 'i')
+    }).limit(limit);
+    return products;
+  } catch (error) {
+    console.error('❌ Error querying products by category:', error);
+    return [];
+  }
+}
+
+async function findProductBySearch(searchQuery, limit = 1) {
+  try {
+    // Try text search first
+    let products = await Product.find({
+      $text: { $search: searchQuery }
+    }).limit(limit);
+
+    // Fallback: regex search on name if text search fails
+    if (products.length === 0) {
+      products = await Product.find({
+        name: new RegExp(searchQuery, 'i')
+      }).limit(limit);
+    }
+
+    return products.length > 0 ? products : [];
+  } catch (error) {
+    console.error('❌ Error searching products:', error);
+    return [];
+  }
+}
+
+// Convert Google Drive share URL to direct download URL
+function convertGoogleDriveUrl(url) {
+  if (!url) return url;
+
+  // Handle Google Drive share links
+  const driveMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (driveMatch) {
+    return `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+  }
+
+  // Return as-is for other URLs
+  return url;
+}
+
+// Check if URL is valid for WhatsApp (any HTTPS URL)
+function isValidImageUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  return url.startsWith('https://') || url.startsWith('http://');
+}
 
 // Import WhatsApp Media Upload API (100% reliable image delivery)
 const { uploadAndSendImage, getCacheStats: getMediaCacheStats } = require('./whatsapp-media-upload');
@@ -895,42 +949,91 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     }
 
     if (catalogCategory) {
-      const catalogImages = getCatalogImages(catalogCategory);
-      console.log(`📚 Sending ${catalogImages.length} ${catalogCategory} images`);
+      // Try MongoDB first, fallback to JSON database
+      const products = await findProductsByCategory(catalogCategory, 6);
 
-      let sentCount = 0;
-      let failedCount = 0;
-      for (const imageUrl of catalogImages.slice(0, 6)) {
-        try {
-          if (isValidCorkProductUrl(imageUrl)) {
-            await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
-            sentCount++;
-            await new Promise(resolve => setTimeout(resolve, 500));
+      if (products.length > 0) {
+        console.log(`📚 Sending ${products.length} ${catalogCategory} images from MongoDB`);
+
+        let sentCount = 0;
+        let failedCount = 0;
+        for (const product of products) {
+          if (product.images && product.images.length > 0) {
+            try {
+              const imageUrl = convertGoogleDriveUrl(product.images[0]);
+              if (isValidImageUrl(imageUrl)) {
+                await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
+                sentCount++;
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            } catch (err) {
+              failedCount++;
+              console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
+            }
           }
-        } catch (err) {
-          failedCount++;
-          console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
         }
-      }
 
-      // v42: Better error handling - notify user even if ALL images fail
-      if (failedCount > 0) {
-        if (sentCount === 0) {
-          // ALL images failed - apologize and offer description
-          await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Let me describe our ${catalogCategory} instead - would that help?`).catch(() => {});
-        } else {
-          // SOME images failed - let user know
-          await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
+        // Error handling
+        if (failedCount > 0) {
+          if (sentCount === 0) {
+            await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Let me describe our ${catalogCategory} instead - would that help?`).catch(() => {});
+          } else {
+            await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
+          }
+        }
+      } else {
+        // Fallback to old JSON system if MongoDB is empty
+        console.log('⚠️ No products in MongoDB, using JSON fallback');
+        const catalogImages = getCatalogImages(catalogCategory);
+        console.log(`📚 Sending ${catalogImages.length} ${catalogCategory} images from JSON`);
+
+        let sentCount = 0;
+        let failedCount = 0;
+        for (const imageUrl of catalogImages.slice(0, 6)) {
+          try {
+            if (isValidCorkProductUrl(imageUrl)) {
+              await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
+              sentCount++;
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          } catch (err) {
+            failedCount++;
+            console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
+          }
+        }
+
+        if (failedCount > 0) {
+          if (sentCount === 0) {
+            await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Let me describe our ${catalogCategory} instead - would that help?`).catch(() => {});
+          } else {
+            await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
+          }
         }
       }
     } else if (hasTrigger && PRODUCT_KEYWORDS.test(userMessage)) {
-      // Single product image (only if trigger words present)
-      const productImage = findProductImage(userMessage);
-      if (productImage && isValidCorkProductUrl(productImage)) {
+      // Single product image - Try MongoDB first
+      const products = await findProductBySearch(userMessage, 1);
+
+      if (products.length > 0 && products[0].images && products[0].images.length > 0) {
+        console.log(`📸 Found product in MongoDB: ${products[0].name}`);
         try {
-          await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
+          const imageUrl = convertGoogleDriveUrl(products[0].images[0]);
+          if (isValidImageUrl(imageUrl)) {
+            await sendWhatsAppImage(from, imageUrl, `${products[0].name} 🌿`);
+          }
         } catch (err) {
           console.error('❌ Image send failed:', err.response?.data || err.message);
+        }
+      } else {
+        // Fallback to old JSON system
+        console.log('⚠️ Product not found in MongoDB, using JSON fallback');
+        const productImage = findProductImage(userMessage);
+        if (productImage && isValidCorkProductUrl(productImage)) {
+          try {
+            await sendWhatsAppImage(from, productImage, 'Here\'s what it looks like! 🌿');
+          } catch (err) {
+            console.error('❌ Image send failed:', err.response?.data || err.message);
+          }
         }
       }
     }
