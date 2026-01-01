@@ -14,10 +14,12 @@ const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
+const sharp = require('sharp');
 
 // Security Configuration
 const MAX_CACHE_SIZE = 1000; // Prevent unbounded memory growth
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB limit (WhatsApp's actual limit for images is 5,242,880 bytes)
+const TARGET_IMAGE_SIZE = 4.8 * 1024 * 1024; // Target 4.8MB (just under WhatsApp's 5MB limit with safety margin)
 
 // Allowed image MIME types (prevents malicious file uploads)
 const ALLOWED_IMAGE_TYPES = [
@@ -83,8 +85,108 @@ const stats = {
   sent: 0,
   failed: 0,
   securityBlocked: 0,
-  rateLimited: 0
+  rateLimited: 0,
+  compressed: 0,
+  compressionBytesSaved: 0
 };
+
+/**
+ * Compress image to target size while maintaining quality
+ * Uses adaptive compression - tries quality levels until size target is met
+ * @param {Buffer} imageBuffer - Original image buffer
+ * @param {string} contentType - Image MIME type
+ * @returns {Promise<Buffer>} - Compressed image buffer
+ */
+async function compressImage(imageBuffer, contentType = 'image/jpeg') {
+  const originalSize = imageBuffer.length;
+
+  // If already under target size, return as-is
+  if (originalSize <= TARGET_IMAGE_SIZE) {
+    console.log(`[COMPRESS] Image already under target (${(originalSize / 1024 / 1024).toFixed(2)}MB), skipping compression`);
+    return imageBuffer;
+  }
+
+  console.log(`[COMPRESS] Original size: ${(originalSize / 1024 / 1024).toFixed(2)}MB, compressing...`);
+
+  try {
+    // Get image metadata
+    const metadata = await sharp(imageBuffer).metadata();
+    console.log(`[COMPRESS] Format: ${metadata.format}, Dimensions: ${metadata.width}x${metadata.height}`);
+
+    // Adaptive compression strategy
+    let quality = 90;
+    let compressed = null;
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+
+      // Compress with current quality
+      compressed = await sharp(imageBuffer)
+        .jpeg({ quality, mozjpeg: true }) // Use mozjpeg for better compression
+        .toBuffer();
+
+      const compressedSize = compressed.length;
+      const sizeMB = (compressedSize / 1024 / 1024).toFixed(2);
+
+      console.log(`[COMPRESS] Attempt ${attempts}: Quality ${quality}%, Size ${sizeMB}MB`);
+
+      // Check if we hit the target
+      if (compressedSize <= TARGET_IMAGE_SIZE) {
+        const savedBytes = originalSize - compressedSize;
+        const savedMB = (savedBytes / 1024 / 1024).toFixed(2);
+
+        stats.compressed++;
+        stats.compressionBytesSaved += savedBytes;
+
+        console.log(`[COMPRESS] ✅ Success! Reduced from ${(originalSize / 1024 / 1024).toFixed(2)}MB to ${sizeMB}MB (saved ${savedMB}MB, quality ${quality}%)`);
+        return compressed;
+      }
+
+      // Reduce quality for next attempt
+      quality -= 10;
+
+      if (quality < 50) {
+        // If quality too low, try resizing instead
+        console.log(`[COMPRESS] Quality too low, trying resize...`);
+        const scaleFactor = Math.sqrt(TARGET_IMAGE_SIZE / compressedSize);
+        const newWidth = Math.floor(metadata.width * scaleFactor);
+        const newHeight = Math.floor(metadata.height * scaleFactor);
+
+        compressed = await sharp(imageBuffer)
+          .resize(newWidth, newHeight, { fit: 'inside' })
+          .jpeg({ quality: 85, mozjpeg: true })
+          .toBuffer();
+
+        const finalSize = compressed.length;
+        const finalSizeMB = (finalSize / 1024 / 1024).toFixed(2);
+
+        if (finalSize <= TARGET_IMAGE_SIZE) {
+          const savedBytes = originalSize - finalSize;
+          const savedMB = (savedBytes / 1024 / 1024).toFixed(2);
+
+          stats.compressed++;
+          stats.compressionBytesSaved += savedBytes;
+
+          console.log(`[COMPRESS] ✅ Success with resize! ${metadata.width}x${metadata.height} → ${newWidth}x${newHeight}, ${finalSizeMB}MB (saved ${savedMB}MB)`);
+          return compressed;
+        }
+
+        break; // Can't compress further
+      }
+    }
+
+    // If still too large, return last attempt (better than nothing)
+    console.log(`[COMPRESS] ⚠️ Could not reach target size after ${attempts} attempts, using best attempt`);
+    return compressed || imageBuffer;
+
+  } catch (error) {
+    console.error(`[COMPRESS] ❌ Compression failed:`, error.message);
+    console.error(`[COMPRESS] Returning original image`);
+    return imageBuffer;
+  }
+}
 
 /**
  * Rate limiter - prevents hitting WhatsApp API limits
@@ -294,7 +396,7 @@ async function uploadImageToWhatsApp(imageUrl) {
       }
     });
 
-    const imageBuffer = Buffer.from(imageResponse.data);
+    let imageBuffer = Buffer.from(imageResponse.data);
     const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
 
     // SECURITY: Validate content type (prevents malicious file uploads)
@@ -302,18 +404,25 @@ async function uploadImageToWhatsApp(imageUrl) {
       throw new Error(`Invalid content type: ${contentType}. Only image formats allowed.`);
     }
 
-    // SECURITY: Validate file size
-    if (imageBuffer.length > MAX_FILE_SIZE) {
-      throw new Error(`Image too large: ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+    console.log(`[MEDIA] Downloaded ${imageBuffer.length} bytes, type: ${contentType}`);
+
+    // COMPRESSION: Automatically compress if image exceeds WhatsApp's limit
+    if (imageBuffer.length > TARGET_IMAGE_SIZE) {
+      console.log(`[MEDIA] Image size ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB exceeds target, compressing...`);
+      imageBuffer = await compressImage(imageBuffer, contentType);
+      console.log(`[MEDIA] After compression: ${imageBuffer.length} bytes`);
     }
 
-    console.log(`[MEDIA] Downloaded ${imageBuffer.length} bytes, type: ${contentType}`);
+    // SECURITY: Final validation after compression
+    if (imageBuffer.length > MAX_FILE_SIZE) {
+      throw new Error(`Image too large even after compression: ${(imageBuffer.length / 1024 / 1024).toFixed(2)}MB (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+    }
 
     // Step 2: Create form data
     const formData = new FormData();
     formData.append('file', imageBuffer, {
       filename: 'product.jpg',
-      contentType: contentType
+      contentType: 'image/jpeg' // Always JPEG after compression
     });
     formData.append('messaging_product', 'whatsapp');
     formData.append('type', contentType);
