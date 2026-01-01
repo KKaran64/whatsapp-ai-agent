@@ -316,8 +316,11 @@ Is each product and quantity correct? Please say YES or tell me what to change."
 ☐ WHEN (timeline) - "next week" / "year-end" / "quarterly"
 ☐ BRANDING (logo?) - "yes single color" / "multi-color" / "no"
 
-❌ NEVER say: "Starting from ₹X" / "Prices range from..." / "It costs around..."
+❌ NEVER mention ₹ symbols or rupee amounts UNTIL you have ALL 4 qualifiers
+❌ NEVER say: "Starting from ₹X" / "Prices range from..." / "₹180" / "₹130-₹400"
+❌ Even when customer asks "share options" or "what do you have" → DON'T mention prices!
 ✅ ALWAYS qualify FIRST: "What's this for - corporate gifting or personal use?"
+✅ When listing product variants, say "We have Single, Set of 3, Set of 5, Wall-Mounted. Which interests you?"
 
 🚨 **ANTI-BYPASS VALIDATION (v46):**
 If customer gives rushed/generic answers ("corporate, clients, next week, no logo"):
@@ -860,17 +863,17 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     const hasTrigger = TRIGGER_WORDS.test(userMessage);
 
     // v42 FIX: Context-aware image detection
-    // When user says "the same", "them", "it", look at conversation history to find product context
-    const pronounReferences = /\b(the same|them|it|those|these)\b/i;
+    // When user says "the same", "them", "it", "above", etc., look at conversation history to find product context
+    const pronounReferences = /\b(the same|them|it|those|these|that|above|earlier|mentioned|suggestions?)\b/i;
     if (pronounReferences.test(userMessage) && hasTrigger) {
-      console.log('🔍 Pronoun reference detected, checking conversation context...');
+      console.log('🔍 Pronoun/reference detected, checking conversation context...');
       // Look at last 5 messages to find product mentions
       const recentMessages = conversationContext.slice(-5);
       for (let i = recentMessages.length - 1; i >= 0; i--) {
         const msg = recentMessages[i];
         const content = msg.content || '';
         // Extract product keywords from recent conversation
-        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|holder)\b/i);
+        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|holder|test tube)\b/i);
         if (productMatch) {
           const productContext = productMatch[0];
           console.log(`✅ Found product context from conversation: "${productContext}"`);
