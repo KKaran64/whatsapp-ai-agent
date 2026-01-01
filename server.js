@@ -23,8 +23,11 @@ const VisionHandler = require('./vision-handler');
 // Use V2 image system with JSON database (DEPRECATED - will migrate to MongoDB)
 const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseStats } = require('./product-images-v2');
 
+// Track sent images per conversation to avoid duplicates
+const sentImagesTracker = new Map(); // phoneNumber -> Set of image URLs
+
 // MongoDB Product Query Helpers
-async function findProductsByCategory(category, limit = 6) {
+async function findProductsByCategory(category, limit = 10, phoneNumber = null, excludeSent = false) {
   try {
     // Map simplified category names to database categories
     const categoryMap = {
@@ -33,15 +36,29 @@ async function findProductsByCategory(category, limit = 6) {
       'desk': 'DESK',
       'bags': 'BAG',
       'planters': 'PLANTER',
+      'trays': 'TRAY',  // Matches "CORK SERVING/DECOR TRAYS"
+      'bottles': 'BOTTLE',
       'all': ''
     };
 
     const searchTerm = categoryMap[category] || category;
     console.log(`🔍 MongoDB query: category contains "${searchTerm}"`);
 
-    const products = await Product.find({
+    let products = await Product.find({
       category: new RegExp(searchTerm, 'i')
-    }).limit(limit);
+    }).limit(limit * 2); // Get more to filter duplicates
+
+    // Filter out already-sent images if requested
+    if (excludeSent && phoneNumber && sentImagesTracker.has(phoneNumber)) {
+      const sentImages = sentImagesTracker.get(phoneNumber);
+      products = products.filter(p => {
+        if (!p.images || p.images.length === 0) return false;
+        return !sentImages.has(p.images[0]);
+      });
+    }
+
+    // Apply limit after filtering
+    products = products.slice(0, limit);
 
     console.log(`📊 MongoDB returned ${products.length} products for category "${category}"`);
     if (products.length > 0) {
@@ -958,6 +975,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       'desk': /\b(desk|organizers?)\b/i,
       'bags': /\b(bags?|wallets?|laptop)\b/i,
       'planters': /\b(planters?)\b/i,
+      'trays': /\b(trays?|serving)\b/i,
+      'bottles': /\b(bottles?|water bottle)\b/i,
       'all': /\b(catalog|catalogue|all products|full range)\b/i
     };
 
@@ -971,8 +990,26 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     }
 
     if (catalogCategory) {
-      // Try MongoDB first, fallback to JSON database
-      const products = await findProductsByCategory(catalogCategory, 6);
+      // Initialize sent images tracker for this phone number
+      if (!sentImagesTracker.has(from)) {
+        sentImagesTracker.set(from, new Set());
+      }
+      const sentImages = sentImagesTracker.get(from);
+
+      // First try: Get new products excluding already sent
+      let products = await findProductsByCategory(catalogCategory, 10, from, true);
+
+      // If no new products, check if we have any products at all
+      if (products.length === 0) {
+        const allProducts = await findProductsByCategory(catalogCategory, 10, from, false);
+        if (allProducts.length > 0) {
+          // We have products but all were already sent
+          console.log(`⚠️ All ${catalogCategory} images already sent to ${from}`);
+          await sendWhatsAppMessage(from, "I've already shared all available images for this category. Would you like to see a different product category?").catch(() => {});
+          return; // Exit early
+        }
+        // Else: no products found at all, continue to fallback
+      }
 
       if (products.length > 0) {
         console.log(`📚 Sending ${products.length} ${catalogCategory} images from MongoDB`);
@@ -985,6 +1022,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
               const imageUrl = convertGoogleDriveUrl(product.images[0]);
               if (isValidImageUrl(imageUrl)) {
                 await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
+                sentImages.add(product.images[0]); // Track sent image
                 sentCount++;
                 await new Promise(resolve => setTimeout(resolve, 500));
               }
@@ -2005,10 +2043,23 @@ setInterval(() => {
     console.log(`🧹 Memory cleanup: Removed ${cleaned} old conversations`);
   }
 
+  // Clean up sent images tracker for inactive conversations
+  let imagesCleaned = 0;
+  for (const phone of sentImagesTracker.keys()) {
+    if (!conversationMemory.has(phone)) {
+      sentImagesTracker.delete(phone);
+      imagesCleaned++;
+    }
+  }
+
+  if (imagesCleaned > 0) {
+    console.log(`🧹 Memory cleanup: Removed ${imagesCleaned} image trackers`);
+  }
+
   // Log memory stats
   const totalConversations = conversationMemory.size;
   const memoryMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
-  console.log(`📊 Active conversations: ${totalConversations}, Memory: ${memoryMB}MB`);
+  console.log(`📊 Active conversations: ${totalConversations}, Memory: ${memoryMB}MB, Image trackers: ${sentImagesTracker.size}`);
 }, 30 * 60 * 1000); // Every 30 minutes
 
 // Initial cleanup after 5 minutes
