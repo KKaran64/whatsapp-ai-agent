@@ -26,9 +26,28 @@ const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseSt
 // MongoDB Product Query Helpers
 async function findProductsByCategory(category, limit = 6) {
   try {
+    // Map simplified category names to database categories
+    const categoryMap = {
+      'coasters': 'COASTER',
+      'diaries': 'DIAR',  // Matches both "DIARIES" and "C0RK DIARIES"
+      'desk': 'DESK',
+      'bags': 'BAG',
+      'planters': 'PLANTER',
+      'all': ''
+    };
+
+    const searchTerm = categoryMap[category] || category;
+    console.log(`🔍 MongoDB query: category contains "${searchTerm}"`);
+
     const products = await Product.find({
-      category: new RegExp(category, 'i')
+      category: new RegExp(searchTerm, 'i')
     }).limit(limit);
+
+    console.log(`📊 MongoDB returned ${products.length} products for category "${category}"`);
+    if (products.length > 0) {
+      console.log(`   First product: ${products[0].name} (${products[0].category})`);
+    }
+
     return products;
   } catch (error) {
     console.error('❌ Error querying products by category:', error);
@@ -677,10 +696,10 @@ When asked about branding:
 
 **IMAGE SENDING:**
 - ❌ NEVER proactively say "Let me show you" unless customer EXPLICITLY asks
-- System auto-sends images ONLY when customer uses: show, picture, photo, send, share + product name
+- ❌ NEVER say "the system will send" or "images will be sent automatically" or mention "system"
 - When customer asks "Do you have X?", just answer: "Yes, we have X! What's the occasion?"
-- When customer says "Show me X", respond briefly - system sends images automatically
-- ❌ FORBIDDEN: "catalog:", "trigger:", any technical syntax
+- When customer says "Show me X" or "Share pictures", respond with qualification questions ONLY
+- ❌ FORBIDDEN: "catalog:", "trigger:", "system:", "automatically", any technical syntax
 
 **IMAGE RECOGNITION (When customers send photos):**
 ✅ Cork products → Identify: "That's our [product]! Looking for this?"
@@ -700,7 +719,7 @@ When customer asks for catalog/brochure/PDF:
 Customer: "Can you share your catalog?"
 You: "Here's our complete cork products catalog! 🌿"
 
-DO NOT ask qualification questions for catalog - just acknowledge, system sends PDF automatically.
+DO NOT ask qualification questions for catalog - just acknowledge briefly.
 AFTER they receive catalog, THEN qualify: "What brings you to 9 Cork today?"
 
 REMEMBER: You KNOW all products and prices. Qualify first, price later. Max 2 sentences, under 200 chars. This is WhatsApp!`;
