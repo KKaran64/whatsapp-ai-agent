@@ -1054,17 +1054,40 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
             await new Promise(resolve => setTimeout(resolve, 500));
           } catch (err) {
             failedCount++;
-            console.error(`   ❌ Failed to send ${product.name}:`, err.message);
-            console.error(`   Error details:`, err.response?.data || err);
+
+            // Check for specific error types
+            const errorMsg = err.message || '';
+            const errorData = err.response?.data;
+
+            // WhatsApp 5MB size limit error
+            if (errorMsg.includes('Image too large') || errorMsg.includes('131053')) {
+              console.error(`   ⚠️ Image too large (>5MB), skipping: ${product.name}`);
+              console.error(`   💡 Tip: Compress this image in source file`);
+            }
+            // Google Drive redirect issues
+            else if (errorMsg.includes('303') || errorMsg.includes('redirect')) {
+              console.error(`   ⚠️ Google Drive redirect issue: ${product.name}`);
+              console.error(`   💡 Tip: Use direct image URLs instead of Drive links`);
+            }
+            // Generic error
+            else {
+              console.error(`   ❌ Failed to send ${product.name}:`, err.message);
+              if (errorData) console.error(`   Error details:`, errorData);
+            }
           }
         }
 
         // Error handling
         if (failedCount > 0) {
+          console.log(`📊 Final result: ${sentCount} sent, ${failedCount} failed`);
           if (sentCount === 0) {
-            await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Let me describe our ${catalogCategory} instead - would that help?`).catch(() => {});
+            await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Some images are too large for WhatsApp. Would you like product descriptions instead?`).catch(() => {});
+          } else if (failedCount > sentCount) {
+            // More failed than succeeded - mention the issue
+            await sendWhatsAppMessage(from, `I sent ${sentCount} images. ${failedCount} others couldn't be sent (too large for WhatsApp's 5MB limit). Would you like to see more product options or get descriptions?`).catch(() => {});
           } else {
-            await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
+            // Some failures but mostly succeeded
+            await sendWhatsAppMessage(from, `I sent ${sentCount} images. A few couldn't be delivered due to file size. Let me know if you need more options!`).catch(() => {});
           }
         }
       } else {
