@@ -1835,6 +1835,39 @@ app.get('/stats', monitoringLimiter, async (req, res) => {
   }
 });
 
+// Admin endpoint: Clear all products from database
+app.post('/admin/clear-products', async (req, res) => {
+  try {
+    console.log('📥 Admin clear endpoint called');
+
+    // Simple authentication using VERIFY_TOKEN
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    if (token !== CONFIG.VERIFY_TOKEN) {
+      console.log('❌ Unauthorized access attempt');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log('🗑️  Clearing all products from database...');
+
+    // Delete all products
+    const deleteResult = await Product.deleteMany({});
+    console.log(`✅ Deleted ${deleteResult.deletedCount} products`);
+
+    res.json({
+      success: true,
+      deleted: deleteResult.deletedCount,
+      message: 'All products cleared from database'
+    });
+
+  } catch (error) {
+    console.error('❌ Clear products failed:', error);
+    res.status(500).json({
+      error: 'Clear failed',
+      message: error.message
+    });
+  }
+});
+
 // Admin endpoint: Import products (one-time setup)
 app.post('/admin/import-products', async (req, res) => {
   try {
@@ -1849,15 +1882,18 @@ app.post('/admin/import-products', async (req, res) => {
 
     console.log('📦 Starting product import from admin endpoint...');
 
-    // Load products from JSON file
+    // Clear require cache to get fresh JSON file
+    delete require.cache[require.resolve('./scripts/products-data.json')];
+
+    // Load products from JSON file (fresh, not cached)
     const productsData = require('./scripts/products-data.json');
     console.log(`📖 Loaded ${productsData.length} products from JSON`);
 
-    // Clear existing products
+    // Clear existing products FIRST
     const deleteResult = await Product.deleteMany({});
     console.log(`🗑️  Deleted ${deleteResult.deletedCount} existing products`);
 
-    // Insert products
+    // Insert products (ordered: false allows partial success)
     await Product.insertMany(productsData, { ordered: false });
     console.log(`✅ Inserted ${productsData.length} products`);
 
