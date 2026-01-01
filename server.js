@@ -296,9 +296,15 @@ When asked about cork: "Cork is tree bark harvested without cutting trees! Regen
 ❌ ❌ ❌ NEVER say: "I'm a text-based AI" or "I can't view images" or "I don't have image capability"
 ✅ YOU CAN VIEW IMAGES! You have multi-modal vision AI capability.
 
-When customer says "I sent you a picture" or "I shared an image":
-✅ CORRECT: "I can see images! Could you resend it or describe what you're looking for?"
-❌ WRONG: "I can't view images" ← THIS IS FALSE!
+🚨 🚨 🚨 **CRITICAL DISTINCTION:**
+1. When customer SENDS YOU an image (they upload a photo):
+   ✅ CORRECT: "I can see your image! That's our [product name]. Looking for this?"
+   ✅ CORRECT: "I can see images! Could you resend it or describe what you're looking for?"
+
+2. When customer ASKS YOU FOR images ("show me", "share pics"):
+   ❌ ❌ ❌ FORBIDDEN: "I can see the trays" or "I can see the images" ← THIS IS HALLUCINATION!
+   ✅ CORRECT: Ask qualification questions ONLY: "What's the occasion for the trays?"
+   ✅ Product images are sent automatically by the system - DON'T mention seeing them!
 
 If you previously said "I'm having trouble analyzing it":
 ✅ Follow up with: "Let me try again - could you resend the image? Or describe what you're looking for in the meantime."
@@ -415,15 +421,20 @@ Customer: "Looking for corporate gifts" → You: "Great! What type of products i
 2. Customer described need: "Need something for desk" → "Desk organizers or mouse pads?"
 
 **RULE 5A: WHEN CUSTOMER NAMES A PRODUCT (v52.5 - CRITICAL)**
-When customer explicitly mentions a product ("this coaster", "cork diary", "that planter"):
+When customer explicitly mentions a product ("this coaster", "cork diary", "that planter", "trays", "wallet"):
 
-❌ NEVER give cork material education ("Cork is tree bark harvested...")
+❌ ❌ ❌ NEVER give cork material education ("Cork is tree bark harvested...")
+❌ ❌ ❌ Even if confused or wrong image sent, NEVER educate about cork!
 ✅ ALWAYS confirm availability + ask qualification question
 
 Example (CORRECT):
 Customer: "Do you have this coaster?" or "This coaster"
 ✅ You: "Yes, we have cork coasters! Are these for corporate gifting or personal use?"
 ❌ WRONG: "Cork is tree bark harvested without cutting trees..." ← They know it's cork!
+
+Customer: "Why are you sharing pics of wallet" [when they asked for trays]
+✅ You: "Let me try again with the correct tray images. What's the occasion for the trays?"
+❌ WRONG: "Cork is tree bark harvested..." ← NEVER educate when product mentioned!
 
 Customer: "Is this available?" [refers to diary]
 ✅ You: "Yes, we have cork diaries! What's the occasion?"
@@ -1016,20 +1027,35 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
         let sentCount = 0;
         let failedCount = 0;
-        for (const product of products) {
-          if (product.images && product.images.length > 0) {
-            try {
-              const imageUrl = convertGoogleDriveUrl(product.images[0]);
-              if (isValidImageUrl(imageUrl)) {
-                await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
-                sentImages.add(product.images[0]); // Track sent image
-                sentCount++;
-                await new Promise(resolve => setTimeout(resolve, 500));
-              }
-            } catch (err) {
+        for (let i = 0; i < products.length; i++) {
+          const product = products[i];
+          console.log(`   [${i+1}/${products.length}] Processing: ${product.name}`);
+
+          if (!product.images || product.images.length === 0) {
+            console.log(`   ⚠️ No images for ${product.name}`);
+            continue;
+          }
+
+          try {
+            const originalUrl = product.images[0];
+            const imageUrl = convertGoogleDriveUrl(originalUrl);
+            console.log(`   📸 Image URL: ${imageUrl.substring(0, 60)}...`);
+
+            if (!isValidImageUrl(imageUrl)) {
+              console.log(`   ❌ Invalid URL: ${imageUrl}`);
               failedCount++;
-              console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
+              continue;
             }
+
+            await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
+            sentImages.add(originalUrl); // Track sent image
+            sentCount++;
+            console.log(`   ✅ Sent: ${product.name} (${sentCount}/${products.length})`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (err) {
+            failedCount++;
+            console.error(`   ❌ Failed to send ${product.name}:`, err.message);
+            console.error(`   Error details:`, err.response?.data || err);
           }
         }
 
