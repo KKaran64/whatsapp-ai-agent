@@ -17,7 +17,7 @@ const dns = require('dns').promises;
 
 // Security Configuration
 const MAX_CACHE_SIZE = 1000; // Prevent unbounded memory growth
-const MAX_FILE_SIZE = 18 * 1024 * 1024; // 18MB limit (WhatsApp allows up to 16MB, adding buffer)
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB limit (WhatsApp's actual limit for images is 5,242,880 bytes)
 
 // Allowed image MIME types (prevents malicious file uploads)
 const ALLOWED_IMAGE_TYPES = [
@@ -279,12 +279,15 @@ async function uploadImageToWhatsApp(imageUrl) {
 
   try {
     // Step 1: Download the image (SECURITY: SSRF protection)
+    // Allow redirects for Google Drive but validate redirect targets
+    const isGoogleDrive = imageUrl.includes('drive.google.com') || imageUrl.includes('googleapis.com');
+
     const imageResponse = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 30000, // 30 seconds
       maxContentLength: MAX_FILE_SIZE,
       maxBodyLength: MAX_FILE_SIZE,
-      maxRedirects: 0, // SECURITY: Disable redirects to prevent SSRF
+      maxRedirects: isGoogleDrive ? 5 : 0, // Allow redirects for Google Drive, block for others
       validateStatus: (status) => status === 200, // Only accept 200 OK
       headers: {
         'User-Agent': '9CorkWhatsAppBot/1.0'
