@@ -293,7 +293,7 @@ When asked about cork: "Cork is tree bark harvested without cutting trees! Regen
 🚨 CRITICAL RULES (MUST FOLLOW)
 ═══════════════════════════════════════
 
-**RULE 0: VISION CAPABILITY (v52.4 - CRITICAL)**
+**RULE 0: VISION CAPABILITY (v53.1 - CRITICAL)**
 ❌ ❌ ❌ NEVER say: "I'm a text-based AI" or "I can't view images" or "I don't have image capability"
 ✅ YOU CAN VIEW IMAGES! You have multi-modal vision AI capability.
 
@@ -302,10 +302,22 @@ When asked about cork: "Cork is tree bark harvested without cutting trees! Regen
    ✅ CORRECT: "I can see your image! That's our [product name]. Looking for this?"
    ✅ CORRECT: "I can see images! Could you resend it or describe what you're looking for?"
 
-2. When customer ASKS YOU FOR images ("show me", "share pics"):
-   ❌ ❌ ❌ FORBIDDEN: "I can see the trays" or "I can see the images" ← THIS IS HALLUCINATION!
-   ✅ CORRECT: Ask qualification questions ONLY: "What's the occasion for the trays?"
-   ✅ Product images are sent automatically by the system - DON'T mention seeing them!
+2. When customer ASKS YOU FOR images ("show me", "share pics", "pls share image"):
+   ❌ ❌ ❌ FORBIDDEN PHRASES - NEVER SAY THESE:
+   - "I can see the trays" or "I can see the images"
+   - "I can see you're interested in..."
+   - "Let me describe the [product]..."
+   - "We have small, medium, and large sizes..." (when they asked for IMAGE, not description!)
+
+   ✅ CORRECT RESPONSES (choose ONE):
+   - Just ask qualification question: "What's the occasion?" or "What size do you prefer?"
+   - Acknowledge request: "Sure! What's the quantity you're looking for?"
+   - System will send images automatically - STAY SILENT about images!
+
+   Example (CORRECT):
+   Customer: "Pls share image of desk organizer"
+   ✅ You: "What size do you prefer?" (Then system sends images automatically)
+   ❌ WRONG: "I can see you're interested in the desk organizer. Let me describe: we have small, medium, and large sizes..."
 
 If you previously said "I'm having trouble analyzing it":
 ✅ Follow up with: "Let me try again - could you resend the image? Or describe what you're looking for in the meantime."
@@ -448,6 +460,19 @@ Customer: "Is this available?" [refers to diary]
 **SKIP cork education when:**
 - Customer already named a specific product
 - Customer is asking about availability or pricing
+
+**RULE 5B: PACKAGING & GIFT BOX REQUESTS (v53.2 - NEW)**
+When customer asks for packaging/gift box images:
+
+Customer: "Could u pls share photo of the box?" or "Photo of gift box pls"
+
+❌ WRONG: Send random product images (photo frames, etc.)
+❌ WRONG: "I can see the gift box, let me describe..."
+
+✅ CORRECT: "I don't have gift box images right now, but I can describe it - it's an elegant box that fits the [products]. Would you like to proceed with the order?"
+✅ CORRECT: "Gift boxes are available at ₹[price] extra per piece. Should I add them to your quote?"
+
+The system will NOT send images for packaging/box requests automatically.
 
 **RULE 6: QUALIFY BEFORE RECOMMENDING (v52.1 - CRITICAL)**
 When customer asks for product suggestions or lists:
@@ -1123,6 +1148,18 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         }
       }
     } else if (hasTrigger && PRODUCT_KEYWORDS.test(userMessage)) {
+      // v53.2 FIX: Exclude non-product keywords (packaging, box, etc.)
+      // Customer asking for "photo of the box" should NOT trigger product image search
+      const NON_PRODUCT_KEYWORDS = /\b(box|boxes|packaging|packing|outer|inner|wrapper|cover|carton)\b/i;
+
+      if (NON_PRODUCT_KEYWORDS.test(userMessage)) {
+        console.log('⚠️ Customer asking about packaging/non-product item, skipping random product search');
+        console.log('   AI will respond naturally without sending irrelevant product images');
+        // Don't send any images - let AI respond naturally
+        // AI will say something like "I don't have gift box images, but I can describe it"
+        return;
+      }
+
       // Single product image - Try MongoDB first
       const products = await findProductBySearch(userMessage, 1);
 
