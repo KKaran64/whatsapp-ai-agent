@@ -38,6 +38,7 @@ async function findProductsByCategory(category, limit = 10, phoneNumber = null, 
       'planters': 'PLANTER',
       'trays': 'TRAY',  // Matches "CORK SERVING/DECOR TRAYS"
       'bottles': 'BOTTLE',
+      'frames': 'FRAME',  // Matches "CORK LINEA PHOTO FRAME"
       'all': ''
     };
 
@@ -900,7 +901,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
   try {
     // Pattern constants (defined once, used multiple times)
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
-    const TRIGGER_WORDS = /\b(show|picture|pictures|photo|photos|image|images|send|share)\b/i;
+    // CRITICAL FIX v53: Exclude "photo frames" and "picture frames" (product names, not photo requests)
+    const TRIGGER_WORDS = /\b(show|picture(?!s? frames?)|pictures(?! frames?)|photo(?!s? frames?)|photos(?! frames?)|image|images|send|share)\b/i;
     // AUTO-GENERATED from product-image-database.json v1.3 - includes ALL product keywords from 9cork.com AND homedecorzstore.com - 41 products, 123 keywords
     const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|bifold|bohemian|box|breakfast|bridge|business|calendar|candle|card|case|catchall|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|for|frame|frames|fridge|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|minimalistic|mouse|mousepad|multicolor|multicolored|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|photo|picture|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|round|rubberized|runner|serving|set|shaped|sleeve|small|square|stand|stationery|striped|succulent|table|tablemat|tablemats|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|trinket|triple|trivet|trivets|tube|ushaped|wall|wallet|with|women|workspace)/i;
 
@@ -988,6 +990,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       'planters': /\b(planters?)\b/i,
       'trays': /\b(trays?|serving)\b/i,
       'bottles': /\b(bottles?|water bottle)\b/i,
+      'frames': /\b(frames?|photo frames?|picture frames?)\b/i,
       'all': /\b(catalog|catalogue|all products|full range)\b/i
     };
 
