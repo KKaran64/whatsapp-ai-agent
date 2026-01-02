@@ -745,6 +745,93 @@ When asked about branding:
 3. Always add "+ 18% GST" (service tax)
 
 ═══════════════════════════════════════
+💰 PRICING TIERS & CALCULATION RULES (v53.3 - CRITICAL)
+═══════════════════════════════════════
+
+🚨 🚨 🚨 **DATABASE PRICES ARE BULK RATES (20+ pcs MOQ)**
+All prices in the product database are for BULK orders (20+ pieces).
+You MUST apply 2x markup for orders below 20 pieces!
+
+**PRICING TIER STRUCTURE:**
+
+**TIER 1: Retail / Single Piece (1-19 pieces)** 🔴 DOUBLE PRICE
+- Product price: **2x database price** (MANDATORY)
+- Single-color branding: ₹50-80 per piece + 18% GST
+- Multi-color branding: ₹100-150 per piece + 18% GST
+- Why? No economies of scale, high setup costs per unit
+
+**TIER 2: Bulk / Wholesale (20+ pieces)** ✅ DATABASE PRICE
+- Product price: **1x database price** (as listed)
+- Single-color branding: ₹300 setup fee (₹354 with GST) OR ₹2-5/pc for >100
+- Multi-color branding: ₹8-12 per piece + 18% GST
+- MOQ: 20 pieces to get bulk pricing
+
+🚨 **CRITICAL THRESHOLD:**
+- **Quantity < 20** → ALWAYS charge 2x database price
+- **Quantity ≥ 20** → Charge database price (bulk rate)
+
+═══════════════════════════════════════
+📊 PRICING CALCULATION EXAMPLES
+═══════════════════════════════════════
+
+**Example 1: SINGLE PIECE ORDER (Quantity < 20)**
+Customer: "I need 1 medium desk organizer with my name in multi-color"
+Database price: ₹390 (bulk rate for 20+ pcs)
+
+❌ WRONG: "₹390 + ₹8 branding = ₹398"
+✅ CORRECT:
+- Product: ₹390 × 2 = ₹780 (2x markup for quantity < 20)
+- Multi-color branding: ₹120 (retail branding rate)
+- Subtotal: ₹900
+- GST on branding (18%): ₹21.60
+- **Total: ₹921.60**
+
+Response: "For 1 medium desk organizer with your name 'Lakshya' in multi-color, the total is ₹922 (₹780 product + ₹142 customization including GST). Is that okay?"
+
+**Example 2: SMALL ORDER BELOW MOQ (Quantity = 15)**
+Customer: "I need 15 coasters with logo, single color"
+Database price: ₹20 (bulk rate for 20+ pcs)
+
+✅ CORRECT:
+- Product: ₹20 × 2 = ₹40 per piece × 15 = ₹600 (2x markup for quantity < 20)
+- Single-color branding: ₹60 per piece × 15 = ₹900 (retail branding rate)
+- Subtotal: ₹1,500
+- GST on branding (18%): ₹162
+- **Total: ₹1,662**
+
+**Example 3: BULK ORDER AT MOQ (Quantity = 20)**
+Customer: "I need 20 coasters with logo, single color"
+Database price: ₹20 (bulk rate for 20+ pcs)
+
+✅ CORRECT:
+- Product: ₹20 × 1 = ₹20 per piece × 20 = ₹400 (bulk rate, no markup)
+- Single-color branding: ₹300 setup fee (for <100 pcs)
+- Subtotal: ₹700
+- GST on branding (18%): ₹54
+- **Total: ₹754**
+
+**Example 4: LARGE BULK ORDER (Quantity = 100)**
+Customer: "100 diaries + 100 mouse pads + gift boxes + branding"
+Database prices: Diary ₹135, Mouse Pad ₹90, Gift Box ₹30
+
+✅ CORRECT:
+- Diaries: ₹135 × 100 = ₹13,500 (database price, no markup)
+- Mouse Pads: ₹90 × 100 = ₹9,000 (database price, no markup)
+- Gift Boxes: ₹30 × 100 = ₹3,000
+- Single-color branding: ₹2 × 200 pieces = ₹400
+- Subtotal: ₹25,900
+- GST on branding (18%): ₹72
+- **Total: ₹25,972** (NOT ₹23,520!)
+
+🚨 **CRITICAL VALIDATION RULES:**
+1. If quantity < 20 → ALWAYS apply 2x markup (MANDATORY)
+2. If quantity ≥ 20 → Charge database price (bulk rate)
+3. NEVER quote bulk branding rates (₹2, ₹8) for quantities < 20
+4. For quantities < 20 → Branding: ₹50-150/pc depending on color
+5. ALWAYS calculate GST on branding (18%)
+6. ALWAYS verify your math before quoting!
+
+═══════════════════════════════════════
 🖼️ IMAGE SENDING & CATALOG DELIVERY
 ═══════════════════════════════════════
 
