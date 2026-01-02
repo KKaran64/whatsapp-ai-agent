@@ -308,13 +308,26 @@ When asked about cork: "Cork is tree bark harvested without cutting trees! Regen
    - "I can see you're interested in..."
    - "Let me describe the [product]..."
    - "We have small, medium, and large sizes..." (when they asked for IMAGE, not description!)
+   - "Here's what it looks like! 🌿" ← NEVER claim you sent image! System handles it!
+   - "I'm sending the images now" ← Don't mention image sending at all!
 
    ✅ CORRECT RESPONSES (choose ONE):
    - Just ask qualification question: "What's the occasion?" or "What size do you prefer?"
    - Acknowledge request: "Sure! What's the quantity you're looking for?"
    - System will send images automatically - STAY SILENT about images!
 
-   Example (CORRECT):
+   🚨 🚨 🚨 **CRITICAL - DON'T BE PUSHY (v53.4):**
+   If customer says "Please share image" or "Share image pls" MULTIPLE TIMES:
+   ❌ STOP asking "What's the occasion?" repeatedly
+   ✅ Just say: "Sure!" or "How many pieces?" (Then system sends images)
+   ✅ Let the images speak for themselves - don't force qualification
+
+   Example (WHEN CUSTOMER FRUSTRATED):
+   Customer: "Please share image" [3rd time asking]
+   ❌ WRONG: "What's the occasion?" ← PUSHY! Customer already frustrated!
+   ✅ CORRECT: "Sure!" ← Simple acknowledgment, let system send images
+
+   Example (FIRST TIME):
    Customer: "Pls share image of desk organizer"
    ✅ You: "What size do you prefer?" (Then system sends images automatically)
    ❌ WRONG: "I can see you're interested in the desk organizer. Let me describe: we have small, medium, and large sizes..."
@@ -374,6 +387,15 @@ Is each product and quantity correct? Please say YES or tell me what to change."
 ❌ NEVER mention ₹ symbols or rupee amounts UNTIL you have ALL 4 qualifiers
 ❌ NEVER say: "Starting from ₹X" / "Prices range from..." / "₹180" / "₹130-₹400"
 ❌ Even when customer asks "share options" or "what do you have" → DON'T mention prices!
+
+🚨 🚨 🚨 **CRITICAL - NEVER QUOTE PRICE WITHOUT QUANTITY (v53.4):**
+Customer: "What is medium desk organizer"
+❌ WRONG: "Our medium desk organizer is a handy organizer, priced at ₹390"
+✅ CORRECT: "It's a handy organizer for your desk. How many pieces do you need?"
+
+WHY? Database prices are BULK rates (20+ pcs). Must apply 2x markup if quantity < 20!
+❌ NEVER quote price before knowing quantity!
+
 ✅ ALWAYS qualify FIRST: "What's this for - corporate gifting or personal use?"
 ✅ When listing product variants, say "We have Single, Set of 3, Set of 5, Wall-Mounted. Which interests you?"
 
@@ -1023,18 +1045,21 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     let userMessage = messageBody || '';
     const hasTrigger = TRIGGER_WORDS.test(userMessage);
 
-    // v42 FIX: Context-aware image detection
-    // When user says "the same", "them", "it", "above", etc., look at conversation history to find product context
+    // v53.4 FIX: Enhanced context-aware image detection
+    // When user says generic image request OR pronouns, look at conversation history
     const pronounReferences = /\b(the same|them|it|those|these|that|above|earlier|mentioned|suggestions?)\b/i;
-    if (pronounReferences.test(userMessage) && hasTrigger) {
-      console.log('🔍 Pronoun/reference detected, checking conversation context...');
-      // Look at last 5 messages to find product mentions
-      const recentMessages = conversationContext.slice(-5);
+    const genericImageRequest = hasTrigger && !/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|holder|bottle|tray)\b/i.test(userMessage);
+
+    // v53.4 NEW: Detect generic image requests like "please share image", "share image options"
+    if ((pronounReferences.test(userMessage) && hasTrigger) || genericImageRequest) {
+      console.log('🔍 Generic image request or pronoun detected, checking conversation context...');
+      // Look at last 10 messages to find product mentions (increased from 5)
+      const recentMessages = conversationContext.slice(-10);
       for (let i = recentMessages.length - 1; i >= 0; i--) {
         const msg = recentMessages[i];
         const content = msg.content || '';
-        // Extract product keywords from recent conversation
-        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|holder|test tube)\b/i);
+        // Extract product keywords from recent conversation (expanded list)
+        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|tealight|holder|test tube|testtube|bottle|tray|mousepad|mouse pad)\b/i);
         if (productMatch) {
           const productContext = productMatch[0];
           console.log(`✅ Found product context from conversation: "${productContext}"`);
@@ -1042,6 +1067,12 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           userMessage = `${messageBody} ${productContext}`;
           break;
         }
+      }
+
+      // v53.4 NEW: If still no product context found, check for "options" keyword
+      if (!/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar)\b/i.test(userMessage) && /\b(options?|variety|suggestions?)\b/i.test(messageBody)) {
+        console.log('✅ Customer asking for options/variety, showing product mix');
+        userMessage = `${messageBody} desk coasters planters`; // Show variety
       }
     }
 
