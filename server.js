@@ -1094,7 +1094,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // v53.4 FIX: Enhanced context-aware image detection
     // When user says generic image request OR pronouns, look at conversation history
     const pronounReferences = /\b(the same|them|it|those|these|that|above|earlier|mentioned|suggestions?)\b/i;
-    const genericImageRequest = hasTrigger && !/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|holder|bottle|tray)\b/i.test(userMessage);
+    // v53.7 FIX: Added typo variants (calender, organiser, etc.) to prevent wrong context matching
+    const genericImageRequest = hasTrigger && !/\b(coasters?|diar(y|ies)|bags?|wallets?|planters?|desk|organiz(er|ers)|organis(er|ers)|frames?|calend[ae]rs?|pens?|notebooks?|mats?|tables?|candles?|holders?|bottles?|trays?|test.?tubes?|mousepads?)\b/i.test(userMessage);
 
     // v53.4 NEW: Detect generic image requests like "please share image", "share image options"
     if ((pronounReferences.test(userMessage) && hasTrigger) || genericImageRequest) {
@@ -1216,7 +1217,16 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           await sendWhatsAppMessage(from, "I've already shared all available images for this category. Would you like to see a different product category?").catch(() => {});
           return; // Exit early
         }
-        // Else: no products found at all, continue to fallback
+
+        // v53.7 CRITICAL: If category doesn't exist in our catalog, exit without sending wrong images
+        // Let AI handle with Rule 5C ("We don't have calendars, would you like diaries instead?")
+        const nonExistentCategories = ['calendar', 'mousepad', 'candles']; // Products we don't have
+        if (nonExistentCategories.includes(catalogCategory)) {
+          console.log(`⚠️ Category '${catalogCategory}' doesn't exist in our catalog`);
+          console.log(`   AI will suggest alternatives via Rule 5C`);
+          return; // Exit early, don't send wrong images!
+        }
+        // Else: no products found at all, continue to fallback for other categories
       }
 
       if (products.length > 0) {
