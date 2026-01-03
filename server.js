@@ -39,6 +39,9 @@ async function findProductsByCategory(category, limit = 10, phoneNumber = null, 
       'trays': 'TRAY',  // Matches "CORK SERVING/DECOR TRAYS"
       'bottles': 'BOTTLE',
       'frames': 'FRAME',  // Matches "CORK LINEA PHOTO FRAME"
+      'calendar': 'CALENDAR',  // Added for table calendars
+      'mousepad': 'MOUSE',  // Added for mousepads
+      'candles': 'CANDLE',  // Added for candles and tea lights
       'all': ''
     };
 
@@ -1069,10 +1072,10 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         }
       }
 
-      // v53.4 NEW: If still no product context found, check for "options" keyword
+      // v53.5 FIXED: If still no product context found, check for "options" keyword
       if (!/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar)\b/i.test(userMessage) && /\b(options?|variety|suggestions?)\b/i.test(messageBody)) {
-        console.log('✅ Customer asking for options/variety, showing product mix');
-        userMessage = `${messageBody} desk coasters planters`; // Show variety
+        console.log('✅ Customer asking for options/variety, triggering variety mode');
+        userMessage = `${messageBody} options`; // Will match 'all' pattern → shows variety
       }
     }
 
@@ -1125,16 +1128,21 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     }
 
     // Catalog detection - check ONLY user message for product keywords
+    // v53.5 EXPANDED: Added missing product categories that were causing image sending failures
+    // IMPORTANT: 'all' is checked FIRST to handle "options" and "variety" requests properly
     const catalogPatterns = {
+      'all': /\b(catalog|catalogue|all products|full range|variety|options)\b/i,  // CHECK FIRST! Added "variety" and "options"
       'coasters': /\b(coasters?|coaster collection)\b/i,
-      'diaries': /\b(diary|diaries)\b/i,
-      'desk': /\b(desk|organizers?)\b/i,
-      'bags': /\b(bags?|wallets?|laptop)\b/i,
-      'planters': /\b(planters?)\b/i,
+      'diaries': /\b(diary|diaries|notebook|notebooks)\b/i,
+      'desk': /\b(desk|organizers?|pen holder|pencil holder)\b/i,
+      'bags': /\b(bags?|wallets?|laptop|clutch|tote)\b/i,
+      'planters': /\b(planters?|test tube|testtube)\b/i,
       'trays': /\b(trays?|serving)\b/i,
       'bottles': /\b(bottles?|water bottle)\b/i,
       'frames': /\b(frames?|photo frames?|picture frames?)\b/i,
-      'all': /\b(catalog|catalogue|all products|full range)\b/i
+      'calendar': /\b(calendar|calendars?|table calendar)\b/i,  // ADDED - was missing!
+      'mousepad': /\b(mousepad|mouse pad|mousepads)\b/i,  // ADDED - was missing!
+      'candles': /\b(candles?|tea ?lights?|tealights?|candle holder)\b/i  // ADDED - was missing!
     };
 
     let catalogCategory = null;
