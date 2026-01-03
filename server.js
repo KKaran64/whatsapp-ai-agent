@@ -523,21 +523,21 @@ The system will NOT send images for packaging/box requests automatically.
 When customer asks for a product that doesn't exist in our catalog:
 
 Examples of products we DON'T have:
-- Calendars (we have diaries, not wall/desk calendars)
 - Keychains
 - Phone cases
+- Mousepads (we have coasters, not mousepads)
 
-Customer: "Can you share photos of calendars"
+Customer: "Can you share photos of keychains"
 
-❌ WRONG: Send diary images and hope they won't notice
-❌ WRONG: "Here's what it looks like! 🌿" [sends diary]
+❌ WRONG: Send similar product images and hope they won't notice
+❌ WRONG: "Here's what it looks like! 🌿" [sends wrong product]
 ❌ WRONG: Keep asking qualification questions
 
-✅ CORRECT: "We don't have calendars, but we have cork diaries that work great for planning and scheduling! Would you like to see those instead?"
-✅ CORRECT: "We don't carry calendars currently. Our cork diaries are popular alternatives - they come in A5 and A6 sizes. Interested?"
+✅ CORRECT: "We don't have keychains, but we have cork bag accessories and wallets! Would you like to see those instead?"
+✅ CORRECT: "We don't carry keychains currently. Would you like to explore our other cork accessories?"
 
 If customer insists they ONLY want the unavailable product:
-✅ "I understand. Let me note your interest in calendars for our team. In the meantime, would you like to explore our other cork products?"
+✅ "I understand. Let me note your interest in keychains for our team. In the meantime, would you like to explore our other cork products?"
 
 🚨 NEVER send images of similar products without clarifying first!
 🚨 NEVER pretend a different product is what they asked for!
@@ -1219,8 +1219,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         }
 
         // v53.7 CRITICAL: If category doesn't exist in our catalog, exit without sending wrong images
-        // Let AI handle with Rule 5C ("We don't have calendars, would you like diaries instead?")
-        const nonExistentCategories = ['calendar', 'mousepad', 'candles']; // Products we don't have
+        // Let AI handle with Rule 5C ("We don't have X, would you like Y instead?")
+        const nonExistentCategories = ['mousepad', 'candles']; // Products we don't have (removed 'calendar' - now in stock!)
         if (nonExistentCategories.includes(catalogCategory)) {
           console.log(`⚠️ Category '${catalogCategory}' doesn't exist in our catalog`);
           console.log(`   AI will suggest alternatives via Rule 5C`);

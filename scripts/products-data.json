@@ -2507,5 +2507,31 @@
     "aliases": "",
     "tags": "",
     "source": ""
+  },
+  {
+    "productId": "9C-DA23",
+    "name": "SMALL CALENDER",
+    "category": "C0RK DESKTOP ACCESSORIES",
+    "price": 225,
+    "images": [
+      "https://drive.google.com/file/d/1D1cXBzdG2VCNOd0zeTBbmplMHyCkrJfK/view?usp=sharing",
+      "https://drive.google.com/file/d/12xPXl_qyr2z-5ShqYaCcXc4wMnQ04nrC/view?usp=sharing"
+    ],
+    "aliases": "small calendar desk calendar",
+    "tags": "calendar calender desk table",
+    "source": ""
+  },
+  {
+    "productId": "9C-DA24",
+    "name": "LARGE TABLE CALENDER",
+    "category": "C0RK DESKTOP ACCESSORIES",
+    "price": 225,
+    "images": [
+      "https://drive.google.com/file/d/1HRpdQ5935vJKa4755VMRzskSLkkK0Ykf/view?usp=drive_link",
+      "https://drive.google.com/file/d/1YYy8zTDzFhv6TvcY0A9UmxT-pbIVvNYW/view?usp=drive_link"
+    ],
+    "aliases": "large calendar table calendar desk calendar",
+    "tags": "calendar calender desk table",
+    "source": ""
   }
 ]
