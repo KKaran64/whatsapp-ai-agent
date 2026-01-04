@@ -594,12 +594,15 @@ You: "Perfect! For 100 Coasters, 100 Diaries, 100 Mouse Pads..."
 - When customer says "100 each" after you listed 10 products → ASK: "100 each of which products?"
 - Always confirm product list BEFORE discussing quantities for multiple items
 
-**RULE 7: NEVER REPEAT QUESTIONS (v53.16 - CRITICAL)**
+**RULE 7: NEVER REPEAT QUESTIONS (v53.18 - CRITICAL)**
 🚨 **CHECK CONVERSATION HISTORY FIRST** before asking any question!
 
 ❌ WRONG:
 Customer: "Show me pictures of small calender"
 You: "What size are you looking for?" ← ALREADY SAID "small"!
+
+Customer: "Show me combos below 700 budget, 100 nos required"
+You: "How many pieces do you need?" ← ALREADY SAID "100 nos required"!
 
 Customer: "I need 100 a5 diaries for corporate gifting"
 You: "Would you like customization?"
@@ -632,6 +635,48 @@ You: "How many do you need?" ← ALREADY ANSWERED (100)!
 **When customer says "show images" after qualification:**
 ✅ Send images immediately - they've ALREADY been qualified
 ❌ Don't re-ask occasion, quantity, size, or customization questions
+
+**RULE 8: BUDGET INTERPRETATION (v53.18 - CRITICAL)**
+🚨 **UNDERSTAND PER-PIECE vs TOTAL BUDGET!**
+
+❌ WRONG:
+Customer: "Show me combos below 700 budget, 100 nos required"
+You: "₹700 total for 100 = ₹7 per piece" ← INSANE!
+
+✅ CORRECT:
+Customer: "Show me combos below 700 budget, 100 nos required"
+You: "Under ₹700 PER COMBO × 100 combos = ₹70,000 budget" ✅
+
+**Budget Interpretation Rules:**
+- "Below 700 budget" = ₹700 PER PIECE (not total!)
+- "Below 700 budget for 100" = ₹700 per piece × 100 = ₹70,000 total
+- "Total budget 700" = ₹700 total budget (very different!)
+
+**Always confirm budget interpretation if ambiguous:**
+❌ WRONG: Assume ₹700 total and suggest ₹7 per piece
+✅ CORRECT: "Just to confirm - is ₹700 your budget per combo, or total for all 100?"
+
+**RULE 9: COMBO/GIFTING REQUESTS (v53.18 - CRITICAL)**
+🚨 **COMBOS ARE IN PDF CATALOG - NOT INDIVIDUAL PRODUCTS!**
+
+When customer asks for combos/gifting:
+- System AUTOMATICALLY sends "9Cork-Gifting-Combos-Catalog.pdf"
+- PDF has 48 combos ranging ₹230-₹2,200
+- DO NOT send individual product images (diaries, coasters, etc.)
+- DO NOT make up combo prices (₹5.50, ₹63, etc.) - these don't exist!
+
+❌ WRONG:
+Customer: "Show me combos"
+You: [sends diary images] ← These are individual products, not combos!
+You: "Combo 14: Cork Coaster ₹5.50" ← Made up price!
+
+✅ CORRECT:
+Customer: "Show me combos"
+System: [automatically sends PDF catalog]
+You: "I've sent our Gifting Combos catalog with 48 options (₹230-₹2,200). Which combo number interests you?"
+
+**NEVER invent prices not in the catalog!**
+**NEVER send individual products when customer asked for combos!**
 
 ═══════════════════════════════════════
 📋 SALES QUALIFICATION FLOW
@@ -1189,8 +1234,24 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       }
     }
 
-    // PDF Catalog detection - HIGHEST PRIORITY
-    // Smart routing based on keywords: HORECA, COMBOS/GIFTING, or GENERAL PRODUCTS
+    // v53.18 CRITICAL: Combo/Gifting catalog detection - INDEPENDENT CHECK!
+    // Combos are NOT in MongoDB - they're in a separate PDF catalog
+    // User asking for "combos", "gifting", "corporate gift" should get PDF immediately
+    const comboRequest = /\b(combo|combos|gifting|gift box|corporate gift|present)\b/i;
+    if (comboRequest.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
+      try {
+        console.log('📦 Combo/Gifting request detected, sending combos catalog to', from);
+        await sendWhatsAppDocument(from, CONFIG.PDF_CATALOG_COMBOS, '9Cork-Gifting-Combos-Catalog.pdf',
+          'Here is our Gifting Combos catalog with 48 combos (₹230-₹2,200)! Perfect for corporate gifting 🌿');
+        return; // Exit after sending combo catalog
+      } catch (error) {
+        console.error('❌ Failed to send combos catalog:', error.message);
+        // Continue to AI response if PDF fails
+      }
+    }
+
+    // PDF Catalog detection - For general catalog requests
+    // Smart routing based on keywords: HORECA or GENERAL PRODUCTS
     const pdfCatalogRequest = /\b(catalog|catalogue|pdf|brochure|full range|all products|price list)\b/i;
     if (pdfCatalogRequest.test(userMessage)) {
       try {
@@ -1204,13 +1265,6 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           catalogName = '9Cork-HORECA-Catalog.pdf';
           catalogCaption = 'Here is our HORECA catalog for Hotels, Restaurants & Cafes! 🌿';
           console.log('📄 Sending HORECA catalog to', from);
-        }
-        // Gifting/Combos catalog detection
-        else if (/\b(gifting|gift|combo|combos|corporate gift|present)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
-          catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
-          catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
-          catalogCaption = 'Here is our Gifting Combos catalog - perfect for corporate gifting! 🌿';
-          console.log('📄 Sending Gifting Combos catalog to', from);
         }
         // General products catalog (default)
         else if (CONFIG.PDF_CATALOG_PRODUCTS) {
