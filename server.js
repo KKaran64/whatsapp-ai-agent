@@ -1388,7 +1388,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // v53.7 FIX: Added typo variants (calender, organiser, etc.) to prevent wrong context matching
     const genericImageRequest = hasTrigger && !/\b(coasters?|diar(y|ies)|bags?|wallets?|planters?|desk|organiz(er|ers)|organis(er|ers)|frames?|calend[ae]rs?|pens?|notebooks?|mats?|tables?|candles?|holders?|bottles?|trays?|test.?tubes?|mousepads?)\b/i.test(userMessage);
 
-    // v53.4 NEW: Detect generic image requests like "please share image", "share image options"
+    // v53.24 FIX: Detect generic image requests like "please share image", "share image options"
+    // CRITICAL: Only extract products from USER messages, not bot responses!
     if ((pronounReferences.test(userMessage) && hasTrigger) || genericImageRequest) {
       console.log('🔍 Generic image request or pronoun detected, checking conversation context...');
       // Look at last 10 messages to find product mentions (increased from 5)
@@ -1396,11 +1397,18 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       for (let i = recentMessages.length - 1; i >= 0; i--) {
         const msg = recentMessages[i];
         const content = msg.content || '';
-        // Extract product keywords from recent conversation (expanded list)
+        const role = msg.role || '';
+
+        // v53.24 CRITICAL FIX: Skip bot messages - only extract from user messages!
+        if (role === 'assistant') {
+          continue; // Skip bot's own messages
+        }
+
+        // Extract product keywords from recent USER conversation only (expanded list)
         const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|tealight|holder|test tube|testtube|bottle|tray|mousepad|mouse pad)\b/i);
         if (productMatch) {
           const productContext = productMatch[0];
-          console.log(`✅ Found product context from conversation: "${productContext}"`);
+          console.log(`✅ Found product context from USER message: "${productContext}"`);
           // Append product context to user message for better matching
           userMessage = `${messageBody} ${productContext}`;
           break;
@@ -1477,6 +1485,89 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       }
     }
 
+    // v53.24 NEW: Detect combo-specific image requests (e.g., "share images of combo 4")
+    // When customer references a specific combo/option number, extract products from bot's previous message
+    const comboNumberPattern = /\b(?:combo|option|choice)\s*(?:#|no\.?|number)?\s*(\d+)\b/i;
+    const comboMatch = userMessage.match(comboNumberPattern);
+    let comboProducts = [];
+
+    if (comboMatch && hasTrigger) {
+      const comboNumber = parseInt(comboMatch[1]);
+      console.log(`🎯 Combo-specific image request detected: Combo/Option #${comboNumber}`);
+
+      // Look for bot's previous message containing combo suggestions
+      const recentMessages = conversationContext.slice(-10);
+      for (let i = recentMessages.length - 1; i >= 0; i--) {
+        const msg = recentMessages[i];
+        if (msg.role === 'assistant') {
+          const content = msg.content || '';
+          // Find the specific combo line (e.g., "4. 1 Photo Frame + 1 Small Planter + 1 Coaster Set")
+          const comboLinePattern = new RegExp(`${comboNumber}\\.?\\s*(.+?)(?:\\:|₹|\\n|$)`, 'i');
+          const comboLineMatch = content.match(comboLinePattern);
+
+          if (comboLineMatch) {
+            const comboLine = comboLineMatch[1];
+            console.log(`   Found combo ${comboNumber}: "${comboLine}"`);
+
+            // Extract product keywords from this combo
+            if (/photo frame|frame/i.test(comboLine)) comboProducts.push('frames');
+            if (/planter/i.test(comboLine)) comboProducts.push('planters');
+            if (/coaster/i.test(comboLine)) comboProducts.push('coasters');
+            if (/calendar|calender/i.test(comboLine)) comboProducts.push('calendar');
+            if (/diary|diaries/i.test(comboLine)) comboProducts.push('diaries');
+            if (/organizer|organiser/i.test(comboLine)) comboProducts.push('desk');
+            if (/bag|wallet/i.test(comboLine)) comboProducts.push('bags');
+            if (/tray/i.test(comboLine)) comboProducts.push('trays');
+
+            if (comboProducts.length > 0) {
+              console.log(`   Products in combo ${comboNumber}: ${comboProducts.join(', ')}`);
+              // Will send images for each product category below
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // v53.24: If combo products detected, send images for all products in the combo
+    if (comboProducts.length > 0) {
+      console.log(`📦 Sending images for ${comboProducts.length} products in combo...`);
+
+      // Clear sent tracker to allow re-sending
+      sentImagesTracker.delete(from);
+
+      // Initialize tracker
+      if (!sentImagesTracker.has(from)) {
+        sentImagesTracker.set(from, new Set());
+      }
+
+      let totalSent = 0;
+      for (const category of comboProducts) {
+        console.log(`   Fetching images for category: ${category}`);
+        const products = await findProductsByCategory(category, 3, from, false); // Get up to 3 products per category
+
+        for (const product of products.slice(0, 1)) { // Send 1 image per category to keep it concise
+          try {
+            const originalUrl = product.images[0];
+            const imageUrl = convertGoogleDriveUrl(originalUrl);
+
+            if (isValidImageUrl(imageUrl)) {
+              await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
+              sentImagesTracker.get(from).add(originalUrl);
+              totalSent++;
+              console.log(`   ✅ Sent: ${product.name}`);
+              await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between images
+            }
+          } catch (err) {
+            console.error(`   ❌ Failed to send ${product.name}:`, err.message);
+          }
+        }
+      }
+
+      console.log(`📦 Sent ${totalSent} images for combo products`);
+      return; // Exit early after sending combo images
+    }
+
     // Catalog detection - check ONLY user message for product keywords
     // v53.5 EXPANDED: Added missing product categories that were causing image sending failures
     // IMPORTANT: 'all' is checked FIRST to handle "options" and "variety" requests properly
@@ -1508,6 +1599,13 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     }
 
     if (catalogCategory) {
+      // v53.24 FIX: When customer explicitly asks for images, clear sent tracker
+      // This allows re-sending images when customer says "share images", "send pictures", etc.
+      if (hasTrigger && /\b(share|send|show|give)\b/i.test(messageBody)) {
+        console.log('🔄 Explicit image request detected, clearing sent tracker for fresh images');
+        sentImagesTracker.delete(from); // Clear sent history for this customer
+      }
+
       // v53.15 NEW: Extract size modifiers from message or conversation context
       let sizeFilter = null;
       const sizePattern = /\b(a5|a6|small|large|medium|mini|compact|jumbo|big)\b/i;
