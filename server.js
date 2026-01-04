@@ -2920,6 +2920,42 @@ app.get('/health', monitoringLimiter, async (req, res) => {
   res.json(health);
 });
 
+// Vision API health check (v53.29 - NEW, v53.30 - shows multiple Gemini keys)
+app.get('/health/vision', monitoringLimiter, async (req, res) => {
+  // v53.30: Count Gemini keys
+  const geminiKeys = CONFIG.GEMINI_API_KEY
+    ? CONFIG.GEMINI_API_KEY.split(',').map(k => k.trim()).filter(Boolean)
+    : [];
+
+  const visionHealth = {
+    timestamp: new Date().toISOString(),
+    providers: {
+      gemini: geminiKeys.length > 0,
+      geminiKeysCount: geminiKeys.length,
+      claude: !!CONFIG.ANTHROPIC_API_KEY,
+      googleCloud: !!CONFIG.GOOGLE_CLOUD_VISION_KEY,
+      huggingFace: !!CONFIG.HUGGINGFACE_TOKEN
+    },
+    stats: visionHandler.getStats()
+  };
+
+  // Calculate overall status
+  const workingProviders = [
+    geminiKeys.length > 0,
+    !!CONFIG.ANTHROPIC_API_KEY,
+    !!CONFIG.GOOGLE_CLOUD_VISION_KEY,
+    !!CONFIG.HUGGINGFACE_TOKEN
+  ].filter(Boolean).length;
+
+  visionHealth.status = workingProviders === 0 ? 'critical' :
+                        workingProviders < 2 ? 'degraded' :
+                        workingProviders < 4 ? 'partial' : 'healthy';
+  visionHealth.workingProviders = workingProviders;
+  visionHealth.totalProviders = 4;
+
+  res.json(visionHealth);
+});
+
 // Stats endpoint (SECURITY: Rate limited to 60 req/min)
 app.get('/stats', monitoringLimiter, async (req, res) => {
   try {

@@ -5,19 +5,32 @@ const axios = require('axios');
 class VisionHandler {
   constructor(config) {
     this.whatsappToken = config.WHATSAPP_TOKEN;
-    this.geminiApiKey = config.GEMINI_API_KEY;
+
+    // v53.30: Support multiple Gemini API keys (comma-separated)
+    // Example: GEMINI_API_KEY="key1,key2,key3"
+    this.geminiApiKeys = config.GEMINI_API_KEY
+      ? config.GEMINI_API_KEY.split(',').map(k => k.trim()).filter(Boolean)
+      : [];
+
     this.anthropicApiKey = config.ANTHROPIC_API_KEY;
     this.googleCloudKey = config.GOOGLE_CLOUD_VISION_KEY;
     this.huggingFaceToken = config.HUGGINGFACE_TOKEN;
 
-    // Stats tracking
+    // Stats tracking (per provider + per Gemini key)
     this.stats = {
-      gemini: { success: 0, failures: 0 },
+      gemini: { success: 0, failures: 0, keyStats: {} },
       claude: { success: 0, failures: 0 },
       googleCloud: { success: 0, failures: 0 },
       huggingFace: { success: 0, failures: 0 },
       fallback: { success: 0 }
     };
+
+    // Initialize stats for each Gemini key
+    this.geminiApiKeys.forEach((key, idx) => {
+      this.stats.gemini.keyStats[`key${idx + 1}`] = { success: 0, failures: 0 };
+    });
+
+    console.log(`🔑 Vision Handler initialized with ${this.geminiApiKeys.length} Gemini key(s)`);
   }
 
   // Download image from WhatsApp & convert to base64
@@ -38,15 +51,15 @@ class VisionHandler {
     };
   }
 
-  // Try Gemini Vision (PRIMARY - Free)
-  async tryGeminiVision(base64Image, mimeType, prompt) {
-    if (!this.geminiApiKey) throw new Error('Gemini API key not configured');
+  // Try Gemini Vision with specific API key (v53.30 - supports multiple keys)
+  async tryGeminiVision(base64Image, mimeType, prompt, apiKey, keyIndex = 0) {
+    if (!apiKey) throw new Error('Gemini API key not provided');
 
     try {
-      console.log('🟢 Trying Gemini Vision...');
+      console.log(`🟢 Trying Gemini Vision (key ${keyIndex + 1}/${this.geminiApiKeys.length})...`);
 
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.geminiApiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
         {
           contents: [{
             parts: [
@@ -61,11 +74,14 @@ class VisionHandler {
       if (!aiResponse) throw new Error('Empty response from Gemini');
 
       this.stats.gemini.success++;
-      return { provider: 'gemini-vision', response: aiResponse };
+      this.stats.gemini.keyStats[`key${keyIndex + 1}`].success++;
+      console.log(`✅ Gemini Vision succeeded with key ${keyIndex + 1}`);
+      return { provider: `gemini-vision-key${keyIndex + 1}`, response: aiResponse };
 
     } catch (error) {
       this.stats.gemini.failures++;
-      console.error('❌ Gemini Vision failed:', error.response?.data || error.message);
+      this.stats.gemini.keyStats[`key${keyIndex + 1}`].failures++;
+      console.error(`❌ Gemini Vision key ${keyIndex + 1} failed:`, error.response?.data || error.message);
       console.error('   Error details:', {
         status: error.response?.status,
         statusText: error.response?.statusText,
@@ -200,9 +216,21 @@ class VisionHandler {
   }
 
   // Fallback response (when all vision APIs fail)
-  getFallbackResponse() {
+  getFallbackResponse(errorDetails = null) {
     this.stats.fallback.success++;
-    return "I received your image! However, I'm having trouble analyzing it. Could you describe what you're looking for? I can help with cork products, customization, or answer questions! 🌿";
+
+    // Log detailed error information for debugging
+    if (errorDetails) {
+      console.error('🚨 VISION FAILURE - All providers failed:');
+      console.error('   Gemini:', errorDetails.gemini || 'Not attempted');
+      console.error('   Claude:', errorDetails.claude || 'Not attempted');
+      console.error('   Google Cloud:', errorDetails.googleCloud || 'Not attempted');
+      console.error('   Hugging Face:', errorDetails.huggingFace || 'Not attempted');
+      console.error('   📋 Check: API keys configured? Quota remaining? Network access?');
+    }
+
+    // More helpful fallback message
+    return "I received your reference image! While I process it, could you describe the design you're looking for? For example:\n\n• Simple text/logo or graphics/patterns?\n• Single color or multi-color printing?\n• Any specific fonts or icons?\n\nThis will help me prepare the exact customization you need! 🌿";
   }
 
   // Main handler with multi-provider fallback
@@ -292,58 +320,89 @@ Based on the image analysis:
 
 Respond in 2 sentences maximum as Priya (sales expert).`;
 
-      // Try providers in order: Gemini → Claude → Google Cloud → Fallback
+      // Try providers in order: Gemini (all keys) → Claude → Google Cloud → Hugging Face → Fallback
+      const errorDetails = {};
 
-      // 1. Try Gemini Vision (FREE)
-      try {
-        const result = await this.tryGeminiVision(base64, mimeType, fullPrompt);
-        return { ...result, imageProcessed: true };
-      } catch (error) {
-        console.log('⚠️ Gemini Vision unavailable, trying Claude...');
+      // 1. Try ALL Gemini API keys (v53.30 - multiple key fallback)
+      if (this.geminiApiKeys.length > 0) {
+        for (let i = 0; i < this.geminiApiKeys.length; i++) {
+          try {
+            const result = await this.tryGeminiVision(base64, mimeType, fullPrompt, this.geminiApiKeys[i], i);
+            return { ...result, imageProcessed: true };
+          } catch (error) {
+            const keyError = `Key ${i + 1}: ${error.message}`;
+            errorDetails.gemini = errorDetails.gemini
+              ? `${errorDetails.gemini}; ${keyError}`
+              : keyError;
+
+            if (i === this.geminiApiKeys.length - 1) {
+              // Last Gemini key failed
+              console.log(`⚠️ All ${this.geminiApiKeys.length} Gemini keys failed, trying Claude...`);
+            } else {
+              console.log(`⚠️ Gemini key ${i + 1} failed, trying next key...`);
+            }
+          }
+        }
+      } else {
+        errorDetails.gemini = 'No API keys configured';
+        console.log('⚠️ No Gemini keys configured, trying Claude...');
       }
 
       // 2. Try Claude Vision (PAID - only if enabled)
       if (this.anthropicApiKey) {
         try {
           const result = await this.tryClaudeVision(base64, mimeType, fullPrompt);
+          console.log('✅ Claude Vision succeeded');
           return { ...result, imageProcessed: true };
         } catch (error) {
+          errorDetails.claude = error.message;
           console.log('⚠️ Claude Vision unavailable, trying Google Cloud...');
         }
+      } else {
+        errorDetails.claude = 'API key not configured';
       }
 
       // 3. Try Google Cloud Vision (FREE TIER - basic detection)
       if (this.googleCloudKey) {
         try {
           const result = await this.tryGoogleCloudVision(base64);
+          console.log('✅ Google Cloud Vision succeeded');
           return { ...result, imageProcessed: true };
         } catch (error) {
+          errorDetails.googleCloud = error.message;
           console.log('⚠️ Google Cloud Vision unavailable, trying Hugging Face...');
         }
+      } else {
+        errorDetails.googleCloud = 'API key not configured';
       }
 
       // 4. Try Hugging Face Vision (FREE FOREVER - image captioning)
       if (this.huggingFaceToken) {
         try {
           const result = await this.tryHuggingFaceVision(base64);
+          console.log('✅ Hugging Face Vision succeeded');
           return { ...result, imageProcessed: true };
         } catch (error) {
+          errorDetails.huggingFace = error.message;
           console.log('⚠️ Hugging Face Vision unavailable, using fallback...');
         }
+      } else {
+        errorDetails.huggingFace = 'API token not configured';
       }
 
-      // 5. Fallback response
+      // 5. Fallback response with error details
       return {
         provider: 'fallback',
-        response: this.getFallbackResponse(),
+        response: this.getFallbackResponse(errorDetails),
         imageProcessed: false
       };
 
     } catch (error) {
-      console.error('❌ Vision handler error:', error.message);
+      console.error('❌ Vision handler critical error:', error.message);
+      console.error('   Stack:', error.stack);
       return {
         provider: 'fallback',
-        response: this.getFallbackResponse(),
+        response: this.getFallbackResponse({ critical: error.message }),
         imageProcessed: false
       };
     }
