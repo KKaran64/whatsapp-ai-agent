@@ -307,8 +307,45 @@ const visionHandler = new VisionHandler({
 
 // System Prompt for AI Agent - v51 CONSOLIDATED (658→480 lines)
 // All critical fixes preserved: v38, v39, v40, v46, v48, v50
-const SYSTEM_PROMPT = `You are Priya, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
+// v53.19: Build system prompt with previous conversation metadata (4-day memory)
+function buildSystemPrompt(metadata = null) {
+  let previousContextSection = '';
 
+  if (metadata && metadata.productInterest && metadata.productInterest.length > 0) {
+    const products = metadata.productInterest.join(', ');
+    const budget = metadata.budget || 'not specified';
+    const quantity = metadata.quantity || 'not specified';
+
+    previousContextSection = `
+═══════════════════════════════════════
+🔄 PREVIOUS CONVERSATION (WITHIN 4 DAYS)
+═══════════════════════════════════════
+This customer previously discussed:
+• Products: ${products}
+• Budget: ${budget}
+• Quantity: ${quantity}
+
+🚨 **IMPORTANT:**
+1. **Acknowledge previous discussion:** "Welcome back! Last time we discussed ${products}."
+2. **Ask if they want to continue:** "Would you like to proceed with ${products}, or explore something different?"
+3. **Don't force previous topic:** If they mention NEW products, focus on those instead
+4. **Use previous info as context:** If they say "show me images" → know they mean ${products}
+
+✅ CORRECT:
+Customer returns: "Hi"
+You: "Welcome back! Last time we discussed ${products} (${quantity} pieces). Ready to proceed?"
+
+Customer: "Yes"
+You: [Continue with ${products} conversation]
+
+Customer: "No, I want diaries now"
+You: [Switch to diaries, ignore previous ${products}]
+
+`;
+  }
+
+  return `You are Priya, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
+${previousContextSection}
 ═══════════════════════════════════════
 🌳 CORK KNOWLEDGE (Keep responses concise)
 ═══════════════════════════════════════
@@ -456,18 +493,46 @@ Customer: "I do not wish to disclose"
 Maximum 2 sentences AND 200 characters per response!
 One qualifying question at a time. If response is getting long, CUT IT.
 
-**RULE 3: CONVERSATION MEMORY**
-ALWAYS reference what customer JUST told you. NEVER repeat questions.
+**RULE 3: MANDATORY CONVERSATION MEMORY (v53.19 - ENFORCED)**
+🚨 **BEFORE ASKING ANY QUESTION, EXTRACT WHAT YOU ALREADY KNOW!**
 
-Before EVERY response, CHECK conversation history:
-- Product mentioned? → USE IT, don't ask again
-- Quantity mentioned? → USE IT, don't ask again
-- Use case mentioned? → USE IT, don't ask again
+**STEP 1: EXTRACT FROM LAST 5 MESSAGES** (MANDATORY!)
+Before asking ANY question, mentally note:
+- What PRODUCT did they mention? (diary, coaster, combo, etc.)
+- What QUANTITY did they mention? (100, 50, 200, etc.)
+- What OCCASION/USE did they mention? (corporate gifting, event, reselling, etc.)
+- What BUDGET did they mention? (below 700, under 500, etc.)
+- What CUSTOMIZATION did they mention? (with logo, without branding, etc.)
 
-Example:
-Customer: "Card holder... 300 pcs"
-✅ CORRECT: "For 300 card holders, what's the occasion?"
-❌ WRONG: "What product and how many?" ← They JUST told you!
+**STEP 2: USE WHAT YOU EXTRACTED**
+❌ If they mentioned QUANTITY → NEVER ask "How many pieces?"
+❌ If they mentioned OCCASION → NEVER ask "What's the occasion?"
+❌ If they mentioned CUSTOMIZATION → NEVER ask "Would you like branding?"
+✅ Reference what they said: "For your 100 combos for corporate gifting..."
+
+**Examples:**
+
+Example 1:
+Customer: "Show me combos below 700 budget, 100 nos required"
+YOU EXTRACT: product=combos, budget=700 per piece, quantity=100
+✅ CORRECT: "For corporate gifting combos under ₹700, would you like customization?"
+❌ WRONG: "How many pieces do you need?" ← They SAID 100!
+
+Example 2:
+Customer: "Corporate gifting for customers...100 nos required"
+YOU EXTRACT: occasion=corporate gifting, quantity=100
+✅ CORRECT: "For 100 corporate gifts, would you like branding?"
+❌ WRONG: "What's the occasion?" ← They SAID corporate gifting!
+
+Example 3:
+Customer: "Without branding"
+YOU EXTRACT: customization=no branding
+Next question about shipping or proceed to pricing
+❌ WRONG: "How many do you need?" ← They already said 100 earlier!
+
+**CRITICAL RULE:**
+If customer mentioned something 1-5 messages ago → YOU ALREADY KNOW IT!
+Don't ask for information you JUST received!
 
 **RULE 4: GREETING HANDLING (v52 - CRITICAL FIX)**
 When customer sends ONLY a greeting (no product/question mentioned):
@@ -1043,6 +1108,10 @@ DO NOT ask qualification questions for catalog - just acknowledge briefly.
 AFTER they receive catalog, THEN qualify: "What brings you to 9 Cork today?"
 
 REMEMBER: You KNOW all products and prices. Qualify first, price later. Max 2 sentences, under 200 chars. This is WhatsApp!`;
+}
+
+// Keep a reference to the basic system prompt for cases where we don't have metadata
+const SYSTEM_PROMPT = buildSystemPrompt();
 
 // Initialize Sentry for error monitoring
 if (CONFIG.SENTRY_DSN) {
@@ -1596,6 +1665,11 @@ function setupMessageProcessor() {
       // Store agent response in database (non-blocking)
       await storeAgentMessage(from, agentResponse).catch(() => {});
 
+      // v53.19 NEW: Extract and save conversation metadata for cross-session memory
+      await extractAndSaveMetadata(from, messageBody, agentResponse, context).catch(err => {
+        console.error('⚠️ Metadata extraction failed:', err.message);
+      });
+
       console.log('✅ Message processed successfully');
     } catch (error) {
       console.error('❌ Error processing message:', error);
@@ -1932,6 +2006,78 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
   }
 });
+
+// v53.19: Extract and save conversation metadata for cross-session memory (4 days)
+async function extractAndSaveMetadata(phoneNumber, customerMessage, agentResponse, context) {
+  try {
+    const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+
+    // Find active conversation
+    const conversation = await Conversation.findOne({
+      customerPhone: { $eq: sanitizedPhone },
+      status: 'active'
+    });
+
+    if (!conversation) return; // No conversation to update
+
+    // Extract information from customer message + context
+    const recentText = `${customerMessage} ${agentResponse} ${context.slice(-3).map(m => m.content).join(' ')}`.toLowerCase();
+
+    // Initialize metadata if not exists
+    if (!conversation.metadata) {
+      conversation.metadata = {
+        productInterest: [],
+        budget: null,
+        quantity: null,
+        timeline: null
+      };
+    }
+
+    // Extract PRODUCTS mentioned (coasters, diaries, combos, etc.)
+    const productPatterns = {
+      'coasters': /\b(coaster|coasters)\b/i,
+      'diaries': /\b(diary|diaries|notebook)\b/i,
+      'combos': /\b(combo|combos|gifting|gift box)\b/i,
+      'calendars': /\b(calendar|calender)\b/i,
+      'desk organizers': /\b(desk organizer|organizer|pen holder)\b/i,
+      'planters': /\b(planter|planters)\b/i,
+      'bags': /\b(bag|bags|laptop bag|wallet)\b/i,
+      'trays': /\b(tray|trays|serving tray)\b/i
+    };
+
+    for (const [product, pattern] of Object.entries(productPatterns)) {
+      if (pattern.test(recentText) && !conversation.metadata.productInterest.includes(product)) {
+        conversation.metadata.productInterest.push(product);
+      }
+    }
+
+    // Extract BUDGET (below 700, under 500, etc.)
+    const budgetMatch = recentText.match(/\b(?:below|under|around|budget)\s*(?:rs\.?|₹)?\s*(\d+)/i);
+    if (budgetMatch) {
+      conversation.metadata.budget = `₹${budgetMatch[1]} per piece`;
+    }
+
+    // Extract QUANTITY (100 pcs, 50 pieces, 200 nos, etc.)
+    const quantityMatch = recentText.match(/(\d+)\s*(?:pcs?|pieces?|nos?|units?|combos?)/i);
+    if (quantityMatch) {
+      conversation.metadata.quantity = parseInt(quantityMatch[1]);
+    }
+
+    // Extract TIMELINE (urgent, next week, by friday, etc.)
+    if (/\b(urgent|asap|today|tomorrow)\b/i.test(recentText)) {
+      conversation.metadata.timeline = 'urgent';
+    } else if (/\b(next week|this week)\b/i.test(recentText)) {
+      conversation.metadata.timeline = 'this week';
+    }
+
+    // Save updated metadata
+    await conversation.save();
+    console.log(`💾 Metadata saved: products=${conversation.metadata.productInterest.join(',')}, budget=${conversation.metadata.budget}, qty=${conversation.metadata.quantity}`);
+
+  } catch (error) {
+    console.error('❌ Error extracting metadata:', error.message);
+  }
+}
 
 // Store customer message in database
 async function storeCustomerMessage(phoneNumber, message, messageId) {
