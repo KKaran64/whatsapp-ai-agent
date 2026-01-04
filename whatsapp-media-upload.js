@@ -42,6 +42,8 @@ const MIN_REQUEST_INTERVAL = 100; // Minimum 100ms between requests
 const ALLOWED_DOMAINS = [
   '9cork.com',               // Primary product image source
   'www.9cork.com',
+  'ninecork.com',            // Alternative domain for 9 Cork products
+  'www.ninecork.com',
   'homedecorzstore.com',
   'www.homedecorzstore.com',
   'drive.google.com',
