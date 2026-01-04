@@ -1609,6 +1609,17 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     let userMessage = messageBody || '';
     const hasTrigger = TRIGGER_WORDS.test(userMessage);
 
+    // v53.28 HARD STOP: NEVER send images without trigger words - NO EXCEPTIONS!
+    // This prevents ALL unsolicited image sending regardless of code paths
+    if (!hasTrigger) {
+      console.log('🛑 v53.28 HARD STOP: No trigger words detected, skipping ALL image sending');
+      console.log(`   User message: "${userMessage.substring(0, 100)}..."`);
+      console.log(`   Trigger words required: show, send, share, pictures, images, photo`);
+      return; // EXIT IMMEDIATELY - no images will be sent
+    }
+
+    console.log('✅ Trigger words detected, proceeding with image detection...');
+
     // v53.4 FIX: Enhanced context-aware image detection
     // When user says generic image request OR pronouns, look at conversation history
     const pronounReferences = /\b(the same|them|it|those|these|that|above|earlier|mentioned|suggestions?)\b/i;
