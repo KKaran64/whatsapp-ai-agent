@@ -794,13 +794,60 @@ Total: ₹480 incl GST. Would you like this?"
 
 ❌ WRONG: "3 Coasters + 2 Planters" ← Multiples of same products!
 
-**COMBO CATALOG (48 combos, ₹230-₹2,200):**
-[PLACEHOLDER - User will provide combo details]
+**COMBO CATALOG (45 combos, ₹220-₹2,045):**
 
-Popular combos for quick reference:
-• Combo #__ (₹___): [items] - Best for [occasion]
-• Combo #__ (₹___): [items] - Best for [occasion]
-[More combos to be added]
+🏆 **BUDGET COMBOS (₹220-₹500) - Best for: Small corporate gifts, events**
+• Combo #11 (₹220): A5 Diary + Metal Pen - Minimal corporate gift
+• Combo #12 (₹325): Printed Diary + Metal Pen - Budget-friendly
+• Combo #13 (₹340): A6 Diary + Coaster Set + Seed Pen + 2 Tea Lights - Event giveaway
+• Combo #14 (₹370): A5 Diary + 2 Coasters + Magnetic Planter + Pen - Eco-friendly gift
+• Combo #15 (₹368): A5 Diary + 2 Coasters + Keychain + 2 Tea Lights + Seed Pen - Complete set
+• Combo #16 (₹440): Magnetic Planter Set of 3 - Home decor gift
+• Combo #17 (₹478): Passport Holder + Keychain + Pen - Travel essentials
+• Combo #37 (₹480): 2 Bark Planters - Nature lovers
+
+💼 **MID-RANGE COMBOS (₹500-₹1000) - Best for: Employee gifts, client appreciation**
+• Combo #18 (₹543): A5 Diary + Coaster Set + Small Calendar + Keychain
+• Combo #08 (₹595): A5 Diary + Magnetic Planter + Coaster Set + Metal Pen
+• Combo #19 (₹613): Big Calendar + 2 Coasters + Bark Planter + Keychain + 2 Tea Lights
+• Combo #20 (₹640): A5 Diary + Small Calendar + Pen Stand + Mouse Pad + Pen
+• Combo #07 (₹668): A5 Diary + Small Calendar + Keychain + Metal Pen
+• Combo #38 (₹670): Square Tray + 4 Printed Coasters + Magnetic Planter + 2 Tea Lights
+• Combo #39 (₹690): 2 Printed Tabletop Planters - Home decor
+• Combo #22 (₹728): Desktop Mat + A5 Diary + Coaster Set + Magnetic Planter + Keychain
+• Combo #21 (₹750): A5 Diary + Big Calendar + Passport Holder + Pen
+• Combo #23 (₹798): Desktop Mat + A5 Diary + Coaster Set + Magnetic Planter + Keychain + 2 Tea Lights
+• Combo #05 (₹805): A5 Diary + Desktop Organizer + Metal Pen
+• Combo #40 (₹840): Square Tray + 4 Printed Coasters + Magnetic Planter + 2 Tea Light Holders
+• Combo #25 (₹853): Desktop Mat + A5 Diary + Big Calendar + Magnetic Planter + Keychain + Pen
+• Combo #29 (₹935): A6 Diary + Printed Pouch + Glass Bottle + Magnetic Planter + Pen
+• Combo #26 (₹943): A6 Diary + Card Holder + Magnetic Planter + Pen Holder + Coaster Set + Keychain + Seed Pen
+• Combo #28 (₹970): Desktop Organizer + 2 Coasters + Small Calendar + Magnetic Planter
+• Combo #27 (₹990): Desktop Mat + Wallet + Coaster Set + Big Calendar
+• Combo #09 (₹995): A5 Diary + Small Calendar + Card Holder + Pen Stand
+
+🎁 **PREMIUM COMBOS (₹1000-₹2045) - Best for: VIP clients, festive gifting, executives**
+• Combo #06 (₹1020): Printed Pouch + Magnetic Planter + Card Holder + Coaster Set
+• Combo #41 (₹1030): Square Tray + 4 Printed Coasters + Printed Tabletop Planter + 2 Tea Lights
+• Combo #31 (₹1040): Desktop Mat + Pop-up Card Holder + Magnetic Planter + Small Calendar
+• Combo #32 (₹1045): Desktop Organizer + Card Holder + Pen Holder + Magnetic Planter + Pen
+• Combo #30 (₹1050): A5 Diary + Desktop Organizer + Small Calendar + Bark Planter + Pen
+• Combo #33 (₹1073): Printed Pouch + Glass Bottle + Card Holder + Keychain
+• Combo #10 (₹1080): iPad Desk Organizer + Glass Bottle + Small Calendar
+• Combo #42 (₹1210): Round Tray + 4 Coasters + Bark Planter + Tea Light
+• Combo #43 (₹1210): Rectangular Tray + 4 Coasters + Bark Planter + 4-in-1 Tea Light
+• Combo #02 (₹1280): iPad Desk Organizer + Glass Bottle + Passport Holder
+• Combo #01 (₹1310): A5 Diary + Glass Bottle + Small Calendar + Card Holder + Metal Pen - Premium corporate
+• Combo #34 (₹1310): MacBook Sleeve + Passport Holder + Wallet - Tech professional
+• Combo #44 (₹1345): Rectangular Tray + 4 Printed Coasters + Printed Tabletop Planter + 3 Tea Lights
+• Combo #03 (₹1380): Clock + Passport Holder + Desktop Organizer - Executive gift
+• Combo #35 (₹1425): Tray + Desktop Organizer + 4 Premium Coasters + Bark Planter + 3 Tea Lights
+• Combo #46 (₹1460): Square Tray + Soap Dispenser + Brush Holder + 2 Tea Lights - Bathroom set
+• Combo #47 (₹1560): 4 Dining Mats + 2 Trivets + 4 Coasters + 2 Tea Lights - Dining set
+• Combo #04 (₹1570): A5 Diary + Clock + Card Holder + Passport Holder
+• Combo #45 (₹1575): 3 Round Trays + Tea Light + 3 Tea Lights - Elegant serving set
+• Combo #48 (₹1610): 4 Dining Mats + 2 Trivets + Bark Planter - Complete dining
+• Combo #36 (₹2045): Laptop Bag + A5 Diary + Keychain - Premium professional
 
 ═══════════════════════════════════════
 📋 SALES QUALIFICATION FLOW
