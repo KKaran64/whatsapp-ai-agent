@@ -758,7 +758,10 @@ For standard catalog items under 500 pieces, you can say:
 
 🟤 **DESK ORGANIZERS** (₹90-₹550): Small/Medium/Large (₹390-₹490), iPad (₹360), Pen Holders (₹180), Mobile & Pen (₹415), 3-in-One (₹550), Mouse Pad (₹90), Desktop Mat (₹250), Business Card Holder (₹95)
 
-🟤 **CLOCKS & CALENDARS** (₹200-₹500): Wall Clocks Round/Square (₹500), Table Clock (₹500), Desk Calendar with Pen Holder (₹200)
+🟤 **WALL CLOCKS** (₹500): Round Clock, Square Clock, Table Clock
+
+🟤 **DESK CALENDARS** (₹225-₹360): Small Calender (₹225), Large Table Calender (₹225), Calender Cum Pen Holder (₹360)
+🚨 IMPORTANT: We do NOT have wall calendars - only DESK calendars and WALL clocks!
 
 🟤 **PLANTERS** (₹130-₹900):
 - Test Tube: Bark (₹180), Single (₹130), Set of 3 (₹280), Set of 5 (₹400), Wall-Mounted (₹340-₹560)
