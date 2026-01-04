@@ -756,18 +756,19 @@ You: "I've sent our Gifting Combos catalog with 48 options (₹230-₹2,200). Wh
 
 When customer asks for combo/multiple items in budget:
 
-Step 1: System auto-sends PDF catalog
-Step 2: YOU recommend specific combo numbers from our 48 combos
-Step 3: Customer either accepts OR asks for more options
+Step 1: YOU recommend specific combo numbers from our 48 combos (₹230-₹2,200)
+Step 2: Mention they can ask for catalog: "Would you like the full combo catalog?"
+Step 3: Customer either accepts a combo OR asks for catalog OR asks for custom
 
 Example:
 Customer: "3-4 items in ₹500 budget for New Year gifting"
-✅ CORRECT: "I've sent our Gifting Combos catalog. For ₹500 incl GST, check:
+✅ CORRECT: "For ₹500 incl GST, I recommend from our combos:
 • Combo #12 (₹450) - [describe items]
 • Combo #18 (₹480) - [describe items]
-Would these work, or would you like a custom combo?"
+Would you like these, or shall I send the full combo catalog with 48 options?"
 
-❌ WRONG: Immediately suggest custom combo without mentioning catalog
+❌ WRONG: Auto-sending catalog without customer requesting it
+❌ WRONG: Immediately suggest custom combo without mentioning combos
 
 **STAGE 2: CUSTOM COMBO (ONLY IF CUSTOMER ASKS FOR MORE)**
 
@@ -1413,13 +1414,19 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       }
     }
 
-    // v53.18 CRITICAL: Combo/Gifting catalog detection - INDEPENDENT CHECK!
-    // Combos are NOT in MongoDB - they're in a separate PDF catalog
-    // User asking for "combos", "gifting", "corporate gift" should get PDF immediately
-    const comboRequest = /\b(combo|combos|gifting|gift box|corporate gift|present)\b/i;
-    if (comboRequest.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
+    // v53.23 FIX: Combo catalog detection - ONLY when EXPLICITLY requested!
+    // Customer must explicitly ask for "catalog" or "brochure" or "PDF" combined with combo/gift keywords
+    // Examples that SHOULD trigger: "send combo catalog", "show gifting brochure", "combo PDF"
+    // Examples that should NOT trigger: "I need combos", "for client gifting", "gift boxes"
+    const explicitCatalogRequest = /\b(catalog|catalogue|brochure|pdf|price list|pricelist)\b/i;
+    const comboMention = /\b(combo|combos|gift|gifting|corporate gift)\b/i;
+
+    // Only send combo catalog if customer explicitly requests catalog AND mentions combos/gifts
+    const isExplicitComboCatalogRequest = explicitCatalogRequest.test(userMessage) && comboMention.test(userMessage);
+
+    if (isExplicitComboCatalogRequest && CONFIG.PDF_CATALOG_COMBOS) {
       try {
-        console.log('📦 Combo/Gifting request detected, sending combos catalog to', from);
+        console.log('📦 Explicit combo catalog request detected, sending combos catalog to', from);
         await sendWhatsAppDocument(from, CONFIG.PDF_CATALOG_COMBOS, '9Cork-Gifting-Combos-Catalog.pdf',
           'Here is our Gifting Combos catalog with 48 combos (₹230-₹2,200)! Perfect for corporate gifting 🌿');
         return; // Exit after sending combo catalog
@@ -1490,8 +1497,11 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
     let catalogCategory = null;
     for (const [category, pattern] of Object.entries(catalogPatterns)) {
-      // FIXED: Check pattern in USER message only, not bot response
-      if (pattern.test(userMessage) && (category === 'all' || hasTrigger)) {
+      // v53.23 FIX: Allow product-specific patterns to match even without TRIGGER_WORDS
+      // Only 'all' category requires hasTrigger (to avoid sending random images)
+      const requiresTrigger = (category === 'all');
+
+      if (pattern.test(userMessage) && (!requiresTrigger || hasTrigger)) {
         catalogCategory = category;
         break;
       }
