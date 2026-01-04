@@ -29,34 +29,10 @@ const sentImagesTracker = new Map(); // phoneNumber -> Set of image URLs
 // MongoDB Product Query Helpers
 async function findProductsByCategory(category, limit = 10, phoneNumber = null, excludeSent = false) {
   try {
-    // v53.16 FIX: Special handling for calendars (they're in DESKTOP category but need separate search)
-    if (category === 'calendar') {
-      console.log(`🔍 MongoDB query: searching for calendars by name`);
-      let products = await Product.find({
-        $or: [
-          { name: /calend/i },
-          { tags: /calendar/i }
-        ]
-      }).limit(limit * 2);
+    // v53.17 UNIVERSAL SEARCH: Search by name/tags/aliases FIRST, then category as fallback
+    // This works for ALL products - no special cases needed!
 
-      // Filter out already-sent images if requested
-      if (excludeSent && phoneNumber && sentImagesTracker.has(phoneNumber)) {
-        const sentImages = sentImagesTracker.get(phoneNumber);
-        products = products.filter(p => {
-          if (!p.images || p.images.length === 0) return false;
-          return !sentImages.has(p.images[0]);
-        });
-      }
-
-      products = products.slice(0, limit);
-      console.log(`📊 MongoDB returned ${products.length} calendar products`);
-      if (products.length > 0) {
-        console.log(`   First product: ${products[0].name} (${products[0].category})`);
-      }
-      return products;
-    }
-
-    // Map simplified category names to database categories
+    // Map simplified category names to database categories (used as fallback only)
     const categoryMap = {
       'coasters': 'COASTER',
       'diaries': 'DIAR',  // Matches both "DIARIES" and "C0RK DIARIES"
@@ -66,17 +42,39 @@ async function findProductsByCategory(category, limit = 10, phoneNumber = null, 
       'trays': 'TRAY',  // Matches "CORK SERVING/DECOR TRAYS"
       'bottles': 'BOTTLE',
       'frames': 'FRAME',  // Matches "CORK LINEA PHOTO FRAME"
+      'calendar': 'CALEND',  // Search for "CALEND" in name, not category
       'mousepad': 'MOUSE',  // Added for mousepads
       'candles': 'CANDLE',  // Added for candles and tea lights
       'all': ''
     };
 
-    const searchTerm = categoryMap[category] || category;
-    console.log(`🔍 MongoDB query: category contains "${searchTerm}"`);
+    const searchTerm = category === 'all' ? '' : category;
+    const categoryFallback = categoryMap[category] || category;
 
-    let products = await Product.find({
-      category: new RegExp(searchTerm, 'i')
-    }).limit(limit * 2); // Get more to filter duplicates
+    console.log(`🔍 MongoDB UNIVERSAL search for: "${searchTerm}"`);
+
+    // UNIVERSAL MULTI-FIELD SEARCH (works for ALL products!)
+    let products = [];
+
+    if (category === 'all') {
+      // Get variety of products from all categories
+      products = await Product.find({}).limit(limit * 2);
+    } else {
+      // Search by: name → tags → aliases → category (in priority order)
+      products = await Product.find({
+        $or: [
+          { name: new RegExp(searchTerm, 'i') },           // FIRST: Product name (e.g., "CALENDER")
+          { tags: new RegExp(searchTerm, 'i') },           // SECOND: Tags (e.g., "calendar")
+          { aliases: new RegExp(searchTerm, 'i') },        // THIRD: Aliases (e.g., "notebook" for diaries)
+          { category: new RegExp(categoryFallback, 'i') }  // FOURTH: Category fallback
+        ]
+      }).limit(limit * 2);
+    }
+
+    console.log(`   → Found ${products.length} products before filtering`);
+    if (products.length > 0) {
+      console.log(`   → Sample: ${products[0].name} (${products[0].category})`);
+    }
 
     // Filter out already-sent images if requested
     if (excludeSent && phoneNumber && sentImagesTracker.has(phoneNumber)) {
