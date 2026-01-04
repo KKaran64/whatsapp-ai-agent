@@ -1,6 +1,7 @@
 // Vision Handler - Multi-Provider Image Recognition (Condensed)
 // Gemini Vision (free) → Claude Vision (paid) → Google Cloud Vision (free tier) → Hugging Face (free)
 const axios = require('axios');
+const sharp = require('sharp'); // v53.31: Image compression/resizing
 
 class VisionHandler {
   constructor(config) {
@@ -33,30 +34,100 @@ class VisionHandler {
     console.log(`🔑 Vision Handler initialized with ${this.geminiApiKeys.length} Gemini key(s)`);
   }
 
-  // Download image from WhatsApp & convert to base64
-  async downloadImage(mediaId) {
+  // Download image from WhatsApp & optionally compress (v53.31 - DUAL APPROACH)
+  async downloadImage(mediaId, compressIfNeeded = true) {
     const mediaResponse = await axios.get(
       `https://graph.facebook.com/v18.0/${mediaId}`,
       { headers: { 'Authorization': `Bearer ${this.whatsappToken}` } }
     );
 
-    const imageResponse = await axios.get(mediaResponse.data.url, {
+    const imageUrl = mediaResponse.data.url;
+    const mimeType = mediaResponse.data.mime_type || 'image/jpeg';
+
+    const imageResponse = await axios.get(imageUrl, {
       headers: { 'Authorization': `Bearer ${this.whatsappToken}` },
       responseType: 'arraybuffer'
     });
 
+    let imageBuffer = Buffer.from(imageResponse.data);
+    const originalSizeMB = (imageBuffer.length / (1024 * 1024)).toFixed(2);
+    console.log(`📥 Downloaded image: ${originalSizeMB}MB, type: ${mimeType}`);
+
+    // v53.31 OPTION 2: Auto-resize if > 3MB (prevents base64 bloat)
+    const maxSizeMB = 3;
+    if (compressIfNeeded && imageBuffer.length > maxSizeMB * 1024 * 1024) {
+      console.log(`⚠️ Image too large (${originalSizeMB}MB), compressing...`);
+
+      try {
+        imageBuffer = await sharp(imageBuffer)
+          .resize(1920, 1920, { // Max 1920x1920, maintains aspect ratio
+            fit: 'inside',
+            withoutEnlargement: true
+          })
+          .jpeg({ quality: 85 }) // Convert to JPEG with 85% quality
+          .toBuffer();
+
+        const compressedSizeMB = (imageBuffer.length / (1024 * 1024)).toFixed(2);
+        console.log(`✅ Compressed: ${originalSizeMB}MB → ${compressedSizeMB}MB`);
+      } catch (error) {
+        console.error('❌ Compression failed:', error.message);
+        // Continue with original image
+      }
+    }
+
     return {
-      base64: Buffer.from(imageResponse.data).toString('base64'),
-      mimeType: mediaResponse.data.mime_type || 'image/jpeg'
+      base64: imageBuffer.toString('base64'),
+      mimeType: mimeType,
+      url: imageUrl, // v53.31 OPTION 3: WhatsApp URL for APIs that support it
+      sizeKB: Math.round(imageBuffer.length / 1024),
+      compressed: imageBuffer.length < Buffer.from(imageResponse.data).length
     };
   }
 
-  // Try Gemini Vision with specific API key (v53.30 - supports multiple keys)
-  async tryGeminiVision(base64Image, mimeType, prompt, apiKey, keyIndex = 0) {
+  // Try Gemini Vision with URL or base64 (v53.31 - DUAL APPROACH)
+  async tryGeminiVision(imageData, prompt, apiKey, keyIndex = 0) {
     if (!apiKey) throw new Error('Gemini API key not provided');
 
     try {
       console.log(`🟢 Trying Gemini Vision (key ${keyIndex + 1}/${this.geminiApiKeys.length})...`);
+
+      // v53.31 OPTION 3: Try URL first (faster, no base64 bloat)
+      if (imageData.url) {
+        try {
+          console.log(`   📍 Trying with URL (${imageData.sizeKB}KB)...`);
+
+          const response = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+            {
+              contents: [{
+                parts: [
+                  { text: prompt },
+                  {
+                    fileData: {
+                      mimeType: imageData.mimeType,
+                      fileUri: imageData.url
+                    }
+                  }
+                ]
+              }]
+            },
+            { timeout: 30000 }
+          );
+
+          const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (aiResponse) {
+            this.stats.gemini.success++;
+            this.stats.gemini.keyStats[`key${keyIndex + 1}`].success++;
+            console.log(`✅ Gemini Vision (URL) succeeded with key ${keyIndex + 1}`);
+            return { provider: `gemini-vision-url-key${keyIndex + 1}`, response: aiResponse };
+          }
+        } catch (urlError) {
+          console.log(`   ⚠️ URL method failed, falling back to base64...`);
+        }
+      }
+
+      // v53.31 OPTION 2: Fallback to compressed base64
+      console.log(`   📦 Using base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
 
       const response = await axios.post(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
@@ -64,10 +135,11 @@ class VisionHandler {
           contents: [{
             parts: [
               { text: prompt },
-              { inline_data: { mime_type: mimeType, data: base64Image } }
+              { inline_data: { mime_type: imageData.mimeType, data: imageData.base64 } }
             ]
           }]
-        }
+        },
+        { timeout: 30000 }
       );
 
       const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -75,8 +147,8 @@ class VisionHandler {
 
       this.stats.gemini.success++;
       this.stats.gemini.keyStats[`key${keyIndex + 1}`].success++;
-      console.log(`✅ Gemini Vision succeeded with key ${keyIndex + 1}`);
-      return { provider: `gemini-vision-key${keyIndex + 1}`, response: aiResponse };
+      console.log(`✅ Gemini Vision (base64) succeeded with key ${keyIndex + 1}`);
+      return { provider: `gemini-vision-base64-key${keyIndex + 1}`, response: aiResponse };
 
     } catch (error) {
       this.stats.gemini.failures++;
@@ -91,12 +163,12 @@ class VisionHandler {
     }
   }
 
-  // Try Claude Vision (SECONDARY - Paid but reliable)
-  async tryClaudeVision(base64Image, mimeType, prompt) {
+  // Try Claude Vision - base64 only (v53.31 - uses compressed image)
+  async tryClaudeVision(imageData, prompt) {
     if (!this.anthropicApiKey) throw new Error('Claude API key not configured');
 
     try {
-      console.log('🟣 Trying Claude Vision...');
+      console.log(`🟣 Trying Claude Vision with base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
 
       const Anthropic = require('@anthropic-ai/sdk');
       const anthropic = new Anthropic({ apiKey: this.anthropicApiKey });
@@ -111,8 +183,8 @@ class VisionHandler {
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: mimeType,
-                data: base64Image
+                media_type: imageData.mimeType,
+                data: imageData.base64
               }
             },
             { type: 'text', text: prompt }
@@ -124,6 +196,7 @@ class VisionHandler {
       if (!aiResponse) throw new Error('Empty response from Claude');
 
       this.stats.claude.success++;
+      console.log('✅ Claude Vision succeeded');
       return { provider: 'claude-vision', response: aiResponse };
 
     } catch (error) {
@@ -137,24 +210,37 @@ class VisionHandler {
     }
   }
 
-  // Try Google Cloud Vision (TERTIARY - Free tier, basic labels)
-  async tryGoogleCloudVision(base64Image) {
+  // Try Google Cloud Vision with URL or base64 (v53.31 - DUAL APPROACH)
+  async tryGoogleCloudVision(imageData) {
     if (!this.googleCloudKey) throw new Error('Google Cloud key not configured');
 
     try {
       console.log('🔵 Trying Google Cloud Vision...');
 
+      let imagePayload;
+
+      // v53.31 OPTION 3: Try URL first
+      if (imageData.url) {
+        console.log(`   📍 Using URL (${imageData.sizeKB}KB)...`);
+        imagePayload = { source: { imageUri: imageData.url } };
+      } else {
+        // v53.31 OPTION 2: Use compressed base64
+        console.log(`   📦 Using base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
+        imagePayload = { content: imageData.base64 };
+      }
+
       const response = await axios.post(
         `https://vision.googleapis.com/v1/images:annotate?key=${this.googleCloudKey}`,
         {
           requests: [{
-            image: { content: base64Image },
+            image: imagePayload,
             features: [
               { type: 'LABEL_DETECTION', maxResults: 5 },
               { type: 'OBJECT_LOCALIZATION', maxResults: 3 }
             ]
           }]
-        }
+        },
+        { timeout: 30000 }
       );
 
       const labels = response.data.responses[0]?.labelAnnotations || [];
@@ -168,6 +254,7 @@ class VisionHandler {
       const basicResponse = `I can see: ${detectedItems.slice(0, 3).join(', ')}. Could you tell me more about what you're looking for?`;
 
       this.stats.googleCloud.success++;
+      console.log('✅ Google Cloud Vision succeeded');
       return { provider: 'google-cloud-vision', response: basicResponse };
 
     } catch (error) {
@@ -177,15 +264,15 @@ class VisionHandler {
     }
   }
 
-  // Try Hugging Face Vision (QUATERNARY - Free forever, image captioning)
-  async tryHuggingFaceVision(base64Image) {
+  // Try Hugging Face Vision - base64 only (v53.31 - uses compressed image)
+  async tryHuggingFaceVision(imageData) {
     if (!this.huggingFaceToken) throw new Error('Hugging Face token not configured');
 
     try {
-      console.log('🟠 Trying Hugging Face Vision...');
+      console.log(`🟠 Trying Hugging Face Vision with base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
 
       // Convert base64 to binary buffer for HF API
-      const imageBuffer = Buffer.from(base64Image, 'base64');
+      const imageBuffer = Buffer.from(imageData.base64, 'base64');
 
       const response = await axios.post(
         'https://router.huggingface.co/models/Salesforce/blip-image-captioning-large',
@@ -206,6 +293,7 @@ class VisionHandler {
       const basicResponse = `I can see: ${caption}. Which cork product are you interested in?`;
 
       this.stats.huggingFace.success++;
+      console.log('✅ Hugging Face Vision succeeded');
       return { provider: 'huggingface-vision', response: basicResponse };
 
     } catch (error) {
@@ -237,11 +325,14 @@ class VisionHandler {
   async handleImageMessage(mediaId, userMessage, phoneNumber, conversationHistory, systemPrompt) {
     try {
       console.log(`📸 Processing image: ${mediaId}`);
-      console.log(`🔑 API Keys configured: Gemini=${!!this.geminiApiKey}, Claude=${!!this.anthropicApiKey}, GoogleCloud=${!!this.googleCloudKey}, HuggingFace=${!!this.huggingFaceToken}`);
+      console.log(`🔑 API Keys configured: Gemini=${this.geminiApiKeys.length} keys, Claude=${!!this.anthropicApiKey}, GoogleCloud=${!!this.googleCloudKey}, HuggingFace=${!!this.huggingFaceToken}`);
 
-      // Download image once
-      const { base64, mimeType } = await this.downloadImage(mediaId);
-      console.log(`✅ Image downloaded: ${mimeType}, size=${Math.round(base64.length / 1024)}KB`);
+      // v53.31: Download and auto-compress if needed
+      const imageData = await this.downloadImage(mediaId);
+      console.log(`✅ Image ready: ${imageData.mimeType}, ${imageData.sizeKB}KB${imageData.compressed ? ' (compressed)' : ''}`);
+      if (imageData.url) {
+        console.log(`📍 WhatsApp URL available for 5 minutes (faster for some APIs)`);
+      }
 
       // Build prompt
       const conversationText = conversationHistory
@@ -323,11 +414,11 @@ Respond in 2 sentences maximum as Priya (sales expert).`;
       // Try providers in order: Gemini (all keys) → Claude → Google Cloud → Hugging Face → Fallback
       const errorDetails = {};
 
-      // 1. Try ALL Gemini API keys (v53.30 - multiple key fallback)
+      // 1. Try ALL Gemini API keys (v53.30 - multiple key fallback, v53.31 - URL + compressed)
       if (this.geminiApiKeys.length > 0) {
         for (let i = 0; i < this.geminiApiKeys.length; i++) {
           try {
-            const result = await this.tryGeminiVision(base64, mimeType, fullPrompt, this.geminiApiKeys[i], i);
+            const result = await this.tryGeminiVision(imageData, fullPrompt, this.geminiApiKeys[i], i);
             return { ...result, imageProcessed: true };
           } catch (error) {
             const keyError = `Key ${i + 1}: ${error.message}`;
@@ -348,11 +439,10 @@ Respond in 2 sentences maximum as Priya (sales expert).`;
         console.log('⚠️ No Gemini keys configured, trying Claude...');
       }
 
-      // 2. Try Claude Vision (PAID - only if enabled)
+      // 2. Try Claude Vision (PAID - only if enabled, v53.31 - uses compressed)
       if (this.anthropicApiKey) {
         try {
-          const result = await this.tryClaudeVision(base64, mimeType, fullPrompt);
-          console.log('✅ Claude Vision succeeded');
+          const result = await this.tryClaudeVision(imageData, fullPrompt);
           return { ...result, imageProcessed: true };
         } catch (error) {
           errorDetails.claude = error.message;
@@ -362,11 +452,10 @@ Respond in 2 sentences maximum as Priya (sales expert).`;
         errorDetails.claude = 'API key not configured';
       }
 
-      // 3. Try Google Cloud Vision (FREE TIER - basic detection)
+      // 3. Try Google Cloud Vision (FREE TIER - v53.31 - URL + compressed)
       if (this.googleCloudKey) {
         try {
-          const result = await this.tryGoogleCloudVision(base64);
-          console.log('✅ Google Cloud Vision succeeded');
+          const result = await this.tryGoogleCloudVision(imageData);
           return { ...result, imageProcessed: true };
         } catch (error) {
           errorDetails.googleCloud = error.message;
@@ -376,11 +465,10 @@ Respond in 2 sentences maximum as Priya (sales expert).`;
         errorDetails.googleCloud = 'API key not configured';
       }
 
-      // 4. Try Hugging Face Vision (FREE FOREVER - image captioning)
+      // 4. Try Hugging Face Vision (FREE FOREVER - v53.31 - uses compressed)
       if (this.huggingFaceToken) {
         try {
-          const result = await this.tryHuggingFaceVision(base64);
-          console.log('✅ Hugging Face Vision succeeded');
+          const result = await this.tryHuggingFaceVision(imageData);
           return { ...result, imageProcessed: true };
         } catch (error) {
           errorDetails.huggingFace = error.message;
