@@ -2269,10 +2269,30 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       timestamp: new Date()
     });
 
+    // v53.20: Get conversation metadata for cross-session memory (4 days)
+    let conversationMetadata = null;
+    try {
+      const conversation = await Conversation.findOne({
+        customerPhone: { $eq: sanitizedPhone },
+        status: 'active'
+      });
+
+      if (conversation && conversation.metadata) {
+        conversationMetadata = conversation.metadata;
+        console.log(`💾 Using previous conversation metadata: products=${conversationMetadata.productInterest?.join(',') || 'none'}, budget=${conversationMetadata.budget || 'none'}`);
+      }
+    } catch (metaError) {
+      console.warn('⚠️ Failed to load metadata:', metaError.message);
+      // Continue without metadata - not critical
+    }
+
+    // v53.20: Build dynamic system prompt with metadata (if available)
+    const systemPrompt = buildSystemPrompt(conversationMetadata);
+
     // Use multi-provider AI manager with automatic failover
     // Send last 50 messages for context (optimized for Groq upper tier 32k+ token limit)
     const result = await aiManager.getResponse(
-      SYSTEM_PROMPT,
+      systemPrompt, // v53.20: Now dynamic based on previous conversation!
       fullContext.slice(-50), // Last 50 messages (including new message)
       sanitizedMessage
     );
@@ -2635,3 +2655,26 @@ setTimeout(() => {
   const initialSize = conversationMemory.size;
   console.log(`📊 Initial conversation memory: ${initialSize} entries`);
 }, 5 * 60 * 1000);
+
+// v53.20: Archive conversations older than 4 days
+setInterval(async () => {
+  try {
+    const fourDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+
+    const result = await Conversation.updateMany(
+      {
+        status: 'active',
+        lastMessageAt: { $lt: fourDaysAgo }
+      },
+      {
+        $set: { status: 'archived' }
+      }
+    );
+
+    if (result.modifiedCount > 0) {
+      console.log(`📦 Archived ${result.modifiedCount} conversations older than 4 days`);
+    }
+  } catch (error) {
+    console.error('❌ Conversation archiving failed:', error.message);
+  }
+}, 12 * 60 * 60 * 1000); // Every 12 hours
