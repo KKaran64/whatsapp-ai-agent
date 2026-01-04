@@ -29,6 +29,33 @@ const sentImagesTracker = new Map(); // phoneNumber -> Set of image URLs
 // MongoDB Product Query Helpers
 async function findProductsByCategory(category, limit = 10, phoneNumber = null, excludeSent = false) {
   try {
+    // v53.16 FIX: Special handling for calendars (they're in DESKTOP category but need separate search)
+    if (category === 'calendar') {
+      console.log(`🔍 MongoDB query: searching for calendars by name`);
+      let products = await Product.find({
+        $or: [
+          { name: /calend/i },
+          { tags: /calendar/i }
+        ]
+      }).limit(limit * 2);
+
+      // Filter out already-sent images if requested
+      if (excludeSent && phoneNumber && sentImagesTracker.has(phoneNumber)) {
+        const sentImages = sentImagesTracker.get(phoneNumber);
+        products = products.filter(p => {
+          if (!p.images || p.images.length === 0) return false;
+          return !sentImages.has(p.images[0]);
+        });
+      }
+
+      products = products.slice(0, limit);
+      console.log(`📊 MongoDB returned ${products.length} calendar products`);
+      if (products.length > 0) {
+        console.log(`   First product: ${products[0].name} (${products[0].category})`);
+      }
+      return products;
+    }
+
     // Map simplified category names to database categories
     const categoryMap = {
       'coasters': 'COASTER',
@@ -39,7 +66,6 @@ async function findProductsByCategory(category, limit = 10, phoneNumber = null, 
       'trays': 'TRAY',  // Matches "CORK SERVING/DECOR TRAYS"
       'bottles': 'BOTTLE',
       'frames': 'FRAME',  // Matches "CORK LINEA PHOTO FRAME"
-      'calendar': 'CALENDAR',  // Added for table calendars
       'mousepad': 'MOUSE',  // Added for mousepads
       'candles': 'CANDLE',  // Added for candles and tea lights
       'all': ''
@@ -570,33 +596,44 @@ You: "Perfect! For 100 Coasters, 100 Diaries, 100 Mouse Pads..."
 - When customer says "100 each" after you listed 10 products → ASK: "100 each of which products?"
 - Always confirm product list BEFORE discussing quantities for multiple items
 
-**RULE 7: NEVER REPEAT QUESTIONS (v53.15 - CRITICAL)**
+**RULE 7: NEVER REPEAT QUESTIONS (v53.16 - CRITICAL)**
 🚨 **CHECK CONVERSATION HISTORY FIRST** before asking any question!
 
 ❌ WRONG:
+Customer: "Show me pictures of small calender"
+You: "What size are you looking for?" ← ALREADY SAID "small"!
+
 Customer: "I need 100 a5 diaries for corporate gifting"
 You: "Would you like customization?"
 Customer: "Yes, laser engraving"
-You: "Great! Let me show you the images..."
 You: [sends images]
 Customer: "Can you share more images?"
 You: "What occasion are these for?" ← ALREADY ANSWERED (corporate gifting)!
 You: "How many do you need?" ← ALREADY ANSWERED (100)!
 
 ✅ CORRECT:
-- Review last 10 messages before asking
-- If customer already mentioned occasion, quantity, or customization → DON'T ask again
-- If they asked to see images, SHOW images - don't re-qualify
+- Review current message AND last 10 messages before asking
+- If customer JUST mentioned size/occasion/quantity → DON'T ask again
+- Extract info from their original request:
+  - "small calender" = SIZE: small, PRODUCT: calendar
+  - "100 a5 diaries" = QUANTITY: 100, SIZE: a5, PRODUCT: diary
+  - "for corporate gifting" = OCCASION: corporate gifting
 - Build on existing answers instead of repeating questions
 
 **Context Preservation:**
-- Once customer says "corporate gifting" → remember this, don't ask "what occasion?" again
-- Once customer says "100 pieces" → remember this, don't ask "how many?" again
-- Once customer says "yes to logo" → remember this, don't ask "customization?" again
+- Customer says "small calender" → remember SIZE is "small", don't ask "what size?"
+- Customer says "a5 diary" → remember SIZE is "a5", don't ask size questions
+- Customer says "corporate gifting" → remember OCCASION, don't ask again
+- Customer says "100 pieces" → remember QUANTITY, don't ask again
+- Customer says "yes to logo" → remember CUSTOMIZATION preference
+
+**When customer specifies details in first message:**
+✅ Extract and remember: size, quantity, occasion, customization preference
+❌ Don't ask questions about things they already told you
 
 **When customer says "show images" after qualification:**
 ✅ Send images immediately - they've ALREADY been qualified
-❌ Don't re-ask occasion, quantity, or customization questions
+❌ Don't re-ask occasion, quantity, size, or customization questions
 
 ═══════════════════════════════════════
 📋 SALES QUALIFICATION FLOW
@@ -1384,33 +1421,11 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           }
         }
       } else {
-        // Fallback to old JSON system if MongoDB is empty
-        console.log('⚠️ No products in MongoDB, using JSON fallback');
-        const catalogImages = getCatalogImages(catalogCategory);
-        console.log(`📚 Sending ${catalogImages.length} ${catalogCategory} images from JSON`);
-
-        let sentCount = 0;
-        let failedCount = 0;
-        for (const imageUrl of catalogImages.slice(0, 6)) {
-          try {
-            if (isValidCorkProductUrl(imageUrl)) {
-              await sendWhatsAppImage(from, imageUrl, `${catalogCategory} collection 🌿`);
-              sentCount++;
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-          } catch (err) {
-            failedCount++;
-            console.error(`Failed to send image ${sentCount + failedCount}:`, err.message);
-          }
-        }
-
-        if (failedCount > 0) {
-          if (sentCount === 0) {
-            await sendWhatsAppMessage(from, `I'm having trouble sending images right now. Let me describe our ${catalogCategory} instead - would that help?`).catch(() => {});
-          } else {
-            await sendWhatsAppMessage(from, `Note: I sent ${sentCount} images but ${failedCount} couldn't be delivered. Let me know if you'd like descriptions instead.`).catch(() => {});
-          }
-        }
+        // v53.16 CRITICAL FIX: No JSON fallback! MongoDB is source of truth
+        // If no products found, it means category truly doesn't exist or size filter too strict
+        console.log(`❌ No products found for category "${catalogCategory}" in MongoDB`);
+        console.log(`   This should be handled by AI via RULE 5C or by relaxing size filter`);
+        // Don't send anything - let AI respond naturally without sending wrong products
       }
     } else if (hasTrigger && PRODUCT_KEYWORDS.test(userMessage)) {
       // v53.2 FIX: Exclude non-product keywords (packaging, box, etc.)
