@@ -570,6 +570,34 @@ You: "Perfect! For 100 Coasters, 100 Diaries, 100 Mouse Pads..."
 - When customer says "100 each" after you listed 10 products → ASK: "100 each of which products?"
 - Always confirm product list BEFORE discussing quantities for multiple items
 
+**RULE 7: NEVER REPEAT QUESTIONS (v53.15 - CRITICAL)**
+🚨 **CHECK CONVERSATION HISTORY FIRST** before asking any question!
+
+❌ WRONG:
+Customer: "I need 100 a5 diaries for corporate gifting"
+You: "Would you like customization?"
+Customer: "Yes, laser engraving"
+You: "Great! Let me show you the images..."
+You: [sends images]
+Customer: "Can you share more images?"
+You: "What occasion are these for?" ← ALREADY ANSWERED (corporate gifting)!
+You: "How many do you need?" ← ALREADY ANSWERED (100)!
+
+✅ CORRECT:
+- Review last 10 messages before asking
+- If customer already mentioned occasion, quantity, or customization → DON'T ask again
+- If they asked to see images, SHOW images - don't re-qualify
+- Build on existing answers instead of repeating questions
+
+**Context Preservation:**
+- Once customer says "corporate gifting" → remember this, don't ask "what occasion?" again
+- Once customer says "100 pieces" → remember this, don't ask "how many?" again
+- Once customer says "yes to logo" → remember this, don't ask "customization?" again
+
+**When customer says "show images" after qualification:**
+✅ Send images immediately - they've ALREADY been qualified
+❌ Don't re-ask occasion, quantity, or customization questions
+
 ═══════════════════════════════════════
 📋 SALES QUALIFICATION FLOW
 ═══════════════════════════════════════
@@ -1202,6 +1230,30 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     }
 
     if (catalogCategory) {
+      // v53.15 NEW: Extract size modifiers from message or conversation context
+      let sizeFilter = null;
+      const sizePattern = /\b(a5|a6|small|large|medium|mini|compact|jumbo|big)\b/i;
+
+      // Check current message first
+      const sizeMatch = userMessage.match(sizePattern);
+      if (sizeMatch) {
+        sizeFilter = sizeMatch[0].toLowerCase();
+        console.log(`🔍 Size filter detected in message: "${sizeFilter}"`);
+      } else {
+        // Check recent conversation for size context
+        const recentMessages = conversationContext.slice(-10);
+        for (let i = recentMessages.length - 1; i >= 0; i--) {
+          const msg = recentMessages[i];
+          const content = msg.content || '';
+          const contextSizeMatch = content.match(sizePattern);
+          if (contextSizeMatch) {
+            sizeFilter = contextSizeMatch[0].toLowerCase();
+            console.log(`🔍 Size filter detected from conversation context: "${sizeFilter}"`);
+            break;
+          }
+        }
+      }
+
       // Initialize sent images tracker for this phone number
       if (!sentImagesTracker.has(from)) {
         sentImagesTracker.set(from, new Set());
@@ -1210,6 +1262,37 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
       // First try: Get new products excluding already sent
       let products = await findProductsByCategory(catalogCategory, 10, from, true);
+
+      // v53.15 NEW: Apply size filter if specified
+      if (sizeFilter && products.length > 0) {
+        const originalCount = products.length;
+        products = products.filter(p => {
+          const nameLower = p.name.toLowerCase();
+          const tagsLower = (p.tags || '').toLowerCase();
+
+          // Check if product matches the size filter
+          const matchesSize = nameLower.includes(sizeFilter) || tagsLower.includes(sizeFilter);
+
+          if (matchesSize) {
+            console.log(`   ✅ "${p.name}" matches size "${sizeFilter}"`);
+          }
+          return matchesSize;
+        });
+
+        console.log(`🔍 Size filter "${sizeFilter}" applied: ${originalCount} → ${products.length} products`);
+
+        // If size filter eliminated all products, try without excludeSent flag
+        if (products.length === 0) {
+          console.log(`⚠️ No products match size "${sizeFilter}" in unsent products, checking all products...`);
+          const allProducts = await findProductsByCategory(catalogCategory, 10, from, false);
+          products = allProducts.filter(p => {
+            const nameLower = p.name.toLowerCase();
+            const tagsLower = (p.tags || '').toLowerCase();
+            return nameLower.includes(sizeFilter) || tagsLower.includes(sizeFilter);
+          });
+          console.log(`🔍 Found ${products.length} products matching size "${sizeFilter}" (including previously sent)`);
+        }
+      }
 
       // If no new products, check if we have any products at all
       if (products.length === 0) {
