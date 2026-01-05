@@ -150,32 +150,55 @@ async function compressImage(imageBuffer, contentType = 'image/jpeg') {
       quality -= 10;
 
       if (quality < 50) {
-        // If quality too low, try resizing instead
-        console.log(`[COMPRESS] Quality too low, trying resize...`);
-        const scaleFactor = Math.sqrt(TARGET_IMAGE_SIZE / compressedSize);
-        const newWidth = Math.floor(metadata.width * scaleFactor);
-        const newHeight = Math.floor(metadata.height * scaleFactor);
+        // If quality too low, try iterative resizing instead
+        console.log(`[COMPRESS] Quality too low, switching to aggressive resize strategy...`);
 
-        compressed = await sharp(imageBuffer)
-          .resize(newWidth, newHeight, { fit: 'inside' })
-          .jpeg({ quality: 85, mozjpeg: true })
-          .toBuffer();
+        let resizeAttempts = 0;
+        let scaleFactor = Math.sqrt(TARGET_IMAGE_SIZE / compressedSize);
 
-        const finalSize = compressed.length;
-        const finalSizeMB = (finalSize / 1024 / 1024).toFixed(2);
+        // Keep resizing until we hit target (max 10 attempts)
+        while (resizeAttempts < 10) {
+          resizeAttempts++;
 
-        if (finalSize <= TARGET_IMAGE_SIZE) {
-          const savedBytes = originalSize - finalSize;
-          const savedMB = (savedBytes / 1024 / 1024).toFixed(2);
+          const newWidth = Math.floor(metadata.width * scaleFactor);
+          const newHeight = Math.floor(metadata.height * scaleFactor);
 
-          stats.compressed++;
-          stats.compressionBytesSaved += savedBytes;
+          console.log(`[COMPRESS] Resize attempt ${resizeAttempts}: ${metadata.width}x${metadata.height} → ${newWidth}x${newHeight} (scale ${scaleFactor.toFixed(2)})`);
 
-          console.log(`[COMPRESS] ✅ Success with resize! ${metadata.width}x${metadata.height} → ${newWidth}x${newHeight}, ${finalSizeMB}MB (saved ${savedMB}MB)`);
-          return compressed;
+          compressed = await sharp(imageBuffer)
+            .resize(newWidth, newHeight, { fit: 'inside' })
+            .jpeg({ quality: 85, mozjpeg: true })
+            .toBuffer();
+
+          const finalSize = compressed.length;
+          const finalSizeMB = (finalSize / 1024 / 1024).toFixed(2);
+
+          console.log(`[COMPRESS] Resize result: ${finalSizeMB}MB`);
+
+          if (finalSize <= TARGET_IMAGE_SIZE) {
+            const savedBytes = originalSize - finalSize;
+            const savedMB = (savedBytes / 1024 / 1024).toFixed(2);
+
+            stats.compressed++;
+            stats.compressionBytesSaved += savedBytes;
+
+            console.log(`[COMPRESS] ✅ Success with resize! ${metadata.width}x${metadata.height} → ${newWidth}x${newHeight}, ${finalSizeMB}MB (saved ${savedMB}MB)`);
+            return compressed;
+          }
+
+          // Reduce scale factor by 10% for next attempt
+          scaleFactor *= 0.9;
+
+          // Safety: if dimensions too small, stop
+          if (newWidth < 400 || newHeight < 400) {
+            console.log(`[COMPRESS] ⚠️ Dimensions too small (${newWidth}x${newHeight}), stopping resize attempts`);
+            break;
+          }
         }
 
-        break; // Can't compress further
+        // If we get here, return best attempt
+        console.log(`[COMPRESS] ⚠️ Could not reach target after ${resizeAttempts} resize attempts`);
+        break;
       }
     }
 
@@ -534,10 +557,17 @@ async function uploadAndSendImage(phoneNumber, imageUrl, caption = '') {
 
   } catch (error) {
     console.error(`[MEDIA] ❌ Upload and send failed:`, error.message);
+
+    // v53.32: Mark size-related errors specifically (prevents fallback to direct URL)
+    const isSizeError = error.message.includes('too large') ||
+                        error.message.includes('exceeds') ||
+                        error.message.includes('max');
+
     return {
       success: false,
       error: error.message,
-      imageUrl: imageUrl
+      imageUrl: imageUrl,
+      isSizeError: isSizeError // Flag to prevent direct URL fallback
     };
   }
 }
