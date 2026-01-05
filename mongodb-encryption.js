@@ -88,22 +88,34 @@ function decrypt(encryptedText) {
 
   // Check if text is actually encrypted (has correct format)
   if (!encryptedText.includes(':')) {
-    return encryptedText; // Return as-is if not encrypted
+    return encryptedText; // Return as-is if not encrypted (normal for old/unencrypted data)
   }
 
   try {
     // Split the encrypted text
     const parts = encryptedText.split(':');
     if (parts.length !== 3) {
-      console.warn('[ENCRYPTION] Invalid encrypted format, returning as-is');
+      // v53.33: Don't spam logs - this is normal for unencrypted data
       return encryptedText;
     }
 
     const [ivHex, authTagHex, encrypted] = parts;
 
+    // Validate hex format before decryption (prevent spam on URLs/text with colons)
+    if (!/^[0-9a-fA-F]+$/.test(ivHex) || !/^[0-9a-fA-F]+$/.test(authTagHex)) {
+      // Not actually encrypted data (e.g., URLs like "http://example.com:8080")
+      return encryptedText;
+    }
+
     // Convert from hex
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');
+
+    // Validate lengths
+    if (iv.length !== IV_LENGTH || authTag.length !== AUTH_TAG_LENGTH) {
+      // Invalid encryption format, return as-is silently
+      return encryptedText;
+    }
 
     // Create decipher
     const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
@@ -115,7 +127,13 @@ function decrypt(encryptedText) {
 
     return decrypted;
   } catch (error) {
-    console.error('[ENCRYPTION] Failed to decrypt:', error.message);
+    // v53.33: Only log if it looks like it SHOULD be encrypted but failed
+    // (Don't spam logs for normal unencrypted data)
+    const looksEncrypted = encryptedText.split(':').length === 3 &&
+                          /^[0-9a-fA-F:]+$/.test(encryptedText);
+    if (looksEncrypted) {
+      console.error('[ENCRYPTION] Decryption failed (corrupted data?):', error.message);
+    }
     // Return encrypted text if decryption fails (better than crashing)
     return encryptedText;
   }
