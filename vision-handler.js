@@ -260,6 +260,11 @@ class VisionHandler {
     } catch (error) {
       this.stats.googleCloud.failures++;
       console.error('❌ Google Cloud Vision failed:', error.message);
+      // v53.34: Better error logging for debugging
+      if (error.response) {
+        console.error('   Status:', error.response.status);
+        console.error('   Error data:', JSON.stringify(error.response.data).slice(0, 500));
+      }
       throw error;
     }
   }
@@ -274,8 +279,9 @@ class VisionHandler {
       // Convert base64 to binary buffer for HF API
       const imageBuffer = Buffer.from(imageData.base64, 'base64');
 
+      // v53.34: Fix endpoint - use api-inference, not router
       const response = await axios.post(
-        'https://router.huggingface.co/models/Salesforce/blip-image-captioning-large',
+        'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
         imageBuffer,
         {
           headers: {
@@ -298,7 +304,12 @@ class VisionHandler {
 
     } catch (error) {
       this.stats.huggingFace.failures++;
-      console.error('❌ Hugging Face Vision failed:', error.response?.data || error.message);
+      console.error('❌ Hugging Face Vision failed:', error.message);
+      // v53.34: Better error logging for debugging
+      if (error.response) {
+        console.error('   Status:', error.response.status);
+        console.error('   Error data:', JSON.stringify(error.response.data).slice(0, 500));
+      }
       throw error;
     }
   }
