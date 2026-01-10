@@ -279,21 +279,25 @@ class VisionHandler {
       // Convert base64 to binary buffer for HF API
       const imageBuffer = Buffer.from(imageData.base64, 'base64');
 
-      // v53.34: Fix endpoint - use api-inference, not router
+      // v53.35: Use newer BLIP-2 model (original BLIP deprecated with 410 error)
       const response = await axios.post(
-        'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
+        'https://api-inference.huggingface.co/models/Salesforce/blip2-opt-2.7b',
         imageBuffer,
         {
           headers: {
             'Authorization': `Bearer ${this.huggingFaceToken}`,
-            'Content-Type': 'application/octet-stream'
+            'Content-Type': 'image/jpeg'
           },
-          timeout: 30000 // 30 second timeout
+          timeout: 60000 // 60 second timeout (model may need loading time)
         }
       );
 
-      const caption = response.data?.[0]?.generated_text;
-      if (!caption) throw new Error('Empty response from Hugging Face');
+      // v53.35: Handle different response formats (BLIP-2 vs BLIP)
+      const caption = response.data?.[0]?.generated_text || response.data?.generated_text || response.data;
+      if (!caption || typeof caption !== 'string') {
+        console.error('   Unexpected response format:', JSON.stringify(response.data).slice(0, 200));
+        throw new Error('Invalid response format from Hugging Face');
+      }
 
       // Format caption into helpful response
       const basicResponse = `I can see: ${caption}. Which cork product are you interested in?`;
