@@ -279,7 +279,8 @@ class VisionHandler {
       // Convert base64 to binary buffer for HF API
       const imageBuffer = Buffer.from(imageData.base64, 'base64');
 
-      // v53.35: Use newer BLIP-2 model (original BLIP deprecated with 410 error)
+      // v53.36: Use newer BLIP-2 model (original BLIP deprecated with 410 error)
+      // Force redeploy - Render stuck on old version
       const response = await axios.post(
         'https://api-inference.huggingface.co/models/Salesforce/blip2-opt-2.7b',
         imageBuffer,
