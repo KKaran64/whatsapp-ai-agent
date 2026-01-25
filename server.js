@@ -296,9 +296,13 @@ const aiManager = new AIProviderManager({
 
 console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
 
-// Initialize Vision Handler (Multi-provider: Gemini → Claude → Google Cloud → Hugging Face)
+// Initialize Vision Handler (v53.40: Together AI FREE → Gemini → Claude → Google Cloud → HuggingFace)
 const visionHandler = new VisionHandler({
   WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
+  // v53.40: Together AI Vision (FREE Llama-Vision-Free model) - PRIMARY
+  // Get free key at: https://api.together.xyz
+  TOGETHER_API_KEY: process.env.TOGETHER_API_KEY,
+  // Fallback providers
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
   ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY,
   GOOGLE_CLOUD_VISION_KEY: CONFIG.GOOGLE_CLOUD_VISION_KEY,
