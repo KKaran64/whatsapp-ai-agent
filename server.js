@@ -296,12 +296,19 @@ const aiManager = new AIProviderManager({
 
 console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
 
-// Initialize Vision Handler (v53.40: Together AI FREE → Gemini → Claude → Google Cloud → HuggingFace)
+// Initialize Vision Handler (v53.41: Smart 3-Layer Matching)
+// Layer 1: Hash matching (instant, exact products)
+// Layer 2: Visual analysis (color, shape, CLIP-like)
+// Layer 3: Multiple Vision APIs (Cloudflare, Fireworks, OpenRouter, Hyperbolic, Together, Gemini)
 const visionHandler = new VisionHandler({
   WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
-  // v53.40: Together AI Vision (FREE Llama-Vision-Free model) - PRIMARY
-  // Get free key at: https://api.together.xyz
-  TOGETHER_API_KEY: process.env.TOGETHER_API_KEY,
+  // v53.41: Smart Matcher Vision APIs (all have FREE tiers)
+  CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,  // Free 10k/day
+  CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
+  FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY,          // Free tier
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,        // Free models available
+  HYPERBOLIC_API_KEY: process.env.HYPERBOLIC_API_KEY,        // Free tier
+  TOGETHER_API_KEY: process.env.TOGETHER_API_KEY,            // Free Llama-Vision
   // Fallback providers
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
   ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY,
