@@ -1,14 +1,22 @@
-// Vision Handler - Multi-Provider Image Recognition (Condensed)
-// Gemini Vision (free) → Claude Vision (paid) → Google Cloud Vision (free tier) → Hugging Face (free)
+// Vision Handler - Multi-Provider Image Recognition
+// v53.40: Together AI FREE as primary, local analysis as fallback
+// Fallback chain: Local → Together AI (FREE) → Gemini → Claude → Google Cloud → HuggingFace
 const axios = require('axios');
-const sharp = require('sharp'); // v53.31: Image compression/resizing
+const sharp = require('sharp');
+const LocalImageAnalyzer = require('./local-image-analyzer');
 
 class VisionHandler {
   constructor(config) {
     this.whatsappToken = config.WHATSAPP_TOKEN;
 
-    // v53.30: Support multiple Gemini API keys (comma-separated)
-    // Example: GEMINI_API_KEY="key1,key2,key3"
+    // v53.39: Local analyzer (always works, no API needed)
+    this.localAnalyzer = new LocalImageAnalyzer();
+
+    // v53.40: Together AI API key (FREE Llama-Vision-Free model)
+    // Get free API key at: https://api.together.xyz
+    this.togetherApiKey = config.TOGETHER_API_KEY;
+
+    // Gemini API keys (comma-separated) - quota issues common
     this.geminiApiKeys = config.GEMINI_API_KEY
       ? config.GEMINI_API_KEY.split(',').map(k => k.trim()).filter(Boolean)
       : [];
@@ -17,8 +25,19 @@ class VisionHandler {
     this.googleCloudKey = config.GOOGLE_CLOUD_VISION_KEY;
     this.huggingFaceToken = config.HUGGINGFACE_TOKEN;
 
-    // Stats tracking (per provider + per Gemini key)
+    // Check if any API keys are configured
+    this.hasAnyApiKeys = this.togetherApiKey ||
+                         this.geminiApiKeys.length > 0 ||
+                         this.anthropicApiKey ||
+                         this.googleCloudKey ||
+                         this.huggingFaceToken;
+
+    this.localOnlyMode = !this.hasAnyApiKeys;
+
+    // Stats tracking
     this.stats = {
+      local: { success: 0, failures: 0 },
+      together: { success: 0, failures: 0 },
       gemini: { success: 0, failures: 0, keyStats: {} },
       claude: { success: 0, failures: 0 },
       googleCloud: { success: 0, failures: 0 },
@@ -26,12 +45,16 @@ class VisionHandler {
       fallback: { success: 0 }
     };
 
-    // Initialize stats for each Gemini key
-    this.geminiApiKeys.forEach((key, idx) => {
+    // Initialize stats for Gemini keys
+    this.geminiApiKeys.forEach((_, idx) => {
       this.stats.gemini.keyStats[`key${idx + 1}`] = { success: 0, failures: 0 };
     });
 
-    console.log(`🔑 Vision Handler initialized with ${this.geminiApiKeys.length} Gemini key(s)`);
+    console.log(`🔑 Vision Handler: Together=${!!this.togetherApiKey ? 'YES (FREE)' : 'NO'}, Gemini=${this.geminiApiKeys.length} keys`);
+    if (this.localOnlyMode) {
+      console.log(`   ⚠️ No API keys - LOCAL-ONLY mode`);
+      console.log(`   💡 Get FREE Together AI key: https://api.together.xyz`);
+    }
   }
 
   // Download image from WhatsApp & optionally compress (v53.31 - DUAL APPROACH)
@@ -78,87 +101,171 @@ class VisionHandler {
     return {
       base64: imageBuffer.toString('base64'),
       mimeType: mimeType,
-      url: imageUrl, // v53.31 OPTION 3: WhatsApp URL for APIs that support it
+      url: imageUrl, // Note: Requires WhatsApp Bearer token - not usable by external APIs
       sizeKB: Math.round(imageBuffer.length / 1024),
       compressed: imageBuffer.length < Buffer.from(imageResponse.data).length
     };
   }
 
-  // Try Gemini Vision with URL or base64 (v53.31 - DUAL APPROACH)
+  // v53.40: Try Together AI Vision (FREE - Llama-Vision-Free model)
+  // Primary provider - most stable and free
+  async tryTogetherVision(imageData, prompt) {
+    if (!this.togetherApiKey) throw new Error('Together API key not configured');
+
+    try {
+      console.log(`🔵 Trying Together AI Vision (FREE)...`);
+      console.log(`   📦 Using base64 (${imageData.sizeKB}KB)...`);
+
+      // Use the FREE Llama Vision model
+      const response = await axios.post(
+        'https://api.together.xyz/v1/chat/completions',
+        {
+          model: 'meta-llama/Llama-Vision-Free', // FREE vision model
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${imageData.mimeType};base64,${imageData.base64}`
+                }
+              }
+            ]
+          }],
+          max_tokens: 500,
+          temperature: 0.4
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.togetherApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+
+      const aiResponse = response.data?.choices?.[0]?.message?.content;
+      if (!aiResponse) throw new Error('Empty response from Together AI');
+
+      this.stats.together.success++;
+      console.log(`✅ Together AI Vision succeeded`);
+      return { provider: 'together-vision-free', response: aiResponse };
+
+    } catch (error) {
+      this.stats.together.failures++;
+
+      // Log detailed error
+      const errorMsg = error.response?.data?.error?.message || error.message;
+      console.error(`❌ Together AI Vision failed:`, errorMsg);
+
+      // If free model fails, try the turbo model
+      if (error.response?.status === 404 || errorMsg.includes('not found')) {
+        console.log(`   🔄 Trying turbo model as fallback...`);
+        return this.tryTogetherVisionTurbo(imageData, prompt);
+      }
+
+      throw error;
+    }
+  }
+
+  // Fallback: Together AI Turbo model (uses credits)
+  async tryTogetherVisionTurbo(imageData, prompt) {
+    try {
+      const response = await axios.post(
+        'https://api.together.xyz/v1/chat/completions',
+        {
+          model: 'meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo', // Paid but cheap
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: `data:${imageData.mimeType};base64,${imageData.base64}` } }
+            ]
+          }],
+          max_tokens: 500,
+          temperature: 0.4
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.togetherApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+
+      const aiResponse = response.data?.choices?.[0]?.message?.content;
+      if (!aiResponse) throw new Error('Empty response');
+
+      this.stats.together.success++;
+      console.log(`✅ Together AI Vision Turbo succeeded`);
+      return { provider: 'together-vision-turbo', response: aiResponse };
+
+    } catch (error) {
+      console.error(`❌ Together AI Turbo also failed:`, error.response?.data?.error?.message || error.message);
+      throw error;
+    }
+  }
+
+  // Try Gemini Vision with base64 (v53.38 - FIXED: URL approach removed, WhatsApp URLs are authenticated)
   async tryGeminiVision(imageData, prompt, apiKey, keyIndex = 0) {
     if (!apiKey) throw new Error('Gemini API key not provided');
 
     try {
       console.log(`🟢 Trying Gemini Vision (key ${keyIndex + 1}/${this.geminiApiKeys.length})...`);
-
-      // v53.31 OPTION 3: Try URL first (faster, no base64 bloat)
-      if (imageData.url) {
-        try {
-          console.log(`   📍 Trying with URL (${imageData.sizeKB}KB)...`);
-
-          const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
-            {
-              contents: [{
-                parts: [
-                  { text: prompt },
-                  {
-                    fileData: {
-                      mimeType: imageData.mimeType,
-                      fileUri: imageData.url
-                    }
-                  }
-                ]
-              }]
-            },
-            { timeout: 30000 }
-          );
-
-          const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (aiResponse) {
-            this.stats.gemini.success++;
-            this.stats.gemini.keyStats[`key${keyIndex + 1}`].success++;
-            console.log(`✅ Gemini Vision (URL) succeeded with key ${keyIndex + 1}`);
-            return { provider: `gemini-vision-url-key${keyIndex + 1}`, response: aiResponse };
-          }
-        } catch (urlError) {
-          console.log(`   ⚠️ URL method failed, falling back to base64...`);
-        }
-      }
-
-      // v53.31 OPTION 2: Fallback to compressed base64
       console.log(`   📦 Using base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
 
+      // v53.38: Use stable gemini-2.0-flash model (1.5 deprecated Jan 2025)
+      // Note: WhatsApp URLs require Bearer token auth - external APIs can't access them
+      // Always use base64 for reliable image processing
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
         {
           contents: [{
             parts: [
               { text: prompt },
               { inline_data: { mime_type: imageData.mimeType, data: imageData.base64 } }
             ]
-          }]
+          }],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 500
+          }
         },
         { timeout: 30000 }
       );
+
+      // Check for blocked responses (safety filters)
+      if (response.data?.candidates?.[0]?.finishReason === 'SAFETY') {
+        throw new Error('Response blocked by safety filters');
+      }
 
       const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!aiResponse) throw new Error('Empty response from Gemini');
 
       this.stats.gemini.success++;
       this.stats.gemini.keyStats[`key${keyIndex + 1}`].success++;
-      console.log(`✅ Gemini Vision (base64) succeeded with key ${keyIndex + 1}`);
-      return { provider: `gemini-vision-base64-key${keyIndex + 1}`, response: aiResponse };
+      console.log(`✅ Gemini Vision succeeded with key ${keyIndex + 1}`);
+      return { provider: `gemini-vision-key${keyIndex + 1}`, response: aiResponse };
 
     } catch (error) {
       this.stats.gemini.failures++;
       this.stats.gemini.keyStats[`key${keyIndex + 1}`].failures++;
-      console.error(`❌ Gemini Vision key ${keyIndex + 1} failed:`, error.response?.data || error.message);
-      console.error('   Error details:', {
+
+      // Better error categorization
+      const errorInfo = {
         status: error.response?.status,
         statusText: error.response?.statusText,
-        message: error.message
-      });
+        message: error.message,
+        reason: error.response?.data?.error?.message || 'Unknown'
+      };
+
+      console.error(`❌ Gemini Vision key ${keyIndex + 1} failed:`, errorInfo.reason);
+      console.error('   Error details:', errorInfo);
       throw error;
     }
   }
@@ -210,57 +317,58 @@ class VisionHandler {
     }
   }
 
-  // Try Google Cloud Vision with URL or base64 (v53.31 - DUAL APPROACH)
+  // Try Google Cloud Vision with base64 (v53.38 - FIXED: URL approach removed)
   async tryGoogleCloudVision(imageData) {
     if (!this.googleCloudKey) throw new Error('Google Cloud key not configured');
 
     try {
       console.log('🔵 Trying Google Cloud Vision...');
+      console.log(`   📦 Using base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
 
-      let imagePayload;
-
-      // v53.31 OPTION 3: Try URL first
-      if (imageData.url) {
-        console.log(`   📍 Using URL (${imageData.sizeKB}KB)...`);
-        imagePayload = { source: { imageUri: imageData.url } };
-      } else {
-        // v53.31 OPTION 2: Use compressed base64
-        console.log(`   📦 Using base64 (${imageData.sizeKB}KB, compressed: ${imageData.compressed})...`);
-        imagePayload = { content: imageData.base64 };
-      }
-
+      // v53.38: Always use base64 - WhatsApp URLs require authentication
       const response = await axios.post(
         `https://vision.googleapis.com/v1/images:annotate?key=${this.googleCloudKey}`,
         {
           requests: [{
-            image: imagePayload,
+            image: { content: imageData.base64 },
             features: [
-              { type: 'LABEL_DETECTION', maxResults: 5 },
-              { type: 'OBJECT_LOCALIZATION', maxResults: 3 }
+              { type: 'LABEL_DETECTION', maxResults: 8 },
+              { type: 'OBJECT_LOCALIZATION', maxResults: 5 },
+              { type: 'TEXT_DETECTION', maxResults: 3 }
             ]
           }]
         },
         { timeout: 30000 }
       );
 
-      const labels = response.data.responses[0]?.labelAnnotations || [];
-      const objects = response.data.responses[0]?.localizedObjectAnnotations || [];
+      const result = response.data.responses[0];
+      const labels = result?.labelAnnotations || [];
+      const objects = result?.localizedObjectAnnotations || [];
+      const textAnnotations = result?.textAnnotations || [];
+
+      // Extract detected text (useful for logos/branded items)
+      const detectedText = textAnnotations[0]?.description?.slice(0, 50) || '';
 
       const detectedItems = [
         ...labels.map(l => l.description),
         ...objects.map(o => o.name)
       ];
 
-      const basicResponse = `I can see: ${detectedItems.slice(0, 3).join(', ')}. Could you tell me more about what you're looking for?`;
+      // Build more helpful response
+      let basicResponse = `I can see: ${detectedItems.slice(0, 4).join(', ')}.`;
+      if (detectedText) {
+        basicResponse += ` I also noticed text: "${detectedText}".`;
+      }
+      basicResponse += ` Which cork product are you interested in?`;
 
       this.stats.googleCloud.success++;
       console.log('✅ Google Cloud Vision succeeded');
+      console.log(`   Detected: ${detectedItems.slice(0, 3).join(', ')}`);
       return { provider: 'google-cloud-vision', response: basicResponse };
 
     } catch (error) {
       this.stats.googleCloud.failures++;
       console.error('❌ Google Cloud Vision failed:', error.message);
-      // v53.34: Better error logging for debugging
       if (error.response) {
         console.error('   Status:', error.response.status);
         console.error('   Error data:', JSON.stringify(error.response.data).slice(0, 500));
@@ -326,179 +434,158 @@ class VisionHandler {
     // Log detailed error information for debugging
     if (errorDetails) {
       console.error('🚨 VISION FAILURE - All providers failed:');
+      console.error('   Together AI:', errorDetails.together || 'Not attempted');
       console.error('   Gemini:', errorDetails.gemini || 'Not attempted');
       console.error('   Claude:', errorDetails.claude || 'Not attempted');
       console.error('   Google Cloud:', errorDetails.googleCloud || 'Not attempted');
       console.error('   Hugging Face:', errorDetails.huggingFace || 'Not attempted');
-      console.error('   📋 Check: API keys configured? Quota remaining? Network access?');
+      console.error('   📋 Get FREE key: https://api.together.xyz');
     }
 
     // More helpful fallback message
     return "I received your reference image! While I process it, could you describe the design you're looking for? For example:\n\n• Simple text/logo or graphics/patterns?\n• Single color or multi-color printing?\n• Any specific fonts or icons?\n\nThis will help me prepare the exact customization you need! 🌿";
   }
 
-  // Main handler with multi-provider fallback
+  // Main handler with LOCAL-FIRST approach (v53.39)
   async handleImageMessage(mediaId, userMessage, phoneNumber, conversationHistory, systemPrompt) {
     try {
       console.log(`📸 Processing image: ${mediaId}`);
-      console.log(`🔑 API Keys configured: Gemini=${this.geminiApiKeys.length} keys, Claude=${!!this.anthropicApiKey}, GoogleCloud=${!!this.googleCloudKey}, HuggingFace=${!!this.huggingFaceToken}`);
+      console.log(`🔑 Mode: ${this.localOnlyMode ? 'LOCAL-ONLY' : 'Hybrid (Local + API)'}`);
 
       // v53.31: Download and auto-compress if needed
       const imageData = await this.downloadImage(mediaId);
       console.log(`✅ Image ready: ${imageData.mimeType}, ${imageData.sizeKB}KB${imageData.compressed ? ' (compressed)' : ''}`);
-      if (imageData.url) {
-        console.log(`📍 WhatsApp URL available for 5 minutes (faster for some APIs)`);
+
+      // v53.39: STEP 1 - Always do local analysis first (instant, free)
+      const imageBuffer = Buffer.from(imageData.base64, 'base64');
+      const localAnalysis = await this.localAnalyzer.analyzeImage(imageBuffer);
+      const localResponse = this.localAnalyzer.generateResponse(localAnalysis, userMessage);
+
+      console.log(`🖼️ Local analysis: type=${localResponse.type}, confidence=${localResponse.confidence.toFixed(2)}`);
+
+      // v53.39: STEP 2 - Decide whether to use local response or try APIs
+      // Use local response if:
+      // - Local-only mode (no APIs configured)
+      // - High confidence (>0.6) from local analysis
+      // - Logo detected (local is good enough)
+      const useLocalResponse = this.localOnlyMode ||
+                               localResponse.confidence >= 0.6 ||
+                               localResponse.type === 'logo';
+
+      if (useLocalResponse) {
+        this.stats.local.success++;
+        console.log(`✅ Using local analysis (confidence: ${localResponse.confidence.toFixed(2)})`);
+        return {
+          provider: 'local-analyzer',
+          response: localResponse.response,
+          imageProcessed: true,
+          analysis: {
+            type: localResponse.type,
+            confidence: localResponse.confidence,
+            detectedCategory: localResponse.detectedCategory
+          }
+        };
       }
 
-      // Build prompt
+      // v53.39: STEP 3 - Try external APIs to enhance response
+      console.log(`🔄 Local confidence low (${localResponse.confidence.toFixed(2)}), trying external APIs...`);
+
+      // Build prompt for external APIs
       const conversationText = conversationHistory
+        .slice(-3)
         .map(msg => `${msg.role === 'user' ? 'Customer' : 'Priya'}: ${msg.content}`)
         .join('\n');
 
-      const fullPrompt = `${systemPrompt}
+      const fullPrompt = `You are Priya, a sales expert for 9Cork (sustainable cork products).
 
-IMPORTANT: Customer sent an IMAGE. Analyze it carefully and identify the 9 Cork product.
+TASK: Analyze this image and respond helpfully.
 
-🔍 VISUAL PRODUCT IDENTIFICATION GUIDE (9cork.com):
+PRODUCT CATEGORIES (9cork.com):
+• Coasters (round, hexagon, heart-shaped, leaf pattern)
+• Diaries/Notebooks (A5, A6 sizes with cork covers)
+• Desk Organizers & Pen Holders
+• Card Holders & Business Card Cases
+• Planters (test tube, fridge magnet, tabletop)
+• Bags, Wallets, Clutches
+• Photo Frames, Clocks, Yoga Mats, Mouse Pads
 
-**COASTERS** (Round, 10cm diameter unless noted):
-- Heart Coasters: Round with heart-shaped patterns, cutouts, or embossed hearts
-- Leaf Coasters: Round with leaf patterns, leaf-shaped cutouts, or botanical designs
-- Hexagon Coasters: 6-sided geometric shape (not round)
-- Bread Coasters: Textured surface resembling bread texture
-- Set of 4 with Case: Multiple coasters with storage box/case
-- Premium Square Fabric: Square shape with fabric backing
-- Olive/Chocochip/Natural: Natural cork texture with visible grain patterns
+IMAGE TYPES TO HANDLE:
+1. CORK PRODUCT → Identify it specifically and ask: quantity needed + purpose (personal/corporate gift)
+2. LOGO/DESIGN → Say: "I can customize that on cork! Is this for branding or a personal gift?"
+3. REFERENCE IMAGE → Say: "Thanks for the reference! Which cork product would you like this design on?"
+4. UNCLEAR → Ask: "Interesting! What cork product are you looking for?"
 
-**DIARIES & NOTEBOOKS**:
-- Cork Diary: Book-like with pages visible, cork cover (front/back), may have elastic band closure
-- A5 Diary: Larger (21x15cm), thick cork cover
-- A6 Diary: Smaller (15x10.5cm), pocket-sized
-- Look for: Binding, pages, elastic band, pen loop
+${conversationText ? `Recent conversation:\n${conversationText}\n` : ''}Customer message: ${userMessage || '(sent image)'}
 
-**DESK ORGANIZERS**:
-- Multiple compartments for pens/pencils/items
-- 3D structure (not flat), stands upright
-- May have sections, dividers, or slots
-- Desk Organizer vs Pen Holder: Organizer has multiple compartments, pen holder is single cylinder/section
+Respond in 1-2 short sentences as Priya.`;
 
-**CARD HOLDERS**:
-- Card Holder (₹120): Wallet-style, folds, holds credit/debit cards in slots, pocket-sized
-- Business Card Case (₹95): Flat box/case for storing business cards on desk (NOT a wallet)
-- Look for: Slots/pockets (Card Holder) vs box shape (Business Card Case)
-
-**PLANTERS**:
-- Test Tube Planters: Cork base with glass test tubes for plants/flowers
-- Fridge Magnet Planter: Small, compact (16.5x4.5x4.5cm), has magnet backing
-- Table Top Planters: Cork pot/container for plants (10x10cm typically)
-- Look for: Test tubes, plant space, decorative patterns
-
-**BAGS & WALLETS**:
-- Laptop Bag/Sleeve: Large, rectangular, for laptop storage
-- Wallets: Bi-fold (folds once), Tri-fold (folds twice)
-- Clutch: Small handbag, no straps
-- Tote/Handbag: Has handles or shoulder straps
-
-**OTHER PRODUCTS**:
-- Photo Frames: Cork border around photo opening (4x6, 5x7, 8x10 sizes)
-- Serving Trays: Flat surface with raised edges or handles
-- Table Mats/Placemats: Flat, rectangular, for dining
-- Mouse Pad: Flat, rectangular, desk accessory
-- Clocks: Round or square, has clock face/hands
-- Yoga Mat: Large rolled mat
-
-Conversation History:
-${conversationText}
-
-Customer: ${userMessage}
-
-IDENTIFICATION STEPS:
-1. Analyze shape, size, structure (flat/3D, round/square/rectangular)
-2. Look for distinctive features (hearts, leaves, compartments, pages, test tubes)
-3. Check for functional clues (holds cards, has pens, stores items)
-4. Match to specific product from guide above
-5. If product has multiple variants (like coasters), identify the specific type
-
-Based on the image analysis:
-- If CORK PRODUCT → Identify exact product name and ask qualification questions
-- If LOGO → "I can customize that! Single or multi-color logo?"
-- If QUALITY ISSUE → Sympathize and ask for details
-- If UNCLEAR → Ask what they're looking for
-
-Respond in 2 sentences maximum as Priya (sales expert).`;
-
-      // Try providers in order: Gemini (all keys) → Claude → Google Cloud → Hugging Face → Fallback
       const errorDetails = {};
 
-      // 1. Try ALL Gemini API keys (v53.30 - multiple key fallback, v53.31 - URL + compressed)
+      // v53.40: PRIORITY 1 - Together AI Vision (FREE Llama-Vision-Free)
+      if (this.togetherApiKey) {
+        try {
+          const result = await this.tryTogetherVision(imageData, fullPrompt);
+          return { ...result, imageProcessed: true };
+        } catch (error) {
+          errorDetails.together = error.message;
+          console.log(`⚠️ Together AI failed, trying Gemini...`);
+        }
+      }
+
+      // PRIORITY 2 - Gemini (quota issues common)
       if (this.geminiApiKeys.length > 0) {
         for (let i = 0; i < this.geminiApiKeys.length; i++) {
           try {
             const result = await this.tryGeminiVision(imageData, fullPrompt, this.geminiApiKeys[i], i);
             return { ...result, imageProcessed: true };
           } catch (error) {
-            const keyError = `Key ${i + 1}: ${error.message}`;
-            errorDetails.gemini = errorDetails.gemini
-              ? `${errorDetails.gemini}; ${keyError}`
-              : keyError;
-
-            if (i === this.geminiApiKeys.length - 1) {
-              // Last Gemini key failed
-              console.log(`⚠️ All ${this.geminiApiKeys.length} Gemini keys failed, trying Claude...`);
-            } else {
-              console.log(`⚠️ Gemini key ${i + 1} failed, trying next key...`);
-            }
+            errorDetails.gemini = (errorDetails.gemini || '') + `Key${i + 1}: ${error.message}; `;
           }
         }
-      } else {
-        errorDetails.gemini = 'No API keys configured';
-        console.log('⚠️ No Gemini keys configured, trying Claude...');
       }
 
-      // 2. Try Claude Vision (PAID - only if enabled, v53.31 - uses compressed)
+      // PRIORITY 3 - Claude (paid)
       if (this.anthropicApiKey) {
         try {
           const result = await this.tryClaudeVision(imageData, fullPrompt);
           return { ...result, imageProcessed: true };
         } catch (error) {
           errorDetails.claude = error.message;
-          console.log('⚠️ Claude Vision unavailable, trying Google Cloud...');
         }
-      } else {
-        errorDetails.claude = 'API key not configured';
       }
 
-      // 3. Try Google Cloud Vision (FREE TIER - v53.31 - URL + compressed)
+      // PRIORITY 4 - Google Cloud Vision
       if (this.googleCloudKey) {
         try {
           const result = await this.tryGoogleCloudVision(imageData);
           return { ...result, imageProcessed: true };
         } catch (error) {
           errorDetails.googleCloud = error.message;
-          console.log('⚠️ Google Cloud Vision unavailable, trying Hugging Face...');
         }
-      } else {
-        errorDetails.googleCloud = 'API key not configured';
       }
 
-      // 4. Try Hugging Face Vision (FREE FOREVER - v53.31 - uses compressed)
+      // PRIORITY 5 - Hugging Face
       if (this.huggingFaceToken) {
         try {
           const result = await this.tryHuggingFaceVision(imageData);
           return { ...result, imageProcessed: true };
         } catch (error) {
           errorDetails.huggingFace = error.message;
-          console.log('⚠️ Hugging Face Vision unavailable, using fallback...');
         }
-      } else {
-        errorDetails.huggingFace = 'API token not configured';
       }
 
-      // 5. Fallback response with error details
+      // v53.39: STEP 4 - Fall back to local response if all APIs fail
+      console.log(`⚠️ All APIs failed, using local analysis as fallback`);
+      this.stats.local.success++;
       return {
-        provider: 'fallback',
-        response: this.getFallbackResponse(errorDetails),
-        imageProcessed: false
+        provider: 'local-analyzer-fallback',
+        response: localResponse.response,
+        imageProcessed: true,
+        analysis: {
+          type: localResponse.type,
+          confidence: localResponse.confidence,
+          apiErrors: errorDetails
+        }
       };
 
     } catch (error) {
