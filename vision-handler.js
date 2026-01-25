@@ -1,22 +1,31 @@
 // Vision Handler - Multi-Provider Image Recognition
-// v53.40: Together AI FREE as primary, local analysis as fallback
-// Fallback chain: Local → Together AI (FREE) → Gemini → Claude → Google Cloud → HuggingFace
+// v53.41: 3-Layer Smart Matching (Hash → CLIP → Multiple Vision APIs)
+// Fallback chain: Hash Match → Visual Analysis → Cloudflare/Fireworks/OpenRouter/Hyperbolic → Together → Gemini
 const axios = require('axios');
 const sharp = require('sharp');
 const LocalImageAnalyzer = require('./local-image-analyzer');
+const SmartImageMatcher = require('./smart-image-matcher');
 
 class VisionHandler {
   constructor(config) {
     this.whatsappToken = config.WHATSAPP_TOKEN;
 
-    // v53.39: Local analyzer (always works, no API needed)
+    // v53.39: Local analyzer (color/shape analysis)
     this.localAnalyzer = new LocalImageAnalyzer();
 
-    // v53.40: Together AI API key (FREE Llama-Vision-Free model)
-    // Get free API key at: https://api.together.xyz
+    // v53.41: Smart Image Matcher (3-layer: Hash → CLIP → Vision APIs)
+    this.smartMatcher = new SmartImageMatcher({
+      CLOUDFLARE_ACCOUNT_ID: config.CLOUDFLARE_ACCOUNT_ID,
+      CLOUDFLARE_API_TOKEN: config.CLOUDFLARE_API_TOKEN,
+      FIREWORKS_API_KEY: config.FIREWORKS_API_KEY,
+      OPENROUTER_API_KEY: config.OPENROUTER_API_KEY,
+      HYPERBOLIC_API_KEY: config.HYPERBOLIC_API_KEY
+    });
+
+    // Together AI (FREE Llama-Vision-Free)
     this.togetherApiKey = config.TOGETHER_API_KEY;
 
-    // Gemini API keys (comma-separated) - quota issues common
+    // Gemini API keys (quota issues common)
     this.geminiApiKeys = config.GEMINI_API_KEY
       ? config.GEMINI_API_KEY.split(',').map(k => k.trim()).filter(Boolean)
       : [];
@@ -26,7 +35,11 @@ class VisionHandler {
     this.huggingFaceToken = config.HUGGINGFACE_TOKEN;
 
     // Check if any API keys are configured
-    this.hasAnyApiKeys = this.togetherApiKey ||
+    this.hasAnyApiKeys = config.CLOUDFLARE_ACCOUNT_ID ||
+                         config.FIREWORKS_API_KEY ||
+                         config.OPENROUTER_API_KEY ||
+                         config.HYPERBOLIC_API_KEY ||
+                         this.togetherApiKey ||
                          this.geminiApiKeys.length > 0 ||
                          this.anthropicApiKey ||
                          this.googleCloudKey ||
@@ -36,6 +49,7 @@ class VisionHandler {
 
     // Stats tracking
     this.stats = {
+      smartMatcher: { success: 0, failures: 0 },
       local: { success: 0, failures: 0 },
       together: { success: 0, failures: 0 },
       gemini: { success: 0, failures: 0, keyStats: {} },
@@ -50,10 +64,12 @@ class VisionHandler {
       this.stats.gemini.keyStats[`key${idx + 1}`] = { success: 0, failures: 0 };
     });
 
-    console.log(`🔑 Vision Handler: Together=${!!this.togetherApiKey ? 'YES (FREE)' : 'NO'}, Gemini=${this.geminiApiKeys.length} keys`);
+    console.log(`🔑 Vision Handler v53.41: Smart 3-Layer Matching`);
+    console.log(`   Cloudflare=${!!config.CLOUDFLARE_ACCOUNT_ID}, Fireworks=${!!config.FIREWORKS_API_KEY}, OpenRouter=${!!config.OPENROUTER_API_KEY}`);
+    console.log(`   Together=${!!this.togetherApiKey}, Gemini=${this.geminiApiKeys.length} keys`);
     if (this.localOnlyMode) {
       console.log(`   ⚠️ No API keys - LOCAL-ONLY mode`);
-      console.log(`   💡 Get FREE Together AI key: https://api.together.xyz`);
+      console.log(`   💡 Get FREE keys: Cloudflare, Fireworks, OpenRouter, or Together AI`);
     }
   }
 
@@ -456,18 +472,35 @@ class VisionHandler {
       const imageData = await this.downloadImage(mediaId);
       console.log(`✅ Image ready: ${imageData.mimeType}, ${imageData.sizeKB}KB${imageData.compressed ? ' (compressed)' : ''}`);
 
-      // v53.39: STEP 1 - Always do local analysis first (instant, free)
+      // v53.41: STEP 1 - Try Smart 3-Layer Matching (Hash → CLIP → Vision APIs)
       const imageBuffer = Buffer.from(imageData.base64, 'base64');
+
+      try {
+        console.log(`🎯 Trying Smart Image Matcher (3-layer)...`);
+        const smartResult = await this.smartMatcher.identifyImage(imageBuffer, userMessage);
+
+        if (smartResult.finalResult && smartResult.finalResult.confidence > 0.5) {
+          this.stats.smartMatcher.success++;
+          console.log(`✅ Smart Matcher: ${smartResult.finalResult.method} (${(smartResult.finalResult.confidence * 100).toFixed(0)}%)`);
+          return {
+            provider: `smart-${smartResult.finalResult.method}`,
+            response: smartResult.finalResult.message,
+            imageProcessed: true,
+            analysis: smartResult
+          };
+        }
+      } catch (error) {
+        console.log(`⚠️ Smart Matcher failed: ${error.message}`);
+        this.stats.smartMatcher.failures++;
+      }
+
+      // v53.39: STEP 2 - Fall back to local analysis
       const localAnalysis = await this.localAnalyzer.analyzeImage(imageBuffer);
       const localResponse = this.localAnalyzer.generateResponse(localAnalysis, userMessage);
 
       console.log(`🖼️ Local analysis: type=${localResponse.type}, confidence=${localResponse.confidence.toFixed(2)}`);
 
-      // v53.39: STEP 2 - Decide whether to use local response or try APIs
-      // Use local response if:
-      // - Local-only mode (no APIs configured)
-      // - High confidence (>0.6) from local analysis
-      // - Logo detected (local is good enough)
+      // Use local response if high confidence or local-only mode
       const useLocalResponse = this.localOnlyMode ||
                                localResponse.confidence >= 0.6 ||
                                localResponse.type === 'logo';
@@ -487,8 +520,8 @@ class VisionHandler {
         };
       }
 
-      // v53.39: STEP 3 - Try external APIs to enhance response
-      console.log(`🔄 Local confidence low (${localResponse.confidence.toFixed(2)}), trying external APIs...`);
+      // v53.41: STEP 3 - Try additional APIs as final fallback
+      console.log(`🔄 Local confidence low (${localResponse.confidence.toFixed(2)}), trying fallback APIs...`);
 
       // Build prompt for external APIs
       const conversationText = conversationHistory
