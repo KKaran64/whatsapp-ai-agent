@@ -296,19 +296,28 @@ const aiManager = new AIProviderManager({
 
 console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
 
-// Initialize Vision Handler (v53.41: Smart 3-Layer Matching)
+// Initialize Vision Handler (v53.42: Smart 3-Layer Matching with 8+ Vision APIs)
 // Layer 1: Hash matching (instant, exact products)
 // Layer 2: Visual analysis (color, shape, CLIP-like)
-// Layer 3: Multiple Vision APIs (Cloudflare, Fireworks, OpenRouter, Hyperbolic, Together, Gemini)
+// Layer 3: Multiple Vision APIs (Clarifai, Imagga, DeepAI, SambaNova, Cloudflare, etc.)
 const visionHandler = new VisionHandler({
   WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
-  // v53.41: Smart Matcher Vision APIs (all have FREE tiers)
+
+  // v53.42: TIER 1 - Dedicated Image Recognition APIs (most reliable)
+  CLARIFAI_API_KEY: process.env.CLARIFAI_API_KEY,            // 5k free/month
+  IMAGGA_API_KEY: process.env.IMAGGA_API_KEY,                // 1k free/month
+  IMAGGA_API_SECRET: process.env.IMAGGA_API_SECRET,
+  DEEPAI_API_KEY: process.env.DEEPAI_API_KEY,                // Free tier
+
+  // v53.42: TIER 2 - LLM Vision APIs
+  SAMBANOVA_API_KEY: process.env.SAMBANOVA_API_KEY,          // Free, very fast
   CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,  // Free 10k/day
   CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
   FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY,          // Free tier
-  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,        // Free models available
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,        // Free models
   HYPERBOLIC_API_KEY: process.env.HYPERBOLIC_API_KEY,        // Free tier
   TOGETHER_API_KEY: process.env.TOGETHER_API_KEY,            // Free Llama-Vision
+
   // Fallback providers
   GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
   ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY,
