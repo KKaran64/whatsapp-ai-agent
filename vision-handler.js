@@ -1,6 +1,6 @@
 // Vision Handler - Multi-Provider Image Recognition
-// v53.41: 3-Layer Smart Matching (Hash → CLIP → Multiple Vision APIs)
-// Fallback chain: Hash Match → Visual Analysis → Cloudflare/Fireworks/OpenRouter/Hyperbolic → Together → Gemini
+// v53.42: 3-Layer Smart Matching (Hash → CLIP → 8+ Vision APIs)
+// Fallback chain: Hash Match → Visual Analysis → Clarifai/Imagga/DeepAI/SambaNova/Cloudflare/Fireworks/OpenRouter/Hyperbolic → Together → Gemini
 const axios = require('axios');
 const sharp = require('sharp');
 const LocalImageAnalyzer = require('./local-image-analyzer');
@@ -13,8 +13,15 @@ class VisionHandler {
     // v53.39: Local analyzer (color/shape analysis)
     this.localAnalyzer = new LocalImageAnalyzer();
 
-    // v53.41: Smart Image Matcher (3-layer: Hash → CLIP → Vision APIs)
+    // v53.42: Smart Image Matcher (3-layer: Hash → CLIP → 8+ Vision APIs)
     this.smartMatcher = new SmartImageMatcher({
+      // Tier 1: Dedicated Vision APIs
+      CLARIFAI_API_KEY: config.CLARIFAI_API_KEY,
+      IMAGGA_API_KEY: config.IMAGGA_API_KEY,
+      IMAGGA_API_SECRET: config.IMAGGA_API_SECRET,
+      DEEPAI_API_KEY: config.DEEPAI_API_KEY,
+      // Tier 2: LLM Vision APIs
+      SAMBANOVA_API_KEY: config.SAMBANOVA_API_KEY,
       CLOUDFLARE_ACCOUNT_ID: config.CLOUDFLARE_ACCOUNT_ID,
       CLOUDFLARE_API_TOKEN: config.CLOUDFLARE_API_TOKEN,
       FIREWORKS_API_KEY: config.FIREWORKS_API_KEY,
@@ -35,7 +42,11 @@ class VisionHandler {
     this.huggingFaceToken = config.HUGGINGFACE_TOKEN;
 
     // Check if any API keys are configured
-    this.hasAnyApiKeys = config.CLOUDFLARE_ACCOUNT_ID ||
+    this.hasAnyApiKeys = config.CLARIFAI_API_KEY ||
+                         config.IMAGGA_API_KEY ||
+                         config.DEEPAI_API_KEY ||
+                         config.SAMBANOVA_API_KEY ||
+                         config.CLOUDFLARE_ACCOUNT_ID ||
                          config.FIREWORKS_API_KEY ||
                          config.OPENROUTER_API_KEY ||
                          config.HYPERBOLIC_API_KEY ||
@@ -64,12 +75,14 @@ class VisionHandler {
       this.stats.gemini.keyStats[`key${idx + 1}`] = { success: 0, failures: 0 };
     });
 
-    console.log(`🔑 Vision Handler v53.41: Smart 3-Layer Matching`);
-    console.log(`   Cloudflare=${!!config.CLOUDFLARE_ACCOUNT_ID}, Fireworks=${!!config.FIREWORKS_API_KEY}, OpenRouter=${!!config.OPENROUTER_API_KEY}`);
-    console.log(`   Together=${!!this.togetherApiKey}, Gemini=${this.geminiApiKeys.length} keys`);
+    console.log(`🔑 Vision Handler v53.42: Smart 3-Layer Matching (8+ APIs)`);
+    console.log(`   Tier1: Clarifai=${!!config.CLARIFAI_API_KEY}, Imagga=${!!config.IMAGGA_API_KEY}, DeepAI=${!!config.DEEPAI_API_KEY}`);
+    console.log(`   Tier2: SambaNova=${!!config.SAMBANOVA_API_KEY}, Cloudflare=${!!config.CLOUDFLARE_ACCOUNT_ID}, Fireworks=${!!config.FIREWORKS_API_KEY}`);
+    console.log(`   Tier2: OpenRouter=${!!config.OPENROUTER_API_KEY}, Hyperbolic=${!!config.HYPERBOLIC_API_KEY}`);
+    console.log(`   Legacy: Together=${!!this.togetherApiKey}, Gemini=${this.geminiApiKeys.length} keys`);
     if (this.localOnlyMode) {
       console.log(`   ⚠️ No API keys - LOCAL-ONLY mode`);
-      console.log(`   💡 Get FREE keys: Cloudflare, Fireworks, OpenRouter, or Together AI`);
+      console.log(`   💡 Get FREE keys: Clarifai (5k/mo), Imagga (1k/mo), or SambaNova (unlimited)`);
     }
   }
 

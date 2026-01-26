@@ -1,14 +1,14 @@
 require('dotenv').config();
 const sharp = require('sharp');
 
-// Test Smart Image Matcher (v53.41)
+// Test Smart Image Matcher (v53.42)
 async function testSmartMatcher() {
-  console.log('🧪 Testing Smart Image Matcher v53.41\n');
+  console.log('🧪 Testing Smart Image Matcher v53.42\n');
   console.log('=' .repeat(60));
   console.log('3-Layer Image Identification System');
   console.log('Layer 1: Hash Matching (instant, exact products)');
   console.log('Layer 2: Visual Analysis (color, shape, CLIP-like)');
-  console.log('Layer 3: Vision APIs (Cloudflare, Fireworks, OpenRouter, etc.)');
+  console.log('Layer 3: 8+ Vision APIs (Clarifai, Imagga, DeepAI, SambaNova, etc.)');
   console.log('=' .repeat(60));
 
   const results = { passed: 0, failed: 0 };
@@ -27,6 +27,13 @@ async function testSmartMatcher() {
 
   // Initialize with all available API keys
   const matcher = new SmartImageMatcher({
+    // Tier 1: Dedicated Vision APIs
+    CLARIFAI_API_KEY: process.env.CLARIFAI_API_KEY,
+    IMAGGA_API_KEY: process.env.IMAGGA_API_KEY,
+    IMAGGA_API_SECRET: process.env.IMAGGA_API_SECRET,
+    DEEPAI_API_KEY: process.env.DEEPAI_API_KEY,
+    // Tier 2: LLM Vision APIs
+    SAMBANOVA_API_KEY: process.env.SAMBANOVA_API_KEY,
     CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
     CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
     FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY,
@@ -35,11 +42,16 @@ async function testSmartMatcher() {
   });
 
   // Show configured providers
-  console.log('\n📋 Configured Vision APIs:');
-  console.log(`   Cloudflare: ${process.env.CLOUDFLARE_ACCOUNT_ID ? '✅' : '❌'}`);
-  console.log(`   Fireworks:  ${process.env.FIREWORKS_API_KEY ? '✅' : '❌'}`);
-  console.log(`   OpenRouter: ${process.env.OPENROUTER_API_KEY ? '✅' : '❌'}`);
-  console.log(`   Hyperbolic: ${process.env.HYPERBOLIC_API_KEY ? '✅' : '❌'}`);
+  console.log('\n📋 Tier 1: Dedicated Vision APIs (most reliable):');
+  console.log(`   Clarifai:   ${process.env.CLARIFAI_API_KEY ? '✅' : '❌'} (5k free/month)`);
+  console.log(`   Imagga:     ${process.env.IMAGGA_API_KEY ? '✅' : '❌'} (1k free/month)`);
+  console.log(`   DeepAI:     ${process.env.DEEPAI_API_KEY ? '✅' : '❌'} (free tier)`);
+  console.log('\n📋 Tier 2: LLM Vision APIs:');
+  console.log(`   SambaNova:  ${process.env.SAMBANOVA_API_KEY ? '✅' : '❌'} (free, fast)`);
+  console.log(`   Cloudflare: ${process.env.CLOUDFLARE_ACCOUNT_ID ? '✅' : '❌'} (10k free/day)`);
+  console.log(`   Fireworks:  ${process.env.FIREWORKS_API_KEY ? '✅' : '❌'} (free tier)`);
+  console.log(`   OpenRouter: ${process.env.OPENROUTER_API_KEY ? '✅' : '❌'} (free models)`);
+  console.log(`   Hyperbolic: ${process.env.HYPERBOLIC_API_KEY ? '✅' : '❌'} (free tier)`);
 
   // Test 1: pHash calculation
   console.log('\n📋 Test 1: Perceptual Hash Calculation');
@@ -235,9 +247,16 @@ async function testSmartMatcher() {
     console.log('\n📋 How it works:');
     console.log('   1. Hash Match → Instant product identification');
     console.log('   2. Visual Analysis → Color + shape → category');
-    console.log('   3. Vision APIs → Full AI analysis (if needed)');
+    console.log('   3. 8+ Vision APIs → Full AI analysis (if needed)');
     console.log('\n💡 Add API keys to .env for Layer 3:');
-    console.log('   CLOUDFLARE_ACCOUNT_ID=xxx');
+    console.log('   # Tier 1: Dedicated Vision APIs (recommended)');
+    console.log('   CLARIFAI_API_KEY=xxx       # 5k free/month');
+    console.log('   IMAGGA_API_KEY=xxx         # 1k free/month');
+    console.log('   IMAGGA_API_SECRET=xxx');
+    console.log('   DEEPAI_API_KEY=xxx         # Free tier');
+    console.log('   # Tier 2: LLM Vision APIs');
+    console.log('   SAMBANOVA_API_KEY=xxx      # Free, very fast');
+    console.log('   CLOUDFLARE_ACCOUNT_ID=xxx  # 10k free/day');
     console.log('   CLOUDFLARE_API_TOKEN=xxx');
     console.log('   FIREWORKS_API_KEY=xxx');
     console.log('   OPENROUTER_API_KEY=xxx');

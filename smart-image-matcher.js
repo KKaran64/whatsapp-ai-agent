@@ -1,6 +1,7 @@
 // Smart Image Matcher - 3-Layer Image Identification System
-// v53.41: Hash Matching → CLIP Similarity → Cloudflare AI
-// Combines multiple approaches for maximum reliability
+// v53.42: Hash Matching → CLIP Similarity → 8+ Vision APIs
+// Tier 1: Clarifai (5k/mo), Imagga (1k/mo), DeepAI (free)
+// Tier 2: SambaNova, Cloudflare, Fireworks, OpenRouter, Hyperbolic (all free)
 
 const axios = require('axios');
 const sharp = require('sharp');
@@ -11,11 +12,18 @@ const path = require('path');
 class SmartImageMatcher {
   constructor(config = {}) {
     // Multiple Vision API providers (all have free tiers)
+    // Tier 1: Dedicated Vision APIs
+    this.clarifaiApiKey = config.CLARIFAI_API_KEY;        // 5k free/month
+    this.imaggaApiKey = config.IMAGGA_API_KEY;            // 1k free/month
+    this.imaggaApiSecret = config.IMAGGA_API_SECRET;
+    this.deepaiApiKey = config.DEEPAI_API_KEY;            // Free tier
+
+    // Tier 2: LLM Vision APIs
     this.cloudflareAccountId = config.CLOUDFLARE_ACCOUNT_ID;
     this.cloudflareApiToken = config.CLOUDFLARE_API_TOKEN;
     this.fireworksApiKey = config.FIREWORKS_API_KEY;      // Free tier
     this.openrouterApiKey = config.OPENROUTER_API_KEY;    // Routes to cheapest
-    this.replicateApiKey = config.REPLICATE_API_KEY;      // Pay per use
+    this.sambanovaApiKey = config.SAMBANOVA_API_KEY;      // Free tier, fast
     this.hyperbolicApiKey = config.HYPERBOLIC_API_KEY;    // Free tier
 
     // Product index storage
@@ -304,6 +312,211 @@ class SmartImageMatcher {
 
   // ==================== LAYER 3: MULTIPLE VISION APIs ====================
 
+  // ---- TIER 1: Dedicated Image Recognition APIs ----
+
+  // Clarifai (FREE 5k/month) - Best for product recognition
+  async analyzeWithClarifai(imageBuffer, prompt) {
+    if (!this.clarifaiApiKey) {
+      throw new Error('Clarifai API key not configured');
+    }
+
+    try {
+      console.log('🔮 Trying Clarifai (5k free/month)...');
+
+      const base64Image = imageBuffer.toString('base64');
+
+      // Use general-image-recognition model
+      const response = await axios.post(
+        'https://api.clarifai.com/v2/models/general-image-recognition/outputs',
+        {
+          inputs: [{
+            data: {
+              image: { base64: base64Image }
+            }
+          }]
+        },
+        {
+          headers: {
+            'Authorization': `Key ${this.clarifaiApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+
+      const concepts = response.data?.outputs?.[0]?.data?.concepts || [];
+      if (concepts.length === 0) throw new Error('No concepts detected');
+
+      // Get top 5 concepts
+      const topConcepts = concepts.slice(0, 5).map(c => c.name);
+      console.log(`   Detected: ${topConcepts.join(', ')}`);
+
+      // Generate response based on detected concepts
+      const corkRelated = ['cork', 'wood', 'brown', 'texture', 'natural', 'coaster', 'notebook', 'diary'];
+      const isCorkProduct = topConcepts.some(c => corkRelated.includes(c.toLowerCase()));
+
+      let responseText;
+      if (isCorkProduct) {
+        responseText = `I can see this appears to be a cork product! The image shows: ${topConcepts.slice(0, 3).join(', ')}. How many pieces would you like?`;
+      } else if (topConcepts.some(c => ['logo', 'text', 'design', 'graphic'].includes(c.toLowerCase()))) {
+        responseText = `I see a design/logo! I can customize this on cork products. Is this for corporate branding or a personal gift?`;
+      } else {
+        responseText = `I can see: ${topConcepts.slice(0, 3).join(', ')}. Which cork product are you interested in?`;
+      }
+
+      console.log('✅ Clarifai succeeded');
+      return { provider: 'clarifai', response: responseText, concepts, success: true };
+
+    } catch (error) {
+      console.error('❌ Clarifai failed:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // Imagga (FREE 1k/month) - Good for tagging
+  async analyzeWithImagga(imageBuffer, prompt) {
+    if (!this.imaggaApiKey || !this.imaggaApiSecret) {
+      throw new Error('Imagga credentials not configured');
+    }
+
+    try {
+      console.log('🏷️ Trying Imagga (1k free/month)...');
+
+      const base64Image = imageBuffer.toString('base64');
+
+      const response = await axios.post(
+        'https://api.imagga.com/v2/tags',
+        { image_base64: base64Image },
+        {
+          auth: {
+            username: this.imaggaApiKey,
+            password: this.imaggaApiSecret
+          },
+          timeout: 30000
+        }
+      );
+
+      const tags = response.data?.result?.tags || [];
+      if (tags.length === 0) throw new Error('No tags detected');
+
+      // Get top tags with confidence > 30%
+      const topTags = tags
+        .filter(t => t.confidence > 30)
+        .slice(0, 5)
+        .map(t => t.tag.en);
+
+      console.log(`   Tags: ${topTags.join(', ')}`);
+
+      // Generate response
+      const corkKeywords = ['cork', 'wood', 'brown', 'coaster', 'notebook', 'leather', 'texture'];
+      const isCorkLike = topTags.some(t => corkKeywords.some(k => t.toLowerCase().includes(k)));
+
+      let responseText;
+      if (isCorkLike) {
+        responseText = `This looks like a cork product! I can see: ${topTags.slice(0, 3).join(', ')}. How many do you need?`;
+      } else {
+        responseText = `I see: ${topTags.slice(0, 3).join(', ')}. Which cork product would you like this on?`;
+      }
+
+      console.log('✅ Imagga succeeded');
+      return { provider: 'imagga', response: responseText, tags: topTags, success: true };
+
+    } catch (error) {
+      console.error('❌ Imagga failed:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // DeepAI (FREE tier) - General image analysis
+  async analyzeWithDeepAI(imageBuffer, prompt) {
+    if (!this.deepaiApiKey) {
+      throw new Error('DeepAI API key not configured');
+    }
+
+    try {
+      console.log('🧠 Trying DeepAI (free tier)...');
+
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('image', imageBuffer, { filename: 'image.jpg', contentType: 'image/jpeg' });
+
+      const response = await axios.post(
+        'https://api.deepai.org/api/densecap',
+        form,
+        {
+          headers: {
+            'api-key': this.deepaiApiKey,
+            ...form.getHeaders()
+          },
+          timeout: 30000
+        }
+      );
+
+      const captions = response.data?.output?.captions || [];
+      if (captions.length === 0) throw new Error('No captions generated');
+
+      const descriptions = captions.slice(0, 3).map(c => c.caption);
+      console.log(`   Captions: ${descriptions.join('; ')}`);
+
+      const responseText = `I can see: ${descriptions.join(', ')}. Which cork product interests you?`;
+
+      console.log('✅ DeepAI succeeded');
+      return { provider: 'deepai', response: responseText, captions: descriptions, success: true };
+
+    } catch (error) {
+      console.error('❌ DeepAI failed:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // ---- TIER 2: LLM Vision APIs ----
+
+  // SambaNova (FREE tier, very fast)
+  async analyzeWithSambaNova(imageBuffer, prompt) {
+    if (!this.sambanovaApiKey) {
+      throw new Error('SambaNova API key not configured');
+    }
+
+    try {
+      console.log('⚡ Trying SambaNova (FREE, fast)...');
+
+      const base64Image = imageBuffer.toString('base64');
+
+      const response = await axios.post(
+        'https://api.sambanova.ai/v1/chat/completions',
+        {
+          model: 'Llama-3.2-11B-Vision-Instruct',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+            ]
+          }],
+          max_tokens: 300,
+          temperature: 0.4
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.sambanovaApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
+
+      const aiResponse = response.data?.choices?.[0]?.message?.content;
+      if (!aiResponse) throw new Error('Empty response');
+
+      console.log('✅ SambaNova succeeded');
+      return { provider: 'sambanova-llama-vision', response: aiResponse, success: true };
+
+    } catch (error) {
+      console.error('❌ SambaNova failed:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
   // Cloudflare Workers AI (FREE 10k/day)
   async analyzeWithCloudflare(imageBuffer, prompt) {
     if (!this.cloudflareAccountId || !this.cloudflareApiToken) {
@@ -493,14 +706,24 @@ class SmartImageMatcher {
     }
   }
 
-  // Try all Layer 3 providers in sequence
+  // Try all Layer 3 providers in sequence (ordered by reliability/speed)
   async tryAllVisionAPIs(imageBuffer, prompt) {
     const providers = [
-      { name: 'Cloudflare', fn: () => this.analyzeWithCloudflare(imageBuffer, prompt), configured: this.cloudflareAccountId && this.cloudflareApiToken },
+      // Tier 1: Dedicated Vision APIs (most reliable for product recognition)
+      { name: 'Clarifai', fn: () => this.analyzeWithClarifai(imageBuffer, prompt), configured: !!this.clarifaiApiKey },
+      { name: 'Imagga', fn: () => this.analyzeWithImagga(imageBuffer, prompt), configured: !!(this.imaggaApiKey && this.imaggaApiSecret) },
+      { name: 'DeepAI', fn: () => this.analyzeWithDeepAI(imageBuffer, prompt), configured: !!this.deepaiApiKey },
+
+      // Tier 2: LLM Vision APIs (better understanding, may have rate limits)
+      { name: 'SambaNova', fn: () => this.analyzeWithSambaNova(imageBuffer, prompt), configured: !!this.sambanovaApiKey },
+      { name: 'Cloudflare', fn: () => this.analyzeWithCloudflare(imageBuffer, prompt), configured: !!(this.cloudflareAccountId && this.cloudflareApiToken) },
       { name: 'Fireworks', fn: () => this.analyzeWithFireworks(imageBuffer, prompt), configured: !!this.fireworksApiKey },
       { name: 'OpenRouter', fn: () => this.analyzeWithOpenRouter(imageBuffer, prompt), configured: !!this.openrouterApiKey },
       { name: 'Hyperbolic', fn: () => this.analyzeWithHyperbolic(imageBuffer, prompt), configured: !!this.hyperbolicApiKey }
     ];
+
+    const configuredCount = providers.filter(p => p.configured).length;
+    console.log(`   ${configuredCount} vision APIs configured`);
 
     for (const provider of providers) {
       if (!provider.configured) continue;
