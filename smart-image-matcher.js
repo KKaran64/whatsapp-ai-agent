@@ -1,736 +1,737 @@
-// Smart Image Matcher - 3-Layer Image Identification System
-// v53.42: Hash Matching → CLIP Similarity → 8+ Vision APIs
-// Tier 1: Clarifai (5k/mo), Imagga (1k/mo), DeepAI (free)
-// Tier 2: SambaNova, Cloudflare, Fireworks, OpenRouter, Hyperbolic (all free)
+// Smart Image Matcher v3 - 4-Layer Image Identification with Local ML
+// v54.3: Added Layer 0 for local ML inference (TensorFlow.js, ONNX, Transformers.js)
 
 const axios = require('axios');
-const sharp = require('sharp');
-const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
+const {
+  calculatePHash,
+  hammingDistance,
+  extractImageFeatures,
+  matchToCategory,
+  detectLogo,
+  getCategoryDisplayName,
+  extractCenterRegionFeatures,
+  detectWhiteBackground,
+  histogramHasCorkBins
+} = require('./vision-utils');
+
+// ==================== LAYER 0: LOCAL ML CONFIGURATION ====================
+
+// Cork product categories for local classification
+const CORK_PRODUCT_LABELS = {
+  // MobileNet/ImageNet class mappings to cork products
+  'notebook': 'diary',
+  'book_jacket': 'diary',
+  'binder': 'diary',
+  'envelope': 'diary',
+  'wallet': 'wallet',
+  'billfold': 'wallet',
+  'purse': 'bag',
+  'handbag': 'bag',
+  'backpack': 'bag',
+  'tote': 'bag',
+  'shopping_bag': 'bag',
+  'bag': 'bag',
+  'travel_bag': 'bag',
+  'laptop_bag': 'bag',
+  'cup': 'coaster',
+  'coffee_mug': 'coaster',
+  'beer_glass': 'coaster',
+  'goblet': 'coaster',
+  'wine_glass': 'coaster',
+  'coaster': 'coaster',
+  'mat': 'coaster',
+  'mouse': 'mousepad',
+  'computer_mouse': 'mousepad',
+  'desk': 'organizer',
+  'pencil_box': 'organizer',
+  'pencil_sharpener': 'organizer',
+  'pot': 'planter',
+  'flowerpot': 'planter',
+  'vase': 'planter',
+  'planter': 'planter',
+  'picture_frame': 'frame',
+  'frame': 'frame',
+  'wall_clock': 'clock',
+  'analog_clock': 'clock',
+  'digital_clock': 'clock',
+  'clock': 'clock',
+  'yoga_mat': 'yogamat',
+  'exercise_mat': 'yogamat',
+  'card': 'cardholder',
+  'credit_card': 'cardholder',
+  'id_card': 'cardholder',
+  // Round/flat cork items -> coaster
+  'face_powder': 'coaster',
+  'dough': 'coaster',
+  'doormat': 'coaster',
+  'band_aid': 'coaster',
+  'wool': 'coaster',
+  'jigsaw_puzzle': 'coaster',
+  'sundial': 'coaster',
+  'matchstick': 'coaster',
+  'tray': 'coaster',
+  'plate_rack': 'coaster',
+  // Tea light holders, cylindrical items -> planter
+  'candle': 'planter',
+  'taper': 'planter',
+  'wax_light': 'planter',
+  'bottlecap': 'planter',
+  'pedestal': 'planter',
+  'plinth': 'planter',
+  // Vessel-shaped items -> planter
+  'mortar': 'planter',
+  'soap_dispenser': 'planter',
+  'pottery': 'planter',
+  // Box-like desk items -> organizer
+  'carton': 'organizer',
+  'cardboard': 'organizer',
+  'crate': 'organizer',
+  'rubber_eraser': 'organizer',
+  'screw': 'organizer',
+  'ballpoint': 'organizer',
+  'pen': 'organizer',
+  'wine_bottle': 'organizer',
+  'cleaver': 'organizer',
+  // Bag-shaped items -> bag
+  'mailbag': 'bag',
+  'postbag': 'bag',
+  'packet': 'bag',
+  'hamper': 'bag',
+  // Mat/rug shaped items -> yogamat
+  'prayer_rug': 'yogamat',
+  'welcome_mat': 'yogamat',
+  // Rectangular framed items -> frame
+  'scale': 'frame',
+  'rule': 'frame',
+  'ruler': 'frame'
+};
+
+// Keywords that indicate cork material
+const CORK_MATERIAL_KEYWORDS = ['cork', 'wood', 'wooden', 'brown', 'tan', 'natural', 'texture', 'grain', 'organic'];
+
+// Local ML provider configurations
+const LOCAL_ML_PROVIDERS = {
+  tensorflow: {
+    name: 'TensorFlow.js',
+    priority: 1,
+    modelName: 'mobilenet',
+    checkAvailable: () => {
+      try {
+        require('@tensorflow/tfjs-node');
+        require('@tensorflow-models/mobilenet');
+        return true;
+      } catch { return false; }
+    },
+    loadModel: async () => {
+      const tf = require('@tensorflow/tfjs-node');
+      const mobilenet = require('@tensorflow-models/mobilenet');
+      return await mobilenet.load({ version: 2, alpha: 1.0 });
+    },
+    classify: async (model, imageBuffer) => {
+      const tf = require('@tensorflow/tfjs-node');
+      const imageTensor = tf.node.decodeImage(imageBuffer, 3);
+      const predictions = await model.classify(imageTensor);
+      imageTensor.dispose();
+      return predictions.map(p => ({ label: p.className.toLowerCase(), score: p.probability }));
+    }
+  },
+
+  onnx: {
+    name: 'ONNX Runtime',
+    priority: 2,
+    modelPath: './models/mobilenet.onnx',
+    checkAvailable: () => {
+      try {
+        require('onnxruntime-node');
+        return true;
+      } catch { return false; }
+    },
+    loadModel: async function() {
+      const ort = require('onnxruntime-node');
+      const modelPath = path.resolve(this.modelPath);
+      try {
+        await fs.access(modelPath);
+        return await ort.InferenceSession.create(modelPath);
+      } catch {
+        console.log('   ONNX model not found at', modelPath);
+        return null;
+      }
+    },
+    classify: async (session, imageBuffer) => {
+      // Requires preprocessing - simplified for now
+      return null; // Needs custom implementation per model
+    }
+  },
+
+  transformers: {
+    name: 'Transformers.js',
+    priority: 3,
+    modelName: 'Xenova/vit-base-patch16-224',
+    checkAvailable: () => {
+      try {
+        require('@xenova/transformers');
+        return true;
+      } catch { return false; }
+    },
+    loadModel: async function() {
+      const { pipeline } = require('@xenova/transformers');
+      return await pipeline('image-classification', this.modelName);
+    },
+    classify: async (classifier, imageBuffer) => {
+      const result = await classifier(imageBuffer);
+      return result.map(r => ({ label: r.label.toLowerCase(), score: r.score }));
+    }
+  },
+
+  ollama: {
+    name: 'Ollama Vision (LLaVA)',
+    priority: 4,
+    modelName: 'llava:7b',
+    baseUrl: 'http://localhost:11434',
+    isAsync: true, // Flag for async checkAvailable
+    checkAvailable: function() {
+      // Sync check just verifies axios is available - actual check is in loadModel
+      return true; // Will fail gracefully in loadModel if Ollama not running
+    },
+    loadModel: async function() {
+      // Ollama doesn't need model loading - just verify it's running
+      try {
+        const response = await axios.get(`${this.baseUrl}/api/tags`, { timeout: 2000 });
+        const models = response.data?.models || [];
+        const visionModel = models.find(m => m.name.includes('llava') || m.name.includes('llama3.2'));
+        if (visionModel) {
+          this.modelName = visionModel.name;
+          return { ready: true, model: visionModel.name };
+        }
+        return null;
+      } catch { return null; }
+    },
+    classify: async function(_, imageBuffer) {
+      const prompt = `Classify this image into ONE of these cork product categories:
+coaster, diary, wallet, bag, organizer, planter, frame, clock, mousepad, cardholder, yogamat, logo
+
+Reply with ONLY the category name and confidence (0-100), like: "coaster 85"
+If it's a logo/design image, reply: "logo 90"`;
+
+      try {
+        const response = await axios.post(`${this.baseUrl}/api/generate`, {
+          model: this.modelName,
+          prompt,
+          images: [imageBuffer.toString('base64')],
+          stream: false
+        }, { timeout: 30000 });
+
+        const text = response.data?.response?.trim().toLowerCase() || '';
+        const match = text.match(/(\w+)\s*(\d+)?/);
+
+        if (match) {
+          const label = match[1];
+          const score = match[2] ? parseInt(match[2]) / 100 : 0.7;
+          return [{ label, score }];
+        }
+        return [{ label: text, score: 0.5 }];
+      } catch (error) {
+        throw new Error(`Ollama failed: ${error.message}`);
+      }
+    }
+  }
+};
+
+// Generic Vision API Provider configuration
+const VISION_PROVIDERS = {
+  // Tier 1: Dedicated Vision APIs
+  clarifai: {
+    name: 'Clarifai',
+    tier: 1,
+    configKeys: ['CLARIFAI_API_KEY'],
+    endpoint: 'https://api.clarifai.com/v2/models/general-image-recognition/outputs',
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: 'https://api.clarifai.com/v2/models/general-image-recognition/outputs',
+      headers: { 'Authorization': `Key ${config.CLARIFAI_API_KEY}`, 'Content-Type': 'application/json' },
+      data: { inputs: [{ data: { image: { base64 } } }] },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      const concepts = response.data?.outputs?.[0]?.data?.concepts || [];
+      if (!concepts.length) throw new Error('No concepts detected');
+      return concepts.slice(0, 5).map(c => c.name);
+    },
+    formatResult: (tags) => {
+      const corkKeywords = ['cork', 'wood', 'brown', 'texture', 'natural', 'coaster', 'notebook', 'diary'];
+      const isCork = tags.some(t => corkKeywords.includes(t.toLowerCase()));
+      if (isCork) return `I can see this appears to be a cork product! The image shows: ${tags.slice(0, 3).join(', ')}. How many pieces would you like?`;
+      if (tags.some(t => ['logo', 'text', 'design', 'graphic'].includes(t.toLowerCase()))) {
+        return `I see a design/logo! I can customize this on cork products. Is this for corporate branding or a personal gift?`;
+      }
+      return `I can see: ${tags.slice(0, 3).join(', ')}. Which cork product are you interested in?`;
+    }
+  },
+
+  imagga: {
+    name: 'Imagga',
+    tier: 1,
+    configKeys: ['IMAGGA_API_KEY', 'IMAGGA_API_SECRET'],
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: 'https://api.imagga.com/v2/tags',
+      auth: { username: config.IMAGGA_API_KEY, password: config.IMAGGA_API_SECRET },
+      data: { image_base64: base64 },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      const tags = response.data?.result?.tags || [];
+      if (!tags.length) throw new Error('No tags detected');
+      return tags.filter(t => t.confidence > 30).slice(0, 5).map(t => t.tag.en);
+    },
+    formatResult: (tags) => {
+      const corkKeywords = ['cork', 'wood', 'brown', 'coaster', 'notebook', 'leather', 'texture'];
+      const isCork = tags.some(t => corkKeywords.some(k => t.toLowerCase().includes(k)));
+      if (isCork) return `This looks like a cork product! I can see: ${tags.slice(0, 3).join(', ')}. How many do you need?`;
+      return `I see: ${tags.slice(0, 3).join(', ')}. Which cork product would you like this on?`;
+    }
+  },
+
+  deepai: {
+    name: 'DeepAI',
+    tier: 1,
+    configKeys: ['DEEPAI_API_KEY'],
+    buildRequest: (base64, prompt, config) => {
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('image', Buffer.from(base64, 'base64'), { filename: 'image.jpg', contentType: 'image/jpeg' });
+      return {
+        method: 'POST',
+        url: 'https://api.deepai.org/api/densecap',
+        headers: { 'api-key': config.DEEPAI_API_KEY, ...form.getHeaders() },
+        data: form,
+        timeout: 30000
+      };
+    },
+    parseResponse: (response) => {
+      const captions = response.data?.output?.captions || [];
+      if (!captions.length) throw new Error('No captions generated');
+      return captions.slice(0, 3).map(c => c.caption);
+    },
+    formatResult: (captions) => `I can see: ${captions.join(', ')}. Which cork product interests you?`
+  },
+
+  // Tier 2: LLM Vision APIs (OpenAI-compatible format)
+  sambanova: {
+    name: 'SambaNova',
+    tier: 2,
+    configKeys: ['SAMBANOVA_API_KEY'],
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: 'https://api.sambanova.ai/v1/chat/completions',
+      headers: { 'Authorization': `Bearer ${config.SAMBANOVA_API_KEY}`, 'Content-Type': 'application/json' },
+      data: {
+        model: 'Llama-3.2-11B-Vision-Instruct',
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+        ]}],
+        max_tokens: 300,
+        temperature: 0.4
+      },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response');
+      return content;
+    },
+    formatResult: (response) => response
+  },
+
+  cloudflare: {
+    name: 'Cloudflare',
+    tier: 2,
+    configKeys: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'],
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: `https://api.cloudflare.com/client/v4/accounts/${config.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/llava-hf/llava-1.5-7b-hf`,
+      headers: { 'Authorization': `Bearer ${config.CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
+      data: { image: base64, prompt, max_tokens: 256 },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      if (response.data?.success && response.data?.result?.description) {
+        return response.data.result.description;
+      }
+      throw new Error('Empty response from Cloudflare');
+    },
+    formatResult: (response) => response
+  },
+
+  fireworks: {
+    name: 'Fireworks',
+    tier: 2,
+    configKeys: ['FIREWORKS_API_KEY'],
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: 'https://api.fireworks.ai/inference/v1/chat/completions',
+      headers: { 'Authorization': `Bearer ${config.FIREWORKS_API_KEY}`, 'Content-Type': 'application/json' },
+      data: {
+        model: 'accounts/fireworks/models/llama-v3p2-11b-vision-instruct',
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+        ]}],
+        max_tokens: 300,
+        temperature: 0.4
+      },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response');
+      return content;
+    },
+    formatResult: (response) => response
+  },
+
+  openrouter: {
+    name: 'OpenRouter',
+    tier: 2,
+    configKeys: ['OPENROUTER_API_KEY'],
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      headers: {
+        'Authorization': `Bearer ${config.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://9cork.com',
+        'X-Title': '9Cork Vision'
+      },
+      data: {
+        model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+        ]}],
+        max_tokens: 300
+      },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response');
+      return content;
+    },
+    formatResult: (response) => response
+  },
+
+  hyperbolic: {
+    name: 'Hyperbolic',
+    tier: 2,
+    configKeys: ['HYPERBOLIC_API_KEY'],
+    buildRequest: (base64, prompt, config) => ({
+      method: 'POST',
+      url: 'https://api.hyperbolic.xyz/v1/chat/completions',
+      headers: { 'Authorization': `Bearer ${config.HYPERBOLIC_API_KEY}`, 'Content-Type': 'application/json' },
+      data: {
+        model: 'Qwen/Qwen2-VL-7B-Instruct',
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } }
+        ]}],
+        max_tokens: 300,
+        temperature: 0.4
+      },
+      timeout: 30000
+    }),
+    parseResponse: (response) => {
+      const content = response.data?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('Empty response');
+      return content;
+    },
+    formatResult: (response) => response
+  }
+};
 
 class SmartImageMatcher {
-  constructor(config = {}) {
-    // Multiple Vision API providers (all have free tiers)
-    // Tier 1: Dedicated Vision APIs
-    this.clarifaiApiKey = config.CLARIFAI_API_KEY;        // 5k free/month
-    this.imaggaApiKey = config.IMAGGA_API_KEY;            // 1k free/month
-    this.imaggaApiSecret = config.IMAGGA_API_SECRET;
-    this.deepaiApiKey = config.DEEPAI_API_KEY;            // Free tier
-
-    // Tier 2: LLM Vision APIs
-    this.cloudflareAccountId = config.CLOUDFLARE_ACCOUNT_ID;
-    this.cloudflareApiToken = config.CLOUDFLARE_API_TOKEN;
-    this.fireworksApiKey = config.FIREWORKS_API_KEY;      // Free tier
-    this.openrouterApiKey = config.OPENROUTER_API_KEY;    // Routes to cheapest
-    this.sambanovaApiKey = config.SAMBANOVA_API_KEY;      // Free tier, fast
-    this.hyperbolicApiKey = config.HYPERBOLIC_API_KEY;    // Free tier
-
-    // Product index storage
-    this.indexPath = config.indexPath || './product-image-index.json';
-    this.productIndex = {
-      hashes: {},      // pHash -> productId mapping
-      products: {},    // productId -> product info
-      embeddings: {},  // productId -> text embedding (for CLIP-like matching)
-      lastUpdated: null
-    };
-
-    // CLIP-like text embeddings for product categories (pre-computed)
-    this.categoryKeywords = {
-      coaster: ['coaster', 'round', 'drink', 'cup', 'mat', 'hexagon', 'heart', 'leaf'],
-      diary: ['diary', 'notebook', 'journal', 'book', 'pages', 'writing', 'a5', 'a6'],
-      organizer: ['organizer', 'desk', 'pen', 'holder', 'storage', 'office', 'compartment'],
-      cardholder: ['card', 'holder', 'wallet', 'credit', 'business', 'pocket'],
-      planter: ['planter', 'plant', 'pot', 'flower', 'tube', 'green', 'garden'],
-      bag: ['bag', 'tote', 'handbag', 'laptop', 'sleeve', 'carry'],
-      wallet: ['wallet', 'bifold', 'trifold', 'money', 'cash', 'leather'],
-      frame: ['frame', 'photo', 'picture', 'border', 'display'],
-      clock: ['clock', 'time', 'watch', 'wall', 'round'],
-      mousepad: ['mousepad', 'mouse', 'pad', 'desk', 'computer'],
-      yogamat: ['yoga', 'mat', 'exercise', 'fitness', 'roll']
-    };
-
-    // Color signatures for cork products
-    this.corkColorRanges = {
-      natural: { r: [150, 200], g: [120, 160], b: [70, 120] },
-      dark: { r: [100, 150], g: [70, 120], b: [40, 90] },
-      light: { r: [180, 230], g: [150, 200], b: [100, 150] }
-    };
-
+  constructor(config) {
+    this.config = config || {};
+    this.indexPath = this.config.indexPath || './product-image-index.json';
+    this.productIndex = { hashes: {}, products: {}, lastUpdated: null };
     this.indexLoaded = false;
-    console.log('🎯 Smart Image Matcher initialized');
+
+    // Determine which providers are configured
+    this.configuredProviders = this._getConfiguredProviders();
+
+    // Layer 0: Local ML setup
+    this.localMLProvider = null;
+    this.localMLModel = null;
+    this.localMLReady = false;
+    this.localMLInitPromise = this._initLocalML(); // Store promise for await
+
+    // Layer 1: Hash index (background build)
+    this.hashIndexPromise = this.buildProductHashIndex();
+
+    // Stats tracking
+    this.stats = { byProvider: {}, localML: { success: 0, failures: 0 }, totalSuccess: 0, totalFailures: 0 };
+    for (const id of Object.keys(VISION_PROVIDERS)) {
+      this.stats.byProvider[id] = { success: 0, failures: 0 };
+    }
+
+    console.log(`🎯 Smart Image Matcher v3 initialized (4-layer architecture)`);
+    console.log(`   Layer 0 (Local ML): ${this.localMLProvider?.name || 'Not available'}`);
+    console.log(`   Layer 3 (APIs): ${this.configuredProviders.map(p => p.name).join(', ') || 'None'}`);
   }
 
-  // ==================== LAYER 1: HASH MATCHING ====================
+  async _initLocalML() {
+    // Try to initialize local ML in order of priority
+    const providers = Object.entries(LOCAL_ML_PROVIDERS)
+      .sort((a, b) => a[1].priority - b[1].priority);
 
-  // Calculate perceptual hash (pHash) - 64-bit
-  async calculatePHash(imageBuffer) {
-    try {
-      // Resize to 32x32 grayscale
-      const resized = await sharp(imageBuffer)
-        .resize(32, 32, { fit: 'fill' })
-        .grayscale()
-        .raw()
-        .toBuffer();
-
-      const pixels = Array.from(resized);
-
-      // Calculate DCT-based hash (simplified)
-      // Use 8x8 grid from the 32x32 image
-      const gridSize = 8;
-      const blockSize = 4; // 32/8 = 4
-      const dctValues = [];
-
-      for (let y = 0; y < gridSize; y++) {
-        for (let x = 0; x < gridSize; x++) {
-          let sum = 0;
-          for (let by = 0; by < blockSize; by++) {
-            for (let bx = 0; bx < blockSize; bx++) {
-              const idx = (y * blockSize + by) * 32 + (x * blockSize + bx);
-              sum += pixels[idx];
-            }
+    for (const [id, provider] of providers) {
+      try {
+        if (provider.checkAvailable()) {
+          console.log(`   🔄 Loading ${provider.name}...`);
+          const model = await provider.loadModel();
+          if (model) {
+            this.localMLProvider = { id, ...provider };
+            this.localMLModel = model;
+            this.localMLReady = true;
+            console.log(`   ✅ ${provider.name} loaded successfully`);
+            return;
           }
-          dctValues.push(sum / (blockSize * blockSize));
+        }
+      } catch (error) {
+        console.log(`   ⚠️ ${provider.name} failed:`, error.message);
+      }
+    }
+    console.log('   ℹ️ No local ML available - using cloud APIs only');
+  }
+
+  _getConfiguredProviders() {
+    const configured = [];
+    for (const [id, provider] of Object.entries(VISION_PROVIDERS)) {
+      const hasAllKeys = provider.configKeys.every(key => !!this.config[key]);
+      if (hasAllKeys) {
+        configured.push({ id, ...provider });
+      }
+    }
+    // Sort by tier (lower tier = higher priority)
+    return configured.sort((a, b) => a.tier - b.tier);
+  }
+
+  // ==================== LAYER 0: LOCAL ML INFERENCE ====================
+
+  async classifyWithLocalML(imageBuffer) {
+    if (!this.localMLReady || !this.localMLModel) {
+      return null;
+    }
+
+    try {
+      console.log(`   Using ${this.localMLProvider.name}...`);
+      const predictions = await this.localMLProvider.classify(this.localMLModel, imageBuffer);
+
+      if (!predictions || predictions.length === 0) {
+        return null;
+      }
+
+      // Map predictions to cork products using substring matching
+      const mappedResults = [];
+      for (const pred of predictions) {
+        const corkProduct = this._mapPredictionToCorkProduct(pred.label);
+        if (corkProduct) {
+          mappedResults.push({
+            originalLabel: pred.label,
+            corkCategory: corkProduct,
+            confidence: pred.score,
+            source: 'label_mapping'
+          });
+        }
+
+        // Check for cork material keywords
+        const hasCorkKeyword = CORK_MATERIAL_KEYWORDS.some(kw =>
+          pred.label.toLowerCase().includes(kw)
+        );
+        if (hasCorkKeyword && pred.score > 0.3) {
+          mappedResults.push({
+            originalLabel: pred.label,
+            corkCategory: 'cork_material',
+            confidence: pred.score * 1.2,
+            source: 'material_keyword'
+          });
         }
       }
 
-      // Calculate average (excluding first value which is DC component)
-      const avg = dctValues.slice(1).reduce((a, b) => a + b, 0) / (dctValues.length - 1);
-
-      // Generate hash
-      let hash = '';
-      for (let i = 0; i < 64; i++) {
-        hash += dctValues[i] > avg ? '1' : '0';
+      // Multi-prediction consensus: if top-3 map to same category, boost by +0.2
+      const top3Mapped = predictions.slice(0, 3)
+        .map(p => this._mapPredictionToCorkProduct(p.label))
+        .filter(Boolean);
+      if (top3Mapped.length >= 2 && top3Mapped.every(c => c === top3Mapped[0])) {
+        for (const result of mappedResults) {
+          if (result.corkCategory === top3Mapped[0]) {
+            result.confidence = Math.min(result.confidence + 0.2, 1.0);
+            result.source = 'consensus_boost';
+          }
+        }
       }
 
-      return hash;
+      // Sort by confidence and return best match
+      mappedResults.sort((a, b) => b.confidence - a.confidence);
+
+      if (mappedResults.length > 0) {
+        this.stats.localML.success++;
+        return {
+          predictions: predictions.slice(0, 5),
+          mappedResults,
+          bestMatch: mappedResults[0],
+          provider: this.localMLProvider.name
+        };
+      }
+
+      // Return raw predictions even if no mapping found
+      return {
+        predictions: predictions.slice(0, 5),
+        mappedResults: [],
+        bestMatch: null,
+        provider: this.localMLProvider.name
+      };
     } catch (error) {
-      console.error('❌ pHash calculation failed:', error.message);
+      this.stats.localML.failures++;
+      console.error(`   ❌ Local ML failed:`, error.message);
       return null;
     }
   }
 
-  // Calculate Hamming distance between two hashes
-  hammingDistance(hash1, hash2) {
-    if (!hash1 || !hash2 || hash1.length !== hash2.length) return Infinity;
-    let distance = 0;
-    for (let i = 0; i < hash1.length; i++) {
-      if (hash1[i] !== hash2[i]) distance++;
+  _mapPredictionToCorkProduct(label) {
+    if (!label || label.length === 0) return null;
+
+    const lowerLabel = label.toLowerCase();
+
+    // Direct mapping check
+    if (CORK_PRODUCT_LABELS[lowerLabel]) {
+      return CORK_PRODUCT_LABELS[lowerLabel];
     }
-    return distance;
+
+    // Partial match check - check if any key is contained in the label
+    for (const [key, product] of Object.entries(CORK_PRODUCT_LABELS)) {
+      if (lowerLabel.includes(key)) {
+        return product;
+      }
+    }
+
+    // Also check if label contains key (for compound words)
+    for (const [key, product] of Object.entries(CORK_PRODUCT_LABELS)) {
+      if (key.includes(lowerLabel) && lowerLabel.length > 2) {
+        return product;
+      }
+    }
+
+    return null;
   }
 
-  // Find matching products by hash
-  async findByHash(imageBuffer, threshold = 10) {
-    const inputHash = await this.calculatePHash(imageBuffer);
+  // ==================== LAYER 1: HASH MATCHING ====================
+
+  async findByHash(imageBuffer, threshold = 15) {
+    const inputHash = await calculatePHash(imageBuffer);
     if (!inputHash) return null;
 
     const matches = [];
-
     for (const [storedHash, productId] of Object.entries(this.productIndex.hashes)) {
-      const distance = this.hammingDistance(inputHash, storedHash);
+      const distance = hammingDistance(inputHash, storedHash);
       if (distance <= threshold) {
+        // Tiered confidence based on hamming distance
+        let confidence;
+        if (distance < 10) {
+          confidence = 0.95;
+        } else if (distance < 15) {
+          confidence = 0.75;
+        } else {
+          confidence = 1 - (distance / 64);
+        }
         matches.push({
           productId,
           distance,
-          confidence: 1 - (distance / 64),
+          confidence,
           product: this.productIndex.products[productId]
         });
       }
     }
 
-    // Sort by distance (closest first)
     matches.sort((a, b) => a.distance - b.distance);
 
     if (matches.length > 0) {
-      console.log(`🔍 Hash match found: ${matches[0].product?.name} (distance: ${matches[0].distance})`);
+      console.log(`🔍 Hash match: ${matches[0].product?.name} (distance: ${matches[0].distance}, confidence: ${(matches[0].confidence * 100).toFixed(0)}%)`);
     }
 
     return matches.length > 0 ? matches[0] : null;
   }
 
-  // ==================== LAYER 2: CLIP-LIKE MATCHING ====================
+  // ==================== LAYER 2: VISUAL FEATURE MATCHING ====================
 
-  // Extract visual features for CLIP-like matching
-  async extractVisualFeatures(imageBuffer) {
-    try {
-      const [metadata, stats, histogram] = await Promise.all([
-        sharp(imageBuffer).metadata(),
-        sharp(imageBuffer).stats(),
-        this.getColorHistogram(imageBuffer)
-      ]);
+  async analyzeVisualFeatures(imageBuffer) {
+    const [features, logoDetection, centerFeatures] = await Promise.all([
+      extractImageFeatures(imageBuffer),
+      detectLogo(imageBuffer),
+      extractCenterRegionFeatures(imageBuffer)
+    ]);
 
-      // Aspect ratio
-      const aspectRatio = metadata.width / metadata.height;
+    if (!features) return null;
 
-      // Dominant color
-      const dominant = stats.dominant;
-
-      // Check if cork-colored
-      const isCorkColored = this.isCorkColor(dominant);
-
-      // Shape classification based on aspect ratio
-      let shape = 'unknown';
-      if (aspectRatio >= 0.9 && aspectRatio <= 1.1) shape = 'square';
-      else if (aspectRatio < 0.9) shape = 'portrait';
-      else shape = 'landscape';
-
-      // Edge detection for complexity
-      const edges = await this.detectEdges(imageBuffer);
-
-      return {
-        aspectRatio,
-        shape,
-        dominant,
-        isCorkColored,
-        histogram,
-        edgeComplexity: edges.complexity,
-        isSimple: edges.complexity < 0.3 // Simple shapes like logos
-      };
-    } catch (error) {
-      console.error('❌ Feature extraction failed:', error.message);
-      return null;
-    }
-  }
-
-  // Get color histogram
-  async getColorHistogram(imageBuffer) {
-    try {
-      const { data, info } = await sharp(imageBuffer)
-        .resize(50, 50, { fit: 'fill' })
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-
-      const histogram = { r: new Array(8).fill(0), g: new Array(8).fill(0), b: new Array(8).fill(0) };
-      const pixels = info.width * info.height;
-
-      for (let i = 0; i < data.length; i += 3) {
-        histogram.r[Math.floor(data[i] / 32)]++;
-        histogram.g[Math.floor(data[i + 1] / 32)]++;
-        histogram.b[Math.floor(data[i + 2] / 32)]++;
-      }
-
-      // Normalize
-      for (let i = 0; i < 8; i++) {
-        histogram.r[i] /= pixels;
-        histogram.g[i] /= pixels;
-        histogram.b[i] /= pixels;
-      }
-
-      return histogram;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  // Simple edge detection for complexity estimation
-  async detectEdges(imageBuffer) {
-    try {
-      const edges = await sharp(imageBuffer)
-        .resize(100, 100, { fit: 'fill' })
-        .grayscale()
-        .convolve({
-          width: 3,
-          height: 3,
-          kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] // Laplacian
-        })
-        .raw()
-        .toBuffer();
-
-      const pixels = Array.from(edges);
-      const edgePixels = pixels.filter(p => p > 30).length;
-      const complexity = edgePixels / pixels.length;
-
-      return { complexity, edgeCount: edgePixels };
-    } catch (error) {
-      return { complexity: 0.5, edgeCount: 0 };
-    }
-  }
-
-  // Check if color is cork-like
-  isCorkColor(rgb) {
-    for (const [type, range] of Object.entries(this.corkColorRanges)) {
-      if (rgb.r >= range.r[0] && rgb.r <= range.r[1] &&
-          rgb.g >= range.g[0] && rgb.g <= range.g[1] &&
-          rgb.b >= range.b[0] && rgb.b <= range.b[1]) {
-        return { isCork: true, type };
-      }
-    }
-    return { isCork: false, type: null };
-  }
-
-  // Match visual features to product category (CLIP-like)
-  matchToCategory(features) {
-    if (!features) return { category: 'unknown', confidence: 0 };
-
-    const scores = {};
-
-    // Score based on aspect ratio
-    if (features.shape === 'square') {
-      scores.coaster = (scores.coaster || 0) + 0.4;
-      scores.clock = (scores.clock || 0) + 0.2;
-    } else if (features.shape === 'portrait') {
-      scores.diary = (scores.diary || 0) + 0.4;
-      scores.frame = (scores.frame || 0) + 0.3;
-    } else if (features.shape === 'landscape') {
-      scores.wallet = (scores.wallet || 0) + 0.3;
-      scores.mousepad = (scores.mousepad || 0) + 0.3;
-      scores.bag = (scores.bag || 0) + 0.2;
-    }
-
-    // Score based on cork color
-    if (features.isCorkColored.isCork) {
-      // Boost all cork product categories
-      for (const cat of Object.keys(this.categoryKeywords)) {
-        scores[cat] = (scores[cat] || 0) + 0.3;
-      }
-    }
-
-    // Score based on complexity
-    if (features.isSimple) {
-      // Simple images might be logos
-      scores.logo = (scores.logo || 0) + 0.5;
-    }
-
-    // Find best match
-    let bestCategory = 'unknown';
-    let bestScore = 0;
-
-    for (const [category, score] of Object.entries(scores)) {
-      if (score > bestScore) {
-        bestScore = score;
-        bestCategory = category;
-      }
-    }
+    const whiteBg = detectWhiteBackground(features, features.histogram);
+    const categoryMatch = matchToCategory(features, centerFeatures, whiteBg.isWhiteBg);
 
     return {
-      category: bestCategory,
-      confidence: Math.min(bestScore, 1),
-      scores
+      features,
+      logoDetection,
+      category: categoryMatch,
+      centerFeatures,
+      isWhiteBg: whiteBg.isWhiteBg,
+      whiteBgConfidence: whiteBg.confidence
     };
   }
 
-  // ==================== LAYER 3: MULTIPLE VISION APIs ====================
+  // ==================== LAYER 3: VISION APIs ====================
 
-  // ---- TIER 1: Dedicated Image Recognition APIs ----
+  async callVisionAPI(providerId, imageBuffer, prompt) {
+    const provider = VISION_PROVIDERS[providerId];
+    if (!provider) throw new Error(`Unknown provider: ${providerId}`);
 
-  // Clarifai (FREE 5k/month) - Best for product recognition
-  async analyzeWithClarifai(imageBuffer, prompt) {
-    if (!this.clarifaiApiKey) {
-      throw new Error('Clarifai API key not configured');
-    }
+    const hasAllKeys = provider.configKeys.every(key => !!this.config[key]);
+    if (!hasAllKeys) throw new Error(`${provider.name} not configured`);
+
+    const base64 = imageBuffer.toString('base64');
+    const requestConfig = provider.buildRequest(base64, prompt, this.config);
+
+    console.log(`🔄 Trying ${provider.name}...`);
 
     try {
-      console.log('🔮 Trying Clarifai (5k free/month)...');
+      const response = await axios(requestConfig);
+      const parsed = provider.parseResponse(response);
+      const result = provider.formatResult(parsed);
 
-      const base64Image = imageBuffer.toString('base64');
+      this.stats.byProvider[providerId].success++;
+      this.stats.totalSuccess++;
+      console.log(`✅ ${provider.name} succeeded`);
 
-      // Use general-image-recognition model
-      const response = await axios.post(
-        'https://api.clarifai.com/v2/models/general-image-recognition/outputs',
-        {
-          inputs: [{
-            data: {
-              image: { base64: base64Image }
-            }
-          }]
-        },
-        {
-          headers: {
-            'Authorization': `Key ${this.clarifaiApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        }
-      );
-
-      const concepts = response.data?.outputs?.[0]?.data?.concepts || [];
-      if (concepts.length === 0) throw new Error('No concepts detected');
-
-      // Get top 5 concepts
-      const topConcepts = concepts.slice(0, 5).map(c => c.name);
-      console.log(`   Detected: ${topConcepts.join(', ')}`);
-
-      // Generate response based on detected concepts
-      const corkRelated = ['cork', 'wood', 'brown', 'texture', 'natural', 'coaster', 'notebook', 'diary'];
-      const isCorkProduct = topConcepts.some(c => corkRelated.includes(c.toLowerCase()));
-
-      let responseText;
-      if (isCorkProduct) {
-        responseText = `I can see this appears to be a cork product! The image shows: ${topConcepts.slice(0, 3).join(', ')}. How many pieces would you like?`;
-      } else if (topConcepts.some(c => ['logo', 'text', 'design', 'graphic'].includes(c.toLowerCase()))) {
-        responseText = `I see a design/logo! I can customize this on cork products. Is this for corporate branding or a personal gift?`;
-      } else {
-        responseText = `I can see: ${topConcepts.slice(0, 3).join(', ')}. Which cork product are you interested in?`;
-      }
-
-      console.log('✅ Clarifai succeeded');
-      return { provider: 'clarifai', response: responseText, concepts, success: true };
-
+      return { provider: providerId, response: result, success: true };
     } catch (error) {
-      console.error('❌ Clarifai failed:', error.response?.data || error.message);
+      this.stats.byProvider[providerId].failures++;
+      this.stats.totalFailures++;
+      const errorMsg = error.response?.data?.error?.message || error.response?.data || error.message;
+      console.error(`❌ ${provider.name} failed:`, errorMsg);
       throw error;
     }
   }
 
-  // Imagga (FREE 1k/month) - Good for tagging
-  async analyzeWithImagga(imageBuffer, prompt) {
-    if (!this.imaggaApiKey || !this.imaggaApiSecret) {
-      throw new Error('Imagga credentials not configured');
-    }
-
-    try {
-      console.log('🏷️ Trying Imagga (1k free/month)...');
-
-      const base64Image = imageBuffer.toString('base64');
-
-      const response = await axios.post(
-        'https://api.imagga.com/v2/tags',
-        { image_base64: base64Image },
-        {
-          auth: {
-            username: this.imaggaApiKey,
-            password: this.imaggaApiSecret
-          },
-          timeout: 30000
-        }
-      );
-
-      const tags = response.data?.result?.tags || [];
-      if (tags.length === 0) throw new Error('No tags detected');
-
-      // Get top tags with confidence > 30%
-      const topTags = tags
-        .filter(t => t.confidence > 30)
-        .slice(0, 5)
-        .map(t => t.tag.en);
-
-      console.log(`   Tags: ${topTags.join(', ')}`);
-
-      // Generate response
-      const corkKeywords = ['cork', 'wood', 'brown', 'coaster', 'notebook', 'leather', 'texture'];
-      const isCorkLike = topTags.some(t => corkKeywords.some(k => t.toLowerCase().includes(k)));
-
-      let responseText;
-      if (isCorkLike) {
-        responseText = `This looks like a cork product! I can see: ${topTags.slice(0, 3).join(', ')}. How many do you need?`;
-      } else {
-        responseText = `I see: ${topTags.slice(0, 3).join(', ')}. Which cork product would you like this on?`;
-      }
-
-      console.log('✅ Imagga succeeded');
-      return { provider: 'imagga', response: responseText, tags: topTags, success: true };
-
-    } catch (error) {
-      console.error('❌ Imagga failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // DeepAI (FREE tier) - General image analysis
-  async analyzeWithDeepAI(imageBuffer, prompt) {
-    if (!this.deepaiApiKey) {
-      throw new Error('DeepAI API key not configured');
-    }
-
-    try {
-      console.log('🧠 Trying DeepAI (free tier)...');
-
-      const FormData = require('form-data');
-      const form = new FormData();
-      form.append('image', imageBuffer, { filename: 'image.jpg', contentType: 'image/jpeg' });
-
-      const response = await axios.post(
-        'https://api.deepai.org/api/densecap',
-        form,
-        {
-          headers: {
-            'api-key': this.deepaiApiKey,
-            ...form.getHeaders()
-          },
-          timeout: 30000
-        }
-      );
-
-      const captions = response.data?.output?.captions || [];
-      if (captions.length === 0) throw new Error('No captions generated');
-
-      const descriptions = captions.slice(0, 3).map(c => c.caption);
-      console.log(`   Captions: ${descriptions.join('; ')}`);
-
-      const responseText = `I can see: ${descriptions.join(', ')}. Which cork product interests you?`;
-
-      console.log('✅ DeepAI succeeded');
-      return { provider: 'deepai', response: responseText, captions: descriptions, success: true };
-
-    } catch (error) {
-      console.error('❌ DeepAI failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // ---- TIER 2: LLM Vision APIs ----
-
-  // SambaNova (FREE tier, very fast)
-  async analyzeWithSambaNova(imageBuffer, prompt) {
-    if (!this.sambanovaApiKey) {
-      throw new Error('SambaNova API key not configured');
-    }
-
-    try {
-      console.log('⚡ Trying SambaNova (FREE, fast)...');
-
-      const base64Image = imageBuffer.toString('base64');
-
-      const response = await axios.post(
-        'https://api.sambanova.ai/v1/chat/completions',
-        {
-          model: 'Llama-3.2-11B-Vision-Instruct',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-            ]
-          }],
-          max_tokens: 300,
-          temperature: 0.4
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.sambanovaApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        }
-      );
-
-      const aiResponse = response.data?.choices?.[0]?.message?.content;
-      if (!aiResponse) throw new Error('Empty response');
-
-      console.log('✅ SambaNova succeeded');
-      return { provider: 'sambanova-llama-vision', response: aiResponse, success: true };
-
-    } catch (error) {
-      console.error('❌ SambaNova failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // Cloudflare Workers AI (FREE 10k/day)
-  async analyzeWithCloudflare(imageBuffer, prompt) {
-    if (!this.cloudflareAccountId || !this.cloudflareApiToken) {
-      throw new Error('Cloudflare credentials not configured');
-    }
-
-    try {
-      console.log('☁️ Trying Cloudflare Workers AI (FREE)...');
-
-      const base64Image = imageBuffer.toString('base64');
-
-      const response = await axios.post(
-        `https://api.cloudflare.com/client/v4/accounts/${this.cloudflareAccountId}/ai/run/@cf/llava-hf/llava-1.5-7b-hf`,
-        {
-          image: base64Image,
-          prompt: prompt,
-          max_tokens: 256
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.cloudflareApiToken}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        }
-      );
-
-      if (response.data?.success && response.data?.result?.description) {
-        console.log('✅ Cloudflare AI succeeded');
-        return {
-          provider: 'cloudflare-llava',
-          response: response.data.result.description,
-          success: true
-        };
-      }
-
-      throw new Error('Empty response from Cloudflare');
-
-    } catch (error) {
-      console.error('❌ Cloudflare AI failed:', error.response?.data?.errors || error.message);
-      throw error;
-    }
-  }
-
-  // Fireworks AI (FREE tier available)
-  async analyzeWithFireworks(imageBuffer, prompt) {
-    if (!this.fireworksApiKey) {
-      throw new Error('Fireworks API key not configured');
-    }
-
-    try {
-      console.log('🔥 Trying Fireworks AI...');
-
-      const base64Image = imageBuffer.toString('base64');
-
-      const response = await axios.post(
-        'https://api.fireworks.ai/inference/v1/chat/completions',
-        {
-          model: 'accounts/fireworks/models/llama-v3p2-11b-vision-instruct',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-            ]
-          }],
-          max_tokens: 300,
-          temperature: 0.4
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.fireworksApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        }
-      );
-
-      const aiResponse = response.data?.choices?.[0]?.message?.content;
-      if (aiResponse) {
-        console.log('✅ Fireworks AI succeeded');
-        return { provider: 'fireworks-llama-vision', response: aiResponse, success: true };
-      }
-
-      throw new Error('Empty response');
-
-    } catch (error) {
-      console.error('❌ Fireworks AI failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // OpenRouter (routes to cheapest/free models)
-  async analyzeWithOpenRouter(imageBuffer, prompt) {
-    if (!this.openrouterApiKey) {
-      throw new Error('OpenRouter API key not configured');
-    }
-
-    try {
-      console.log('🔀 Trying OpenRouter (auto-routes to best model)...');
-
-      const base64Image = imageBuffer.toString('base64');
-
-      const response = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: 'meta-llama/llama-3.2-11b-vision-instruct:free', // Free model
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-            ]
-          }],
-          max_tokens: 300
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.openrouterApiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://9cork.com',
-            'X-Title': '9Cork Vision'
-          },
-          timeout: 30000
-        }
-      );
-
-      const aiResponse = response.data?.choices?.[0]?.message?.content;
-      if (aiResponse) {
-        console.log('✅ OpenRouter succeeded');
-        return { provider: 'openrouter-llama-vision', response: aiResponse, success: true };
-      }
-
-      throw new Error('Empty response');
-
-    } catch (error) {
-      console.error('❌ OpenRouter failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // Hyperbolic (FREE tier)
-  async analyzeWithHyperbolic(imageBuffer, prompt) {
-    if (!this.hyperbolicApiKey) {
-      throw new Error('Hyperbolic API key not configured');
-    }
-
-    try {
-      console.log('⚡ Trying Hyperbolic AI (FREE)...');
-
-      const base64Image = imageBuffer.toString('base64');
-
-      const response = await axios.post(
-        'https://api.hyperbolic.xyz/v1/chat/completions',
-        {
-          model: 'Qwen/Qwen2-VL-7B-Instruct',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-            ]
-          }],
-          max_tokens: 300,
-          temperature: 0.4
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.hyperbolicApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        }
-      );
-
-      const aiResponse = response.data?.choices?.[0]?.message?.content;
-      if (aiResponse) {
-        console.log('✅ Hyperbolic AI succeeded');
-        return { provider: 'hyperbolic-qwen-vision', response: aiResponse, success: true };
-      }
-
-      throw new Error('Empty response');
-
-    } catch (error) {
-      console.error('❌ Hyperbolic AI failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  // Try all Layer 3 providers in sequence (ordered by reliability/speed)
   async tryAllVisionAPIs(imageBuffer, prompt) {
-    const providers = [
-      // Tier 1: Dedicated Vision APIs (most reliable for product recognition)
-      { name: 'Clarifai', fn: () => this.analyzeWithClarifai(imageBuffer, prompt), configured: !!this.clarifaiApiKey },
-      { name: 'Imagga', fn: () => this.analyzeWithImagga(imageBuffer, prompt), configured: !!(this.imaggaApiKey && this.imaggaApiSecret) },
-      { name: 'DeepAI', fn: () => this.analyzeWithDeepAI(imageBuffer, prompt), configured: !!this.deepaiApiKey },
+    if (this.configuredProviders.length === 0) {
+      throw new Error('No vision APIs configured');
+    }
 
-      // Tier 2: LLM Vision APIs (better understanding, may have rate limits)
-      { name: 'SambaNova', fn: () => this.analyzeWithSambaNova(imageBuffer, prompt), configured: !!this.sambanovaApiKey },
-      { name: 'Cloudflare', fn: () => this.analyzeWithCloudflare(imageBuffer, prompt), configured: !!(this.cloudflareAccountId && this.cloudflareApiToken) },
-      { name: 'Fireworks', fn: () => this.analyzeWithFireworks(imageBuffer, prompt), configured: !!this.fireworksApiKey },
-      { name: 'OpenRouter', fn: () => this.analyzeWithOpenRouter(imageBuffer, prompt), configured: !!this.openrouterApiKey },
-      { name: 'Hyperbolic', fn: () => this.analyzeWithHyperbolic(imageBuffer, prompt), configured: !!this.hyperbolicApiKey }
-    ];
+    console.log(`   ${this.configuredProviders.length} vision APIs available`);
 
-    const configuredCount = providers.filter(p => p.configured).length;
-    console.log(`   ${configuredCount} vision APIs configured`);
-
-    for (const provider of providers) {
-      if (!provider.configured) continue;
-
+    for (const provider of this.configuredProviders) {
       try {
-        const result = await provider.fn();
-        if (result.success) return result;
+        return await this.callVisionAPI(provider.id, imageBuffer, prompt);
       } catch (error) {
         console.log(`   ${provider.name} failed, trying next...`);
       }
@@ -739,26 +740,79 @@ class SmartImageMatcher {
     throw new Error('All vision APIs failed');
   }
 
-  // ==================== COMBINED MATCHING ====================
+  // ==================== COMBINED IDENTIFICATION ====================
 
   async identifyImage(imageBuffer, userMessage = '') {
-    console.log('🎯 Starting 3-layer image identification...');
+    console.log('🎯 Starting 4-layer image identification...');
 
     const results = {
+      layer0_localML: null,
       layer1_hash: null,
-      layer2_clip: null,
-      layer3_cloudflare: null,
+      layer2_visual: null,
+      layer3_api: null,
       finalResult: null
     };
 
-    // Load index if not loaded
-    await this.loadIndex();
+    // Wait for hash index to be ready (loads from disk or builds)
+    if (this.hashIndexPromise) {
+      try { await this.hashIndexPromise; } catch (e) { /* hash index optional */ }
+    }
+    if (!this.indexLoaded) {
+      await this.loadIndex();
+    }
+
+    // LAYER 0: Local ML Classification (fastest, no API calls)
+    console.log('📍 Layer 0: Local ML classification...');
+
+    // Wait for local ML to finish loading if still in progress
+    if (this.localMLInitPromise && !this.localMLReady) {
+      await this.localMLInitPromise;
+    }
+
+    if (this.localMLReady) {
+      try {
+        const mlResult = await this.classifyWithLocalML(imageBuffer);
+        results.layer0_localML = mlResult;
+
+        if (mlResult?.bestMatch && mlResult.bestMatch.confidence > 0.35) {
+          const category = mlResult.bestMatch.corkCategory;
+          const displayName = getCategoryDisplayName(category);
+
+          if (category === 'cork_material') {
+            results.finalResult = {
+              method: 'local_ml_material',
+              category: 'cork',
+              confidence: mlResult.bestMatch.confidence,
+              predictions: mlResult.predictions,
+              message: "I can see this looks like cork material! Which product are you interested in - coasters, diaries, bags, or something else?"
+            };
+          } else {
+            results.finalResult = {
+              method: 'local_ml',
+              category,
+              confidence: mlResult.bestMatch.confidence,
+              predictions: mlResult.predictions,
+              message: `This looks like a ${displayName}! How many pieces do you need, and is this for personal use or corporate gifting?`
+            };
+          }
+          console.log(`✅ Layer 0 match: ${category} (${(mlResult.bestMatch.confidence * 100).toFixed(0)}%) via ${mlResult.provider}`);
+          return results;
+        } else if (mlResult?.predictions?.length > 0) {
+          console.log(`   Layer 0: Got predictions but no confident cork match`);
+          console.log(`   Top prediction: ${mlResult.predictions[0]?.label} (${(mlResult.predictions[0]?.score * 100).toFixed(0)}%)`);
+        }
+      } catch (error) {
+        console.log('   Layer 0 skipped:', error.message);
+      }
+    } else {
+      console.log('   Layer 0 skipped: Local ML not available');
+    }
 
     // LAYER 1: Hash Matching (instant)
     console.log('📍 Layer 1: Hash matching...');
     try {
       const hashMatch = await this.findByHash(imageBuffer);
-      if (hashMatch && hashMatch.confidence > 0.8) {
+      if (hashMatch && hashMatch.confidence > 0.7) {
         results.layer1_hash = hashMatch;
         results.finalResult = {
           method: 'hash_match',
@@ -773,90 +827,82 @@ class SmartImageMatcher {
       console.log('   Layer 1 skipped:', error.message);
     }
 
-    // LAYER 2: Visual Feature Matching (CLIP-like)
+    // LAYER 2: Visual Feature Analysis
     console.log('📍 Layer 2: Visual feature analysis...');
     try {
-      const features = await this.extractVisualFeatures(imageBuffer);
-      const categoryMatch = this.matchToCategory(features);
+      const visualAnalysis = await this.analyzeVisualFeatures(imageBuffer);
+      results.layer2_visual = visualAnalysis;
 
-      results.layer2_clip = {
-        features,
-        category: categoryMatch
-      };
+      if (visualAnalysis) {
+        const { category, logoDetection, isWhiteBg, centerFeatures } = visualAnalysis;
 
-      if (categoryMatch.confidence > 0.6) {
-        // High confidence category match
-        if (categoryMatch.category === 'logo') {
+        // High confidence logo detection (skip if white background - likely product photo)
+        if (logoDetection.isLikeLogo && logoDetection.confidence > 0.5 && !isWhiteBg) {
           results.finalResult = {
-            method: 'visual_analysis',
+            method: 'visual_logo',
             category: 'logo',
-            confidence: categoryMatch.confidence,
+            confidence: logoDetection.confidence,
             message: "I see you've shared a logo/design! I can customize this on cork. Is this for corporate branding or a personal gift?"
           };
-        } else {
-          results.finalResult = {
-            method: 'visual_analysis',
-            category: categoryMatch.category,
-            confidence: categoryMatch.confidence,
-            message: `This looks like a cork ${categoryMatch.category}! How many pieces do you need, and is this for personal use or corporate gifting?`
-          };
+          console.log(`✅ Layer 2: Logo detected (${(logoDetection.confidence * 100).toFixed(0)}%)`);
+          return results;
         }
-        console.log(`✅ Layer 2 match: ${categoryMatch.category} (${(categoryMatch.confidence * 100).toFixed(0)}%)`);
-        return results;
+
+        // Background-aware category boost
+        let boostedConfidence = category.confidence;
+        if (isWhiteBg && centerFeatures?.isCorkColored && category.category !== 'unknown') {
+          boostedConfidence = Math.max(boostedConfidence, 0.8);
+        }
+
+        // High confidence category match (lowered threshold with background-awareness)
+        if (boostedConfidence > 0.5 && category.category !== 'unknown') {
+          const displayName = getCategoryDisplayName(category.category);
+          results.finalResult = {
+            method: 'visual_category',
+            category: category.category,
+            confidence: Math.min(boostedConfidence, 1),
+            message: `This looks like a cork ${displayName}! How many pieces do you need, and is this for personal use or corporate gifting?`
+          };
+          console.log(`✅ Layer 2: ${category.category} (${(Math.min(boostedConfidence, 1) * 100).toFixed(0)}%)`);
+          return results;
+        }
       }
     } catch (error) {
       console.log('   Layer 2 error:', error.message);
     }
 
-    // LAYER 3: Vision APIs (Cloudflare, Fireworks, OpenRouter, Hyperbolic)
+    // LAYER 3: Vision APIs
     console.log('📍 Layer 3: Vision API analysis...');
-    const hasAnyVisionAPI = (this.cloudflareAccountId && this.cloudflareApiToken) ||
-                            this.fireworksApiKey ||
-                            this.openrouterApiKey ||
-                            this.hyperbolicApiKey;
-
-    if (hasAnyVisionAPI) {
+    if (this.configuredProviders.length > 0) {
       try {
-        const prompt = `You are Priya, a sales expert for 9Cork (sustainable cork products).
-Analyze this image. Products include: coasters, diaries, desk organizers, card holders, planters, bags, wallets, frames, clocks.
-If it's a cork product, identify it specifically and ask about quantity.
-If it's a logo/design, say you can customize it on cork products.
-Respond in 1-2 short sentences.`;
-
+        const prompt = this._buildVisionPrompt(userMessage);
         const apiResult = await this.tryAllVisionAPIs(imageBuffer, prompt);
-        results.layer3_cloudflare = apiResult;
+        results.layer3_api = apiResult;
         results.finalResult = {
           method: apiResult.provider,
           confidence: 0.85,
           message: apiResult.response
         };
         return results;
-
       } catch (error) {
         console.log('   Layer 3 failed:', error.message);
       }
     } else {
       console.log('   Layer 3 skipped: No vision APIs configured');
-      console.log('   💡 Get FREE keys from:');
-      console.log('      - Cloudflare: https://dash.cloudflare.com (Workers AI)');
-      console.log('      - Fireworks: https://fireworks.ai');
-      console.log('      - OpenRouter: https://openrouter.ai');
-      console.log('      - Hyperbolic: https://hyperbolic.xyz');
     }
 
-    // FALLBACK: Use Layer 2 result even with low confidence
-    if (results.layer2_clip?.category?.category !== 'unknown') {
-      const cat = results.layer2_clip.category;
+    // FALLBACK: Use Layer 2 result with lower threshold
+    if (results.layer2_visual?.category?.category !== 'unknown') {
+      const cat = results.layer2_visual.category;
       results.finalResult = {
-        method: 'visual_analysis_fallback',
+        method: 'visual_fallback',
         category: cat.category,
         confidence: cat.confidence,
         message: cat.category === 'logo'
-          ? "Thanks for sharing this image! Which cork product would you like this design on - coasters, diaries, or something else?"
-          : `I can see this might be related to ${cat.category}. Could you tell me more about what you're looking for?`
+          ? "Thanks for sharing this image! Which cork product would you like this design on?"
+          : `I can see this might be related to ${getCategoryDisplayName(cat.category)}. Could you tell me more?`
       };
     } else {
-      // Ultimate fallback
       results.finalResult = {
         method: 'fallback',
         confidence: 0,
@@ -867,18 +913,30 @@ Respond in 1-2 short sentences.`;
     return results;
   }
 
+  _buildVisionPrompt(userMessage) {
+    return `You are Priya, a sales expert for 9Cork (sustainable cork products).
+Analyze this image and respond helpfully in 1-2 short sentences.
+
+Products: coasters, diaries, desk organizers, card holders, planters, bags, wallets, frames, clocks.
+
+If cork product: identify it and ask about quantity.
+If logo/design: say you can customize it on cork products.
+If reference image: ask which cork product they want it on.
+
+Customer message: ${userMessage || '(sent image)'}`;
+  }
+
   // ==================== INDEX MANAGEMENT ====================
 
   async loadIndex() {
     if (this.indexLoaded) return;
-
     try {
       const data = await fs.readFile(this.indexPath, 'utf8');
       this.productIndex = JSON.parse(data);
       this.indexLoaded = true;
-      console.log(`📦 Loaded product index: ${Object.keys(this.productIndex.products).length} products`);
+      console.log(`📦 Loaded index: ${Object.keys(this.productIndex.products).length} products`);
     } catch (error) {
-      console.log('📦 No existing index found, starting fresh');
+      console.log('📦 No existing index, starting fresh');
       this.indexLoaded = true;
     }
   }
@@ -886,13 +944,112 @@ Respond in 1-2 short sentences.`;
   async saveIndex() {
     this.productIndex.lastUpdated = new Date().toISOString();
     await fs.writeFile(this.indexPath, JSON.stringify(this.productIndex, null, 2));
-    console.log('💾 Product index saved');
+    console.log('💾 Index saved');
   }
 
-  // Index a single product image
+  async buildProductHashIndex() {
+    const hashIndexPath = path.resolve(path.dirname(this.indexPath), 'product-hash-index.json');
+
+    // Check if index exists and is fresh (< 7 days old)
+    try {
+      const stat = await fs.stat(hashIndexPath);
+      const ageInDays = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24);
+      if (ageInDays < 7) {
+        const data = JSON.parse(await fs.readFile(hashIndexPath, 'utf8'));
+        if (data.hashes && Object.keys(data.hashes).length > 0) {
+          this.productIndex = data;
+          this.indexLoaded = true;
+          console.log(`📦 Loaded hash index: ${Object.keys(data.hashes).length} hashes (${ageInDays.toFixed(1)} days old)`);
+          return data;
+        }
+      }
+    } catch { /* No existing index or stale */ }
+
+    console.log('📦 Building product hash index...');
+
+    let products;
+    try {
+      const productsPath = path.join(__dirname, 'scripts', 'products-data.json');
+      products = JSON.parse(await fs.readFile(productsPath, 'utf8'));
+    } catch (error) {
+      console.log('📦 products-data.json not found, skipping hash index build');
+      return null;
+    }
+
+    let indexed = 0;
+    let failed = 0;
+
+    for (const product of products) {
+      if (!product.images || product.images.length === 0) continue;
+
+      let imageUrl = product.images[0];
+
+      // Convert Google Drive URLs
+      const driveMatch = imageUrl.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+      if (driveMatch) {
+        imageUrl = `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+      }
+
+      try {
+        const imageBuffer = await this._downloadImageForIndex(imageUrl);
+        if (imageBuffer) {
+          const hash = await calculatePHash(imageBuffer);
+          if (hash) {
+            this.productIndex.hashes[hash] = product.productId;
+            this.productIndex.products[product.productId] = {
+              name: product.name,
+              category: product.category,
+              productId: product.productId
+            };
+            indexed++;
+          }
+        }
+      } catch {
+        failed++;
+      }
+
+      // Rate limit
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    this.productIndex.lastUpdated = new Date().toISOString();
+    this.indexLoaded = true;
+
+    // Save to disk for reuse
+    try {
+      await fs.writeFile(hashIndexPath, JSON.stringify(this.productIndex, null, 2));
+      console.log(`📦 Hash index built: ${indexed} products indexed, ${failed} failed, saved to disk`);
+    } catch (error) {
+      console.log(`📦 Hash index built: ${indexed} indexed, ${failed} failed (disk save failed: ${error.message})`);
+    }
+
+    return this.productIndex;
+  }
+
+  async _downloadImageForIndex(url, redirectCount = 0) {
+    if (redirectCount > 5) throw new Error('Too many redirects');
+
+    try {
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 15000,
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+      });
+
+      const buffer = Buffer.from(response.data);
+      if (buffer.length < 1000) throw new Error('Too small');
+      return buffer;
+    } catch (error) {
+      throw new Error(`Download failed: ${error.message}`);
+    }
+  }
+
   async indexProductImage(productId, productInfo, imageBuffer) {
     try {
-      const hash = await this.calculatePHash(imageBuffer);
+      const hash = await calculatePHash(imageBuffer);
       if (hash) {
         this.productIndex.hashes[hash] = productId;
         this.productIndex.products[productId] = productInfo;
@@ -904,45 +1061,39 @@ Respond in 1-2 short sentences.`;
     return false;
   }
 
-  // Build index from product database
-  async buildIndexFromDatabase(Product, downloadImage) {
-    console.log('🔨 Building product image index...');
-
-    const products = await Product.find({ images: { $exists: true, $ne: [] } });
-    let indexed = 0;
-
-    for (const product of products) {
-      if (product.images && product.images[0]) {
-        try {
-          // Download image
-          const imageBuffer = await downloadImage(product.images[0]);
-          if (imageBuffer) {
-            await this.indexProductImage(product.productId, {
-              name: product.name,
-              category: product.category,
-              price: product.price,
-              image: product.images[0]
-            }, imageBuffer);
-            indexed++;
-          }
-        } catch (error) {
-          console.log(`   Skip ${product.name}: ${error.message}`);
-        }
-      }
-    }
-
-    await this.saveIndex();
-    console.log(`✅ Indexed ${indexed}/${products.length} products`);
-  }
-
-  // Get stats
   getStats() {
     return {
       productsIndexed: Object.keys(this.productIndex.products).length,
       hashesStored: Object.keys(this.productIndex.hashes).length,
       lastUpdated: this.productIndex.lastUpdated,
-      cloudflareConfigured: !!(this.cloudflareAccountId && this.cloudflareApiToken)
+      localMLProvider: this.localMLProvider?.name || 'None',
+      localMLReady: this.localMLReady,
+      configuredProviders: this.configuredProviders.map(p => p.name),
+      stats: this.stats,
+      architecture: {
+        layer0: this.localMLProvider?.name || 'Disabled',
+        layer1: 'Hash Matching (pHash)',
+        layer2: 'Visual Features (color, shape, edges)',
+        layer3: `${this.configuredProviders.length} API providers`
+      }
     };
+  }
+
+  // Utility to check what local ML options are available
+  static checkAvailableLocalML() {
+    const results = {};
+    for (const [id, provider] of Object.entries(LOCAL_ML_PROVIDERS)) {
+      try {
+        results[id] = {
+          name: provider.name,
+          available: provider.checkAvailable(),
+          priority: provider.priority
+        };
+      } catch (error) {
+        results[id] = { name: provider.name, available: false, error: error.message };
+      }
+    }
+    return results;
   }
 }
 
