@@ -26,6 +26,13 @@ const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseSt
 // Track sent images per conversation to avoid duplicates
 const sentImagesTracker = new Map(); // phoneNumber -> Set of image URLs
 
+// Per-phone processing queue (serialize messages from same customer to prevent race conditions)
+const phoneProcessingLock = new Map(); // phone -> Promise
+
+// TTL for sent images tracker (reset after 30 minutes)
+const SENT_IMAGES_TTL = 30 * 60 * 1000; // 30 minutes
+const sentImagesTimestamps = new Map(); // phone -> timestamp
+
 // MongoDB Product Query Helpers
 async function findProductsByCategory(category, limit = 10, phoneNumber = null, excludeSent = false) {
   try {
@@ -513,10 +520,17 @@ Customer: "I do not wish to disclose"
 Maximum 2 sentences AND 200 characters per response!
 One qualifying question at a time. If response is getting long, CUT IT.
 
-**RULE 3: MANDATORY CONVERSATION MEMORY (v53.19 - ENFORCED)**
-🚨 **BEFORE ASKING ANY QUESTION, EXTRACT WHAT YOU ALREADY KNOW!**
+**RULE 3: CONVERSATION MEMORY (CRITICAL - ZERO TOLERANCE)**
+🚨 **BEFORE GENERATING ANY RESPONSE, YOU MUST:**
 
-**STEP 1: EXTRACT FROM LAST 5 MESSAGES** (MANDATORY!)
+1. **READ the [ALREADY KNOWN: ...] prefix** if present in the user message
+2. **NEVER ask about information already marked as known**
+3. If customer said "gift for event" → NEVER ask "What's the occasion?"
+4. If customer said "300 people" → NEVER ask "How many?"
+5. If customer said "₹500 budget" → NEVER ask "What's your budget?"
+6. VIOLATION = FAILURE. Build on existing info, don't re-ask.
+
+**STEP 1: EXTRACT FROM LAST 5 MESSAGES + [ALREADY KNOWN] PREFIX** (MANDATORY!)
 Before asking ANY question, mentally note:
 - What PRODUCT did they mention? (diary, coaster, combo, etc.)
 - What QUANTITY did they mention? (100, 50, 200, etc.)
@@ -527,6 +541,8 @@ Before asking ANY question, mentally note:
 **STEP 2: USE WHAT YOU EXTRACTED**
 ❌ If they mentioned QUANTITY → NEVER ask "How many pieces?"
 ❌ If they mentioned OCCASION → NEVER ask "What's the occasion?"
+❌ If they mentioned BUDGET → NEVER ask "What's your budget?"
+❌ If they mentioned PRODUCT → NEVER ask "What are you looking for?"
 ❌ If they mentioned CUSTOMIZATION → NEVER ask "Would you like branding?"
 ✅ Reference what they said: "For your 100 combos for corporate gifting..."
 
@@ -1621,21 +1637,41 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
     // CRITICAL FIX v53: Exclude "photo frames" and "picture frames" (product names, not photo requests)
     // v53.32 FIX: Exclude "check the image", "see the image" - these are NOT requests to send images
-    const TRIGGER_WORDS = /\b(show|send|share)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send|share)\b/i;
+    const TRIGGER_WORDS = /\b(show|send|share|reshare|resend|re-share|re-send)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send|share|reshare|resend|re-share|re-send)\b/i;
+    // v54.3: Option-sharing patterns - catches "share options", "show all", "send varieties"
+    const OPTION_TRIGGERS = /\b(share|show|send|reshare|resend)\b.*\b(options?|varieties?|range|collection|types?|all)\b/i;
+    // v54.3: Resend detection - clears sent tracker when customer didn't receive images
+    const RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received)\b/i;
     // AUTO-GENERATED from product-image-database.json v1.3 - includes ALL product keywords from 9cork.com AND homedecorzstore.com - 41 products, 123 keywords
     const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|bifold|bohemian|box|breakfast|bridge|business|calendar|candle|card|case|catchall|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|for|frame|frames|fridge|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|minimalistic|mouse|mousepad|multicolor|multicolored|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|photo|picture|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|round|rubberized|runner|serving|set|shaped|sleeve|small|square|stand|stationery|striped|succulent|table|tablemat|tablemats|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|trinket|triple|trivet|trivets|tube|ushaped|wall|wallet|with|women|workspace)/i;
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
     let userMessage = messageBody || '';
-    const hasTrigger = TRIGGER_WORDS.test(userMessage);
+    const hasTrigger = TRIGGER_WORDS.test(userMessage) || OPTION_TRIGGERS.test(userMessage);
+    const isResendRequest = RESEND_PATTERN.test(userMessage);
+
+    // v54.3: Clear sent tracker when customer requests resend/reshare
+    if (isResendRequest) {
+      sentImagesTracker.delete(from);
+      console.log('🔄 Customer requested resend - cleared image tracker');
+    }
+
+    // v54.3: TTL-based reset for sentImagesTracker (30 minutes)
+    if (!sentImagesTimestamps.has(from) ||
+        Date.now() - sentImagesTimestamps.get(from) > SENT_IMAGES_TTL) {
+      sentImagesTracker.delete(from);
+      console.log('🕐 Sent images tracker expired (30min TTL) - reset for fresh images');
+    }
+    sentImagesTimestamps.set(from, Date.now());
 
     // v53.28 HARD STOP: NEVER send images without trigger words - NO EXCEPTIONS!
     // This prevents ALL unsolicited image sending regardless of code paths
-    if (!hasTrigger) {
+    // Resend requests with image/product keywords also count as triggers
+    if (!hasTrigger && !(isResendRequest && /\b(picture|pictures|photo|photos|image|images|options?)\b/i.test(userMessage))) {
       console.log('🛑 v53.28 HARD STOP: No trigger words detected, skipping ALL image sending');
       console.log(`   User message: "${userMessage.substring(0, 100)}..."`);
-      console.log(`   Trigger words required: show, send, share, pictures, images, photo`);
+      console.log(`   Trigger words required: show, send, share, pictures, images, photo, options`);
       return; // EXIT IMMEDIATELY - no images will be sent
     }
 
@@ -1975,10 +2011,29 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
               continue;
             }
 
-            await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
-            sentImages.add(originalUrl); // Track sent image
-            sentCount++;
-            console.log(`   ✅ Sent: ${product.name} (${sentCount}/${products.length})`);
+            // v54.3: Try sending with retry on failure
+            let imageSent = false;
+            try {
+              await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
+              imageSent = true;
+            } catch (sendErr) {
+              console.log(`   ⚠️ Image send failed, retrying in 2s: ${sendErr.message}`);
+              await new Promise(r => setTimeout(r, 2000));
+              try {
+                await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
+                imageSent = true;
+              } catch (retryErr) {
+                console.log(`   ❌ Image send retry failed: ${retryErr.message}`);
+              }
+            }
+
+            if (imageSent) {
+              sentImages.add(originalUrl); // Track only on confirmed success
+              sentCount++;
+              console.log(`   📸 Image send to ${from}: ✅ delivered - ${product.name} (${sentCount}/${products.length})`);
+            } else {
+              console.log(`   📸 Image send to ${from}: ❌ failed - ${product.name}`);
+            }
             await new Promise(resolve => setTimeout(resolve, 500));
           } catch (err) {
             failedCount++;
@@ -2070,6 +2125,30 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
   }
 }
 
+// Per-phone message serialization (prevents race condition with rapid messages)
+// When 3 messages arrive within seconds, each must wait for the previous to finish
+// so context includes all prior messages
+async function withPhoneLock(phone, fn) {
+  const previousLock = phoneProcessingLock.get(phone);
+
+  let resolveLock;
+  const currentLock = new Promise(resolve => { resolveLock = resolve; });
+  phoneProcessingLock.set(phone, currentLock);
+
+  try {
+    if (previousLock) {
+      console.log(`⏳ Waiting for previous message from ${phone} to finish processing...`);
+      await previousLock;
+    }
+    return await fn();
+  } finally {
+    resolveLock();
+    if (phoneProcessingLock.get(phone) === currentLock) {
+      phoneProcessingLock.delete(phone);
+    }
+  }
+}
+
 // Setup message processor (only called when queue is available)
 function setupMessageProcessor() {
   if (!messageQueue) return;
@@ -2077,6 +2156,7 @@ function setupMessageProcessor() {
   messageQueue.process('process-message', async (job) => {
     const { from, messageBody, messageId, messageType, mediaId } = job.data;
 
+    await withPhoneLock(from, async () => {
     try {
       // v52 FIX: Check if we already sent a response to this message successfully
       // Prevents queue retries from sending duplicate responses
@@ -2158,6 +2238,7 @@ function setupMessageProcessor() {
         "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
       );
     }
+    }); // end withPhoneLock
   });
 }
 
@@ -2421,7 +2502,8 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
             return; // Skip duplicate processing
           }
 
-          // Process directly without queue
+          // Process directly without queue (serialized per-phone)
+          await withPhoneLock(from, async () => {
           try {
             // Get conversation context with timeout fallback
             let context = [];
@@ -2475,6 +2557,7 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
               "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
             ).catch(e => console.error('Failed to send error message:', e));
           }
+          }); // end withPhoneLock
         }
       }
     }
@@ -2712,6 +2795,44 @@ async function getConversationContext(phoneNumber) {
   }
 }
 
+// v54.3: Build context-aware message with known facts to prevent repeated questions
+function buildContextAwareMessage(userMessage, conversationHistory) {
+  const facts = [];
+  const allText = conversationHistory.map(m => m.content).join(' ').toLowerCase();
+
+  // Extract use case / occasion
+  if (/gift|gifting|event|occasion|corporate|wedding|birthday|anniversary|diwali|christmas/.test(allText)) {
+    const match = allText.match(/(?:for|gift.*?for|occasion.*?is|it'?s?\s+(?:for|a))\s+([^.!?\n]{3,40})/i);
+    if (match) facts.push(`USE CASE: ${match[1].trim()}`);
+  }
+
+  // Extract quantity
+  if (/\d+\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i.test(allText)) {
+    const match = allText.match(/(\d+)\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i);
+    if (match) facts.push(`QUANTITY: ${match[1]}`);
+  }
+
+  // Extract budget
+  if (/₹\s*\d+|\d+\s*(?:rs|inr|rupee|budget)/i.test(allText)) {
+    const match = allText.match(/(?:₹|rs\.?|inr)\s*(\d[\d,]*)/i);
+    if (match) facts.push(`BUDGET: ₹${match[1]}`);
+  }
+
+  // Extract product interest
+  const productMatch = allText.match(/\b(coaster|diary|diaries|planter|organizer|calendar|bag|wallet|frame|tray|combo|bottle|clock|lamp)\b/i);
+  if (productMatch) facts.push(`PRODUCT: ${productMatch[0]}`);
+
+  // Extract timeline
+  const timelineMatch = allText.match(/\b(next week|this month|urgent|asap|year.?end|quarter|diwali|christmas|by \w+)\b/i);
+  if (timelineMatch) facts.push(`TIMELINE: ${timelineMatch[0]}`);
+
+  if (facts.length > 0) {
+    console.log(`📋 Context facts extracted: ${facts.join(', ')}`);
+    return `[ALREADY KNOWN: ${facts.join(', ')}]\n\n${userMessage}`;
+  }
+  return userMessage;
+}
+
 // Process message with Multi-Provider AI agent (Groq → Gemini → Rules)
 async function processWithClaudeAgent(message, customerPhone, context = []) {
   try {
@@ -2729,10 +2850,6 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       console.warn('⚠️ Suspicious input detected - potential attack attempt');
       // Log security event but still process (sanitized version)
     }
-
-    // CRITICAL: Add current message to context for AI processing
-    // context already has history, we just need to add the new user message
-    const fullContext = [...context, { role: 'user', content: sanitizedMessage }];
 
     // ALSO store in conversationMemory for in-memory fallback (in case MongoDB fails)
     // SECURITY FIX: Use atomic operation to prevent race condition
@@ -2766,12 +2883,17 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     // v53.20: Build dynamic system prompt with metadata (if available)
     const systemPrompt = buildSystemPrompt(conversationMetadata);
 
+    // v54.3: Build context-aware message with known facts to prevent repeated questions
+    const contextAwareMessage = buildContextAwareMessage(sanitizedMessage, context);
+
     // Use multi-provider AI manager with automatic failover
     // Send last 50 messages for context (optimized for Groq upper tier 32k+ token limit)
+    // v54.3: Use context-aware message (with [ALREADY KNOWN: ...] prefix) as the current message
+    const contextWithFacts = [...context, { role: 'user', content: contextAwareMessage }];
     const result = await aiManager.getResponse(
       systemPrompt, // v53.20: Now dynamic based on previous conversation!
-      fullContext.slice(-50), // Last 50 messages (including new message)
-      sanitizedMessage
+      contextWithFacts.slice(-50), // Last 50 messages (including new message with facts)
+      contextAwareMessage
     );
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
