@@ -2795,39 +2795,60 @@ async function getConversationContext(phoneNumber) {
   }
 }
 
-// v54.3: Build context-aware message with known facts to prevent repeated questions
+// v54.4: Build context-aware message with known facts to prevent repeated questions
+// CRITICAL: Only extract from RECENT messages and respect topic changes
 function buildContextAwareMessage(userMessage, conversationHistory) {
-  const facts = [];
-  const allText = conversationHistory.map(m => m.content).join(' ').toLowerCase();
+  // Only use last 6 messages to avoid stale context contamination
+  const recentHistory = conversationHistory.slice(-6);
 
-  // Extract use case / occasion
-  if (/gift|gifting|event|occasion|corporate|wedding|birthday|anniversary|diwali|christmas/.test(allText)) {
-    const match = allText.match(/(?:for|gift.*?for|occasion.*?is|it'?s?\s+(?:for|a))\s+([^.!?\n]{3,40})/i);
+  // Detect topic change / product switch in recent user messages
+  const TOPIC_CHANGE = /\b(no longer|not needed|cancel|don't need|instead|switch to|different|fresh chat|new chat|start over|start fresh|from scratch|not required|forget|ignore)\b/i;
+
+  // Find the most recent topic change point
+  let startIdx = 0;
+  for (let i = 0; i < recentHistory.length; i++) {
+    if (recentHistory[i].role === 'user' && TOPIC_CHANGE.test(recentHistory[i].content)) {
+      startIdx = i + 1; // Only use messages AFTER the topic change
+    }
+  }
+
+  // Only extract facts from messages after the last topic change (user messages only)
+  const relevantMessages = recentHistory.slice(startIdx).filter(m => m.role === 'user');
+  if (relevantMessages.length === 0) return userMessage;
+
+  const recentText = relevantMessages.map(m => m.content).join(' ').toLowerCase();
+
+  // Detect the CURRENT product from user's most recent message first, then recent context
+  const PRODUCT_RE = /\b(coasters?|diary|diaries|planters?|organizers?|calend[ae]rs?|bags?|wallets?|frames?|photo frames?|trays?|combos?|bottles?|clocks?|lamps?)\b/i;
+  const currentProductMatch = userMessage.match(PRODUCT_RE);
+  const contextProductMatch = recentText.match(PRODUCT_RE);
+  const activeProduct = currentProductMatch ? currentProductMatch[0] : (contextProductMatch ? contextProductMatch[0] : null);
+
+  const facts = [];
+
+  // Extract product
+  if (activeProduct) facts.push(`PRODUCT: ${activeProduct}`);
+
+  // Extract quantity (only from recent relevant messages)
+  const qtyMatch = recentText.match(/(\d+)\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i);
+  if (qtyMatch) facts.push(`QUANTITY: ${qtyMatch[1]}`);
+
+  // Extract budget (only from recent relevant messages)
+  const budgetMatch = recentText.match(/(?:₹|rs\.?|inr)\s*(\d[\d,]*)/i);
+  if (budgetMatch) facts.push(`BUDGET: ₹${budgetMatch[1]}`);
+
+  // Extract use case / occasion (only from recent relevant messages)
+  if (/gift|gifting|event|occasion|corporate|wedding|birthday|anniversary|diwali|christmas/.test(recentText)) {
+    const match = recentText.match(/(?:for|gift.*?for|occasion.*?is|it'?s?\s+(?:for|a))\s+([^.!?\n]{3,40})/i);
     if (match) facts.push(`USE CASE: ${match[1].trim()}`);
   }
 
-  // Extract quantity
-  if (/\d+\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i.test(allText)) {
-    const match = allText.match(/(\d+)\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i);
-    if (match) facts.push(`QUANTITY: ${match[1]}`);
-  }
-
-  // Extract budget
-  if (/₹\s*\d+|\d+\s*(?:rs|inr|rupee|budget)/i.test(allText)) {
-    const match = allText.match(/(?:₹|rs\.?|inr)\s*(\d[\d,]*)/i);
-    if (match) facts.push(`BUDGET: ₹${match[1]}`);
-  }
-
-  // Extract product interest
-  const productMatch = allText.match(/\b(coaster|diary|diaries|planter|organizer|calendar|bag|wallet|frame|tray|combo|bottle|clock|lamp)\b/i);
-  if (productMatch) facts.push(`PRODUCT: ${productMatch[0]}`);
-
-  // Extract timeline
-  const timelineMatch = allText.match(/\b(next week|this month|urgent|asap|year.?end|quarter|diwali|christmas|by \w+)\b/i);
+  // Extract timeline (only from recent relevant messages)
+  const timelineMatch = recentText.match(/\b(next week|this month|urgent|asap|year.?end|quarter|diwali|christmas|by \w+)\b/i);
   if (timelineMatch) facts.push(`TIMELINE: ${timelineMatch[0]}`);
 
   if (facts.length > 0) {
-    console.log(`📋 Context facts extracted: ${facts.join(', ')}`);
+    console.log(`📋 Context facts extracted (last ${relevantMessages.length} msgs): ${facts.join(', ')}`);
     return `[ALREADY KNOWN: ${facts.join(', ')}]\n\n${userMessage}`;
   }
   return userMessage;
@@ -2880,10 +2901,16 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       // Continue without metadata - not critical
     }
 
-    // v53.20: Build dynamic system prompt with metadata (if available)
-    const systemPrompt = buildSystemPrompt(conversationMetadata);
+    // v54.4: Only inject previous conversation metadata at conversation start (first 2 messages)
+    // and suppress when customer signals fresh start
+    const isFreshStart = /\b(fresh|new chat|start over|start fresh|from scratch|fresh chat|reset)\b/i.test(message);
+    const isConversationStart = context.length <= 2;
+    const useMetadata = isConversationStart && !isFreshStart ? conversationMetadata : null;
+    if (isFreshStart) console.log('🔄 Fresh start detected - suppressing previous metadata');
+    if (!isConversationStart) console.log(`📊 Mid-conversation (${context.length} msgs) - skipping "Welcome back" metadata`);
+    const systemPrompt = buildSystemPrompt(useMetadata);
 
-    // v54.3: Build context-aware message with known facts to prevent repeated questions
+    // v54.4: Build context-aware message with known facts to prevent repeated questions
     const contextAwareMessage = buildContextAwareMessage(sanitizedMessage, context);
 
     // Use multi-provider AI manager with automatic failover
