@@ -2206,6 +2206,20 @@ function setupMessageProcessor() {
 
       console.log(`🔄 Processing ${messageType || 'text'} message from queue: ${from}`);
 
+      // v35: Check for conversation reset request (before getting context)
+      if (messageType !== 'image' && isResetRequest(messageBody)) {
+        console.log(`🔄 Reset request detected in queue - clearing conversation history`);
+        await clearConversationHistory(from);
+
+        // Send fresh greeting
+        const freshGreeting = "👋 Fresh start! Welcome to 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
+        await sendWhatsAppMessage(from, freshGreeting);
+        await storeAgentMessage(from, freshGreeting);
+
+        console.log(`✅ Conversation reset complete - fresh greeting sent`);
+        return;
+      }
+
       // Get conversation context with timeout fallback
       let context = [];
       try {
@@ -2515,6 +2529,22 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
       }
 
       console.log(`[${requestId}] 📱 Valid message: ${messageBody || '[IMAGE]'}`);
+
+      // v35: Check for conversation reset request
+      if (messageType === 'text' && isResetRequest(messageBody)) {
+        console.log(`[${requestId}] 🔄 Reset request detected - clearing conversation history`);
+        await clearConversationHistory(from);
+
+        // Send fresh greeting
+        const freshGreeting = "👋 Fresh start! Welcome to 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
+        await sendWhatsAppMessage(from, freshGreeting);
+
+        // Store the fresh greeting
+        await storeAgentMessage(from, freshGreeting);
+
+        console.log(`[${requestId}] ✅ Conversation reset complete - fresh greeting sent`);
+        return;
+      }
 
       // Process text messages AND image messages
       if ((messageType === 'text' && messageBody) || messageType === 'image') {
@@ -2830,6 +2860,41 @@ async function getConversationContext(phoneNumber) {
     console.log('⚠️ No conversation context available - returning empty array');
     return [];
   }
+}
+
+// v35: Clear conversation history for fresh start
+async function clearConversationHistory(phoneNumber) {
+  const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+
+  try {
+    // Clear in-memory cache
+    if (conversationMemory.has(sanitizedPhone)) {
+      conversationMemory.delete(sanitizedPhone);
+      console.log(`🗑️ Cleared in-memory history for ${sanitizedPhone}`);
+    }
+
+    // Mark MongoDB conversation as completed (preserve for analytics)
+    try {
+      await Conversation.updateOne(
+        { customerPhone: sanitizedPhone, status: 'active' },
+        { $set: { status: 'completed', completedAt: new Date() } }
+      );
+      console.log(`🗑️ Marked MongoDB conversation as completed for ${sanitizedPhone}`);
+    } catch (mongoError) {
+      console.log('⚠️ MongoDB clear skipped:', mongoError.message);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('❌ Error clearing conversation:', error.message);
+    return false;
+  }
+}
+
+// Detect if user wants to start fresh
+function isResetRequest(message) {
+  const resetPatterns = /\b(fresh chat|new chat|start over|start fresh|from scratch|reset|clear chat|new conversation|begin again|restart)\b/i;
+  return resetPatterns.test(message);
 }
 
 // v54.4: Build context-aware message with known facts to prevent repeated questions
