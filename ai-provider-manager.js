@@ -23,14 +23,16 @@ class AIProviderManager {
     // Initialize other providers
     this.anthropic = config.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }) : null;
 
-    // Initialize Gemini with multiple keys support (up to 5 keys)
+    // Initialize Gemini with unlimited keys support (dynamic detection)
     this.geminiKeys = [];
     if (config.GEMINI_API_KEY) this.geminiKeys.push(config.GEMINI_API_KEY);
-    if (config.GEMINI_API_KEY_2) this.geminiKeys.push(config.GEMINI_API_KEY_2);
-    if (config.GEMINI_API_KEY_3) this.geminiKeys.push(config.GEMINI_API_KEY_3);
-    if (config.GEMINI_API_KEY_4) this.geminiKeys.push(config.GEMINI_API_KEY_4);
-    if (config.GEMINI_API_KEY_5) this.geminiKeys.push(config.GEMINI_API_KEY_5);
+    // Dynamically load GEMINI_API_KEY_2, GEMINI_API_KEY_3, ... GEMINI_API_KEY_N
+    for (let i = 2; i <= 20; i++) {
+      const key = config[`GEMINI_API_KEY_${i}`];
+      if (key) this.geminiKeys.push(key);
+    }
     this.currentGeminiIndex = 0;
+    console.log(`🔑 Loaded ${this.geminiKeys.length} Gemini API keys`);
 
     // Track usage and failures
     this.stats = {
