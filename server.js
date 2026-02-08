@@ -3098,8 +3098,11 @@ app.get('/health', monitoringLimiter, async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: 'ROBUST-v34-CRITICAL-FIXES-COMPLETE',
-    groqKeys: aiManager.groqClients ? aiManager.groqClients.length : 0,
+    version: 'v35-GEMINI-MULTI-KEY',
+    providers: {
+      groq: aiManager.groqClients ? aiManager.groqClients.length : 0,
+      gemini: aiManager.geminiKeys ? aiManager.geminiKeys.length : 0
+    },
     services: {
       mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
       queue: messageQueue ? 'active' : 'inactive'
