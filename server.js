@@ -2019,7 +2019,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
         // v53.7 CRITICAL: If category doesn't exist in our catalog, exit without sending wrong images
         // Let AI handle with Rule 5C ("We don't have X, would you like Y instead?")
-        const nonExistentCategories = ['mousepad', 'candles']; // Products we don't have (removed 'calendar' - now in stock!)
+        // v35: Added caddy, bar caddy - HORECA products without images in database
+        const nonExistentCategories = ['mousepad', 'candles', 'caddy', 'bar caddy', 'bill folder', 'cork light']; // Products we don't have images for
         if (nonExistentCategories.includes(catalogCategory)) {
           console.log(`⚠️ Category '${catalogCategory}' doesn't exist in our catalog`);
           console.log(`   AI will suggest alternatives via Rule 5C`);
@@ -2133,6 +2134,15 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         // Don't send any images - let AI respond naturally
         // AI will say something like "I don't have gift box images, but I can describe it"
         return;
+      }
+
+      // v35: Check if user is asking for HORECA products without images
+      // Don't send random wrong images, let AI respond naturally
+      const horecaWithoutImages = /\b(caddy|caddies|bar caddy|bill folder|cork light|cork lights)\b/i;
+      if (horecaWithoutImages.test(userMessage)) {
+        console.log('⚠️ HORECA product requested but no images in database');
+        console.log('   AI will suggest catalog or describe the product');
+        return; // Don't send random images
       }
 
       // Single product image - Try MongoDB first
