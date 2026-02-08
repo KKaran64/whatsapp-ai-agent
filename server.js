@@ -581,7 +581,9 @@ Before asking ANY question, mentally note:
 ❌ If they mentioned BUDGET → NEVER ask "What's your budget?"
 ❌ If they mentioned PRODUCT → NEVER ask "What are you looking for?"
 ❌ If they mentioned CUSTOMIZATION → NEVER ask "Would you like branding?"
+❌ If HORECA/cafe/hotel/restaurant/bar → NEVER ask "What's the occasion?" (purpose is obvious!)
 ✅ Reference what they said: "For your 100 combos for corporate gifting..."
+✅ For HORECA: Jump straight to "How many units?" or "Which size works for your space?"
 
 **Examples:**
 
