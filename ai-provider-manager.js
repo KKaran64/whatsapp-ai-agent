@@ -95,19 +95,8 @@ class AIProviderManager {
       return exactGreetings[normalizedMsg];
     }
 
-    // For all other queries, check partial matches (but NOT greetings)
-    const partialMatchResponses = {
-      'catalog': 'I\'d be happy to share our catalog! Please share your email or WhatsApp number and I\'ll send you detailed product images right away. 🌿',
-      'catalogue': 'I\'d be happy to share our catalog! Please share your email or WhatsApp number and I\'ll send you detailed product images right away. 🌿',
-    };
-
-    // Check partial matches for non-greeting queries
-    for (const [key, response] of Object.entries(partialMatchResponses)) {
-      if (normalizedMsg.includes(key)) {
-        console.log(`⚡ Cache hit - partial match for "${key}"`);
-        return response;
-      }
-    }
+    // REMOVED: Old cached responses that asked for email
+    // Catalog requests now go to AI which sends the catalog automatically
 
     // Check cache with user-specific key
     const cacheKey = this.getCacheKey(message, userId);
