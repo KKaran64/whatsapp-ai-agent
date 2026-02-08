@@ -156,7 +156,7 @@ class AIProviderManager {
         const completion = await groqClient.chat.completions.create({
           messages,
           model: 'llama-3.3-70b-versatile',
-          temperature: 0.7,
+          temperature: 0.4,
           max_tokens: 500,
           top_p: 1,
           stream: false
