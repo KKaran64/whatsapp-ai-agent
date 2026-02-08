@@ -98,9 +98,9 @@ class AIProviderManager {
     // CRITICAL: Only cache EXACT greetings, not messages that contain greetings + product questions
     // "hi" → cache ✅  |  "hi do you have coasters" → NO cache, send to AI ✅
     const exactGreetings = {
-      'hi': '👋 Welcome to 9 Cork Sustainable Products! What brings you here - personal use, corporate gifting, or for your business?',
-      'hello': '👋 Hello! I\'m from 9 Cork Sustainable Products. Are you looking for retail items, corporate gifts, or HORECA solutions?',
-      'hey': '👋 Welcome to 9 Cork Sustainable Products! What brings you here - personal use, corporate gifting, or for your business?',
+      'hi': '👋 Hi! I\'m Sita from 9 Cork Sustainable Products. What brings you here - personal use, corporate gifting, or HORECA solutions?',
+      'hello': '👋 Hello! I\'m Sita from 9 Cork Sustainable Products. Are you looking for retail items, corporate gifts, or HORECA solutions?',
+      'hey': '👋 Hey! I\'m Sita from 9 Cork Sustainable Products. What brings you here - personal use, corporate gifting, or HORECA solutions?',
     };
 
     // Check EXACT match for greetings only
