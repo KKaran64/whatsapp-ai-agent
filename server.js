@@ -2893,7 +2893,7 @@ async function clearConversationHistory(phoneNumber) {
 
 // Detect if user wants to start fresh
 function isResetRequest(message) {
-  const resetPatterns = /\b(fresh chat|new chat|start over|start fresh|from scratch|reset|clear chat|new conversation|begin again|restart)\b/i;
+  const resetPatterns = /\b(fresh chat|new chat|start over|start fresh|from scratch|reset|clear chat|new conversation|begin again|restart|new requirement|fresh requirement)\b/i;
   return resetPatterns.test(message);
 }
 
