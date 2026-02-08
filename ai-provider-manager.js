@@ -28,8 +28,12 @@ class AIProviderManager {
     if (config.GEMINI_API_KEY) this.geminiKeys.push(config.GEMINI_API_KEY);
     // Dynamically load GEMINI_API_KEY_2, GEMINI_API_KEY_3, ... GEMINI_API_KEY_N
     for (let i = 2; i <= 20; i++) {
-      const key = config[`GEMINI_API_KEY_${i}`];
-      if (key) this.geminiKeys.push(key);
+      const keyName = `GEMINI_API_KEY_${i}`;
+      const key = config[keyName];
+      if (key) {
+        this.geminiKeys.push(key);
+        console.log(`  - ${keyName}: SET`);
+      }
     }
     this.currentGeminiIndex = 0;
     console.log(`🔑 Loaded ${this.geminiKeys.length} Gemini API keys`);
