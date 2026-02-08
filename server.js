@@ -394,7 +394,7 @@ You: [Switch to diaries, ignore previous ${products}]
 `;
   }
 
-  return `You are Priya, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
+  return `You are Sita, a consultative sales expert for 9 Cork Sustainable Products (9cork.com). You're a trusted advisor who qualifies leads before discussing pricing.
 
 🚨🚨🚨 ABSOLUTE TOP PRIORITY - READ FIRST 🚨🚨🚨
 ═══════════════════════════════════════════════════
@@ -1687,6 +1687,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     let userMessage = messageBody || '';
     const hasTrigger = TRIGGER_WORDS.test(userMessage) || OPTION_TRIGGERS.test(userMessage);
     const isResendRequest = RESEND_PATTERN.test(userMessage);
+    // v35: Catalog/PDF request detection - these bypass image trigger check
+    const isCatalogRequest = /\b(catalog|catalogue|pdf|brochure|price list)\b/i.test(userMessage);
 
     // v54.3: Clear sent tracker when customer requests resend/reshare
     if (isResendRequest) {
@@ -1705,10 +1707,11 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // v53.28 HARD STOP: NEVER send images without trigger words - NO EXCEPTIONS!
     // This prevents ALL unsolicited image sending regardless of code paths
     // Resend requests with image/product keywords also count as triggers
-    if (!hasTrigger && !(isResendRequest && /\b(picture|pictures|photo|photos|image|images|options?)\b/i.test(userMessage))) {
+    // v35: Catalog/PDF requests bypass this check (handled separately below)
+    if (!hasTrigger && !isCatalogRequest && !(isResendRequest && /\b(picture|pictures|photo|photos|image|images|options?)\b/i.test(userMessage))) {
       console.log('🛑 v53.28 HARD STOP: No trigger words detected, skipping ALL image sending');
       console.log(`   User message: "${userMessage.substring(0, 100)}..."`);
-      console.log(`   Trigger words required: show, send, share, pictures, images, photo, options`);
+      console.log(`   Trigger words required: show, send, share, pictures, images, photo, options, catalog, pdf`);
       return; // EXIT IMMEDIATELY - no images will be sent
     }
 
@@ -2212,7 +2215,7 @@ function setupMessageProcessor() {
         await clearConversationHistory(from);
 
         // Send fresh greeting
-        const freshGreeting = "👋 Fresh start! Welcome to 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
+        const freshGreeting = "👋 Fresh start! I'm Sita from 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
         await sendWhatsAppMessage(from, freshGreeting);
         await storeAgentMessage(from, freshGreeting);
 
@@ -2536,7 +2539,7 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
         await clearConversationHistory(from);
 
         // Send fresh greeting
-        const freshGreeting = "👋 Fresh start! Welcome to 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
+        const freshGreeting = "👋 Fresh start! I'm Sita from 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
         await sendWhatsAppMessage(from, freshGreeting);
 
         // Store the fresh greeting
