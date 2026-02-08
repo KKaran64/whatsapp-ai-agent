@@ -22,12 +22,20 @@ class AIProviderManager {
 
     // Initialize other providers
     this.anthropic = config.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }) : null;
-    this.geminiApiKey = config.GEMINI_API_KEY;
+
+    // Initialize Gemini with multiple keys support (up to 5 keys)
+    this.geminiKeys = [];
+    if (config.GEMINI_API_KEY) this.geminiKeys.push(config.GEMINI_API_KEY);
+    if (config.GEMINI_API_KEY_2) this.geminiKeys.push(config.GEMINI_API_KEY_2);
+    if (config.GEMINI_API_KEY_3) this.geminiKeys.push(config.GEMINI_API_KEY_3);
+    if (config.GEMINI_API_KEY_4) this.geminiKeys.push(config.GEMINI_API_KEY_4);
+    if (config.GEMINI_API_KEY_5) this.geminiKeys.push(config.GEMINI_API_KEY_5);
+    this.currentGeminiIndex = 0;
 
     // Track usage and failures
     this.stats = {
       groq: { success: 0, failures: 0, lastFailure: null, keyRotations: 0 },
-      gemini: { success: 0, failures: 0, lastFailure: null },
+      gemini: { success: 0, failures: 0, lastFailure: null, keyRotations: 0 },
       claude: { success: 0, failures: 0, lastFailure: null },
       fallback: { success: 0 }
     };
@@ -187,54 +195,83 @@ class AIProviderManager {
     throw new Error('RATE_LIMIT');
   }
 
-  // Try Google Gemini (SECONDARY - Free)
+  // Get next Gemini key (round-robin rotation)
+  getNextGeminiKey() {
+    if (this.geminiKeys.length === 0) return null;
+    const key = this.geminiKeys[this.currentGeminiIndex];
+    this.currentGeminiIndex = (this.currentGeminiIndex + 1) % this.geminiKeys.length;
+    if (this.currentGeminiIndex === 0 && this.geminiKeys.length > 1) {
+      this.stats.gemini.keyRotations++;
+    }
+    return key;
+  }
+
+  // Try Google Gemini (SECONDARY - Free) with automatic key rotation
   async tryGemini(systemPrompt, conversationHistory, userMessage) {
-    if (!this.geminiApiKey) {
-      throw new Error('Gemini API key not configured');
+    if (this.geminiKeys.length === 0) {
+      throw new Error('No Gemini API keys configured');
     }
 
-    try {
-      console.log('🟢 Trying Gemini...');
+    const maxRetries = this.geminiKeys.length;
+    let lastError = null;
 
-      // Build conversation for Gemini
-      const conversationText = conversationHistory
-        .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-        .join('\n');
+    // Build conversation for Gemini (once, reuse for retries)
+    const conversationText = conversationHistory
+      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+      .join('\n');
+    const fullPrompt = `${systemPrompt}\n\nConversation:\n${conversationText}\n\nUser: ${userMessage}\n\nAssistant:`;
 
-      const fullPrompt = `${systemPrompt}\n\nConversation:\n${conversationText}\n\nUser: ${userMessage}\n\nAssistant:`;
-
-      const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${this.geminiApiKey}`,
-        {
-          contents: [{
-            parts: [{ text: fullPrompt }]
-          }]
-        }
-      );
-
-      const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm here to help!";
-      this.stats.gemini.success++;
-
-      // Cache the response
-      this.cacheResponse(userMessage, aiResponse);
-
-      return { provider: 'gemini', response: aiResponse };
-    } catch (error) {
-      this.stats.gemini.failures++;
-      this.stats.gemini.lastFailure = new Date();
-
-      // DETAILED ERROR LOGGING
-      console.error('❌ Gemini Error:');
-      console.error('Error message:', error.message);
-      console.error('Error response:', error.response?.data || error.response || 'No response data');
-      console.error('Error status:', error.response?.status || 'No status');
-
-      if (error.response?.status === 429) {
-        console.log('⚠️ Gemini rate limit hit');
-        throw new Error('RATE_LIMIT');
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const geminiKey = this.getNextGeminiKey();
+      if (!geminiKey) {
+        throw new Error('No Gemini API keys configured');
       }
-      throw error;
+
+      try {
+        console.log(`🟢 Trying Gemini (key ${this.currentGeminiIndex || this.geminiKeys.length}/${this.geminiKeys.length})...`);
+
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${geminiKey}`,
+          {
+            contents: [{
+              parts: [{ text: fullPrompt }]
+            }]
+          }
+        );
+
+        const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm here to help!";
+        this.stats.gemini.success++;
+
+        // Cache the response
+        this.cacheResponse(userMessage, aiResponse);
+
+        return { provider: 'gemini', response: aiResponse };
+      } catch (error) {
+        lastError = error;
+
+        // DETAILED ERROR LOGGING
+        console.error(`❌ Gemini Error (key ${this.currentGeminiIndex || this.geminiKeys.length}):`);
+        console.error('Error message:', error.message);
+        console.error('Error response:', error.response?.data || error.response || 'No response data');
+        console.error('Error status:', error.response?.status || 'No status');
+
+        if (error.response?.status === 429) {
+          console.log(`⚠️ Gemini key ${this.currentGeminiIndex || this.geminiKeys.length} rate limit hit, trying next key...`);
+          continue; // Try next key
+        } else {
+          // Non-rate-limit error, don't retry
+          this.stats.gemini.failures++;
+          this.stats.gemini.lastFailure = new Date();
+          throw error;
+        }
+      }
     }
+
+    // All keys exhausted
+    this.stats.gemini.failures++;
+    this.stats.gemini.lastFailure = new Date();
+    console.log('⚠️ All Gemini keys rate limited');
+    throw new Error('RATE_LIMIT');
   }
 
   // Try Anthropic Claude (TERTIARY - Paid but most reliable)
