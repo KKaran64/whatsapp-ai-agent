@@ -2136,13 +2136,25 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         return;
       }
 
-      // v35: Check if user is asking for HORECA products without images
-      // Don't send random wrong images, let AI respond naturally
+      // v35: Check if user is asking for HORECA products without individual images
+      // Send HORECA catalog PDF instead of random wrong images
       const horecaWithoutImages = /\b(caddy|caddies|bar caddy|bill folder|cork light|cork lights)\b/i;
       if (horecaWithoutImages.test(userMessage)) {
-        console.log('⚠️ HORECA product requested but no images in database');
-        console.log('   AI will suggest catalog or describe the product');
-        return; // Don't send random images
+        console.log('⚠️ HORECA product requested - sending HORECA catalog PDF');
+        if (CONFIG.PDF_CATALOG_HORECA) {
+          try {
+            await sendWhatsAppDocument(
+              from,
+              CONFIG.PDF_CATALOG_HORECA,
+              '9Cork-HORECA-Catalog.pdf',
+              'Here\'s our HORECA catalog with caddies, bar accessories & more! 🌿'
+            );
+            console.log('📄 HORECA catalog sent successfully');
+          } catch (err) {
+            console.error('❌ Failed to send HORECA catalog:', err.message);
+          }
+        }
+        return;
       }
 
       // Single product image - Try MongoDB first
