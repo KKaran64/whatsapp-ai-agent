@@ -2136,11 +2136,11 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         return;
       }
 
-      // v35: Check if user is asking for HORECA products without individual images
-      // Send HORECA catalog PDF instead of random wrong images
-      const horecaWithoutImages = /\b(caddy|caddies|bar caddy|bill folder|cork light|cork lights)\b/i;
-      if (horecaWithoutImages.test(userMessage)) {
-        console.log('⚠️ HORECA product requested - sending HORECA catalog PDF');
+      // v35: Check if user is asking for HORECA products
+      // Send HORECA catalog PDF when HORECA category or specific products mentioned
+      const horecaTriggers = /\b(horeca|hotel|restaurant|cafe|bar|hospitality|caddy|caddies|bar caddy|bill folder|cork light|cork lights|menu holder|wine)\b/i;
+      if (horecaTriggers.test(userMessage)) {
+        console.log('⚠️ HORECA category/product requested - sending HORECA catalog PDF');
         if (CONFIG.PDF_CATALOG_HORECA) {
           try {
             await sendWhatsAppDocument(
