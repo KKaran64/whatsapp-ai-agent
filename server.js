@@ -2136,11 +2136,20 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         return;
       }
 
-      // v35: Check if user is asking for HORECA products
-      // Send HORECA catalog PDF when HORECA category or specific products mentioned
-      const horecaTriggers = /\b(horeca|hotel|restaurant|cafe|bar|hospitality|caddy|caddies|bar caddy|bill folder|cork light|cork lights|menu holder|wine)\b/i;
-      if (horecaTriggers.test(userMessage)) {
-        console.log('⚠️ HORECA category/product requested - sending HORECA catalog PDF');
+      // v35: Check if user is asking for HORECA-specific products NOT in our image database
+      // Products IN database (coasters, trays, etc.) → use images
+      // Products NOT in database (caddy, bill folder, etc.) → send HORECA catalog
+      const productsInDatabase = /\b(coasters?|trays?|diaries?|diary|planters?|bags?|wallets?|frames?|calendar|organizer|bottles?)\b/i;
+      const horecaOnlyProducts = /\b(caddy|caddies|bar caddy|bill folder|cork light|cork lights|menu holder|wine rack|bottle opener)\b/i;
+      const genericHorecaRequest = /\b(horeca|horeca products|horeca catalog|horeca catalogue)\b/i;
+
+      // Only send HORECA catalog if asking for HORECA-specific products OR generic HORECA request
+      // BUT NOT if they're asking for products we have in database (coasters, trays, etc.)
+      const isHorecaSpecific = horecaOnlyProducts.test(userMessage) || genericHorecaRequest.test(userMessage);
+      const hasProductInDB = productsInDatabase.test(userMessage);
+
+      if (isHorecaSpecific && !hasProductInDB) {
+        console.log('⚠️ HORECA-specific product requested - sending HORECA catalog PDF');
         if (CONFIG.PDF_CATALOG_HORECA) {
           try {
             await sendWhatsAppDocument(
