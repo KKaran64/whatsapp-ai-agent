@@ -56,8 +56,10 @@ function redactSensitiveData(obj) {
 
     // Check if field is sensitive
     if (SENSITIVE_FIELDS.some(field => lowerKey.includes(field.toLowerCase()))) {
-      if (lowerKey.includes('phone') || lowerKey.includes('from') || lowerKey.includes('to')) {
-        // Hash phone numbers for traceability
+      // Phone-like fields get hashed (preserves last 4 digits for traceability)
+      // Match exact field names to avoid false positives (e.g. "token" contains "to")
+      const PHONE_FIELDS = ['phone', 'phonenumber', 'from', 'to'];
+      if (PHONE_FIELDS.some(pf => lowerKey === pf || lowerKey === `${pf}number`)) {
         redacted[key] = hashPhoneNumber(String(redacted[key]));
       } else {
         // Redact other sensitive fields

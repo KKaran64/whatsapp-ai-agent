@@ -101,12 +101,13 @@ function sanitizeAIPrompt(userMessage) {
     /act\s+as\s+(?!a\s+sales)/gi // Allow "act as a sales assistant" but block others
   ];
 
+  // Remove special characters that could break context (BEFORE injection replacement
+  // so the [removed] marker survives)
+  sanitized = sanitized.replace(/[{}[\]<>]/g, '');
+
   for (const pattern of dangerousPatterns) {
     sanitized = sanitized.replace(pattern, '[removed]');
   }
-
-  // Remove special characters that could break context
-  sanitized = sanitized.replace(/[{}[\]<>]/g, '');
 
   // Truncate excessively long messages (prevent token flooding)
   if (sanitized.length > 500) {
