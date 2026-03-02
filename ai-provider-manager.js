@@ -138,14 +138,15 @@ class AIProviderManager {
 
   // Try Groq (PRIMARY - Free) with automatic key rotation
   async tryGroq(systemPrompt, conversationHistory, userMessage) {
+    if (this.groqClients.length === 0) {
+      throw new Error('No Groq API keys configured');
+    }
+
     const maxRetries = this.groqClients.length;
     let lastError = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const groqClient = this.getNextGroqClient();
-      if (!groqClient) {
-        throw new Error('No Groq API keys configured');
-      }
 
       try {
         console.log(`🔵 Trying Groq (key ${this.currentGroqIndex || this.groqClients.length}/${this.groqClients.length})...`);

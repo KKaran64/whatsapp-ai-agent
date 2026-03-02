@@ -3486,3 +3486,37 @@ setInterval(async () => {
     console.error('❌ Conversation archiving failed:', error.message);
   }
 }, 12 * 60 * 60 * 1000); // Every 12 hours
+
+// Export for testing
+module.exports = {
+  app,
+  convertGoogleDriveUrl,
+  isValidImageUrl,
+  validateWhatsAppMessage,
+  checkPhoneRateLimit,
+  isResetRequest,
+  buildContextAwareMessage,
+  buildSystemPrompt,
+  validateWebhookSignature,
+  handleImageDetectionAndSending,
+  findProductsByCategory,
+  findProductBySearch,
+  withPhoneLock,
+  processWithClaudeAgent,
+  sendWhatsAppMessage,
+  sendWhatsAppImage,
+  sendWhatsAppDocument,
+  storeCustomerMessage,
+  storeAgentMessage,
+  getConversationContext,
+  clearConversationHistory,
+  extractAndSaveMetadata,
+  // Internal state (for testing)
+  CONFIG,
+  sentImagesTracker,
+  phoneProcessingLock,
+  processedMessageIds,
+  sentResponses,
+  conversationMemory,
+  phoneRateLimits
+};
