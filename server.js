@@ -582,8 +582,9 @@ Before asking ANY question, mentally note:
 ❌ If they mentioned PRODUCT → NEVER ask "What are you looking for?"
 ❌ If they mentioned CUSTOMIZATION → NEVER ask "Would you like branding?"
 ❌ If HORECA/cafe/hotel/restaurant/bar → NEVER ask "What's the occasion?" (purpose is obvious!)
+❌ If HORECA products (caddy, bill folder, cork lights) → NEVER ask "What's the occasion?" - these are business products!
 ✅ Reference what they said: "For your 100 combos for corporate gifting..."
-✅ For HORECA: Jump straight to "How many units?" or "Which size works for your space?"
+✅ For HORECA products: Jump straight to "How many units?" or "What size/style works for your space?"
 
 **Examples:**
 
@@ -2140,7 +2141,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // Products IN database (coasters, trays, etc.) → use images
       // Products NOT in database (caddy, bill folder, etc.) → send HORECA catalog
       const productsInDatabase = /\b(coasters?|trays?|diaries?|diary|planters?|bags?|wallets?|frames?|calendar|organizer|bottles?)\b/i;
-      const horecaOnlyProducts = /\b(caddy|caddies|bar caddy|bill folder|cork light|cork lights|menu holder|wine rack|bottle opener)\b/i;
+      const horecaOnlyProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|cork light|cork lights)\b/i;
       const genericHorecaRequest = /\b(horeca|horeca products|horeca catalog|horeca catalogue)\b/i;
 
       // Only send HORECA catalog if asking for HORECA-specific products OR generic HORECA request
@@ -2289,6 +2290,23 @@ function setupMessageProcessor() {
         // Handle TEXT messages normally
         agentResponse = await processWithClaudeAgent(messageBody, from, context);
         await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+
+        // v35: Auto-send HORECA catalog when HORECA-only products mentioned (no trigger words needed)
+        // HORECA products: Bar Caddies, Bill Folders, Cork Lights (from catalog)
+        const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|cork light|cork lights)\b/i;
+        if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
+          console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
+          try {
+            await sendWhatsAppDocument(
+              from,
+              CONFIG.PDF_CATALOG_HORECA,
+              '9Cork-HORECA-Catalog.pdf',
+              'Here\'s our HORECA catalog with details on this product! 🌿'
+            );
+          } catch (err) {
+            console.error('❌ Failed to auto-send HORECA catalog:', err.message);
+          }
+        }
       }
 
       // Send response back to customer
@@ -2640,6 +2658,22 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
               // Handle TEXT messages normally
               response = await processWithClaudeAgent(messageBody, from, context);
               await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+
+              // v35: Auto-send HORECA catalog when HORECA-only products mentioned
+              const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|cork light|cork lights)\b/i;
+              if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
+                console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
+                try {
+                  await sendWhatsAppDocument(
+                    from,
+                    CONFIG.PDF_CATALOG_HORECA,
+                    '9Cork-HORECA-Catalog.pdf',
+                    'Here\'s our HORECA catalog with details on this product! 🌿'
+                  );
+                } catch (err) {
+                  console.error('❌ Failed to auto-send HORECA catalog:', err.message);
+                }
+              }
             }
 
             await sendWhatsAppMessage(from, response);
