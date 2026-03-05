@@ -2141,7 +2141,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // Products IN database (coasters, trays, etc.) → use images
       // Products NOT in database (caddy, bill folder, etc.) → send HORECA catalog
       const productsInDatabase = /\b(coasters?|trays?|diaries?|diary|planters?|bags?|wallets?|frames?|calendar|organizer|bottles?)\b/i;
-      const horecaOnlyProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights)\b/i;
+      const horecaOnlyProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
       const genericHorecaRequest = /\b(horeca|horeca products|horeca catalog|horeca catalogue)\b/i;
 
       // Only send HORECA catalog if asking for HORECA-specific products OR generic HORECA request
@@ -2293,7 +2293,7 @@ function setupMessageProcessor() {
 
         // v35: Auto-send HORECA catalog when HORECA-only products mentioned (no trigger words needed)
         // HORECA products: Bar Caddies, Bill Folders, Cork Lights (from catalog)
-        const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights)\b/i;
+        const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
         if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
           console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
           try {
@@ -2660,7 +2660,7 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
               await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
 
               // v35: Auto-send HORECA catalog when HORECA-only products mentioned
-              const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights)\b/i;
+              const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
               if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
                 console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
                 try {
