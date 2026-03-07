@@ -73,9 +73,19 @@ class OptimizedBot {
     const startTime = Date.now();
     this.stats.messagesProcessed++;
 
+    console.log(`[OptimizedBot] Processing: ${phoneNumber.slice(-4)} "${message?.slice(0, 30)}..."`);
+
     try {
       // Step 1: Get current state (zero tokens)
-      const state = await this.stateManager.getState(phoneNumber);
+      let state;
+      try {
+        state = await this.stateManager.getState(phoneNumber);
+        console.log(`[OptimizedBot] State loaded: node=${state?.current_node}`);
+      } catch (stateErr) {
+        console.error(`[OptimizedBot] State error:`, stateErr.message);
+        // Create minimal state object to continue
+        state = { current_node: 'START', product_interest: [], qualifiers: {} };
+      }
 
       // Step 2: Classify message -> get node (~5 tokens output)
       let node;
@@ -88,34 +98,58 @@ class OptimizedBot {
 
       console.log(`[OptimizedBot] ${phoneNumber.slice(-4)}: "${message.slice(0, 30)}..." -> ${node}`);
 
-      // Step 3: Update state with new node (zero tokens)
-      await this.stateManager.transitionNode(phoneNumber, node);
+      // Step 3: Update state with new node (non-blocking)
+      try {
+        await this.stateManager.transitionNode(phoneNumber, node);
+      } catch (e) {
+        console.warn(`[OptimizedBot] State transition failed:`, e.message);
+      }
 
-      // Step 4: Extract info from message and update state
-      await this._extractAndUpdateState(phoneNumber, message, node);
+      // Step 4: Extract info from message (non-blocking)
+      try {
+        await this._extractAndUpdateState(phoneNumber, message, node);
+      } catch (e) {
+        console.warn(`[OptimizedBot] Extract state failed:`, e.message);
+      }
 
       // Step 5: Get updated state and recent messages
-      const updatedState = await this.stateManager.getState(phoneNumber);
-      const recentMessages = await this.stateManager.getRecentMessages(phoneNumber);
+      let updatedState = state;
+      let recentMessages = [];
+      try {
+        updatedState = await this.stateManager.getState(phoneNumber);
+        recentMessages = await this.stateManager.getRecentMessages(phoneNumber);
+      } catch (e) {
+        console.warn(`[OptimizedBot] Get state failed:`, e.message);
+      }
 
       // Step 6: Generate response (~50 tokens output)
+      console.log(`[OptimizedBot] Generating response for node: ${node}`);
       const { response, media } = await this.responder.generateResponse(
         node,
         updatedState,
         message,
         recentMessages
       );
+      console.log(`[OptimizedBot] Response generated: "${response.slice(0, 50)}..."`);
 
-      // Step 7: Store messages in history (zero tokens)
-      await this.stateManager.addMessage(phoneNumber, 'user', message);
-      await this.stateManager.addMessage(phoneNumber, 'assistant', response);
+      // Step 7: Store messages in history (non-blocking)
+      try {
+        await this.stateManager.addMessage(phoneNumber, 'user', message);
+        await this.stateManager.addMessage(phoneNumber, 'assistant', response);
+      } catch (e) {
+        console.warn(`[OptimizedBot] Store messages failed:`, e.message);
+      }
 
-      // Step 8: Handle media if triggered
+      // Step 8: Handle media if triggered (non-blocking)
       if (media) {
-        const alreadySent = await this.stateManager.wasImageSent(phoneNumber, media);
-        if (!alreadySent) {
-          await this.mediaHandler.handleMediaTrigger(phoneNumber, media);
-          await this.stateManager.markImageSent(phoneNumber, media);
+        try {
+          const alreadySent = await this.stateManager.wasImageSent(phoneNumber, media);
+          if (!alreadySent) {
+            await this.mediaHandler.handleMediaTrigger(phoneNumber, media);
+            await this.stateManager.markImageSent(phoneNumber, media);
+          }
+        } catch (e) {
+          console.warn(`[OptimizedBot] Media handling failed:`, e.message);
         }
       }
 

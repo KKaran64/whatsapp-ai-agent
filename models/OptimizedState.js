@@ -103,11 +103,10 @@ const optimizedStateSchema = new mongoose.Schema({
     branding: { type: String, default: null }  // yes/no/single-color/multi-color
   },
 
-  // Last interaction timestamp
+  // Last interaction timestamp (indexed via TTL below)
   last_interaction: {
     type: Date,
-    default: Date.now,
-    index: true
+    default: Date.now
   },
 
   // Compact conversation history (last 3 messages only)
