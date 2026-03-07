@@ -19,6 +19,10 @@ const AIProviderManager = require('./ai-provider-manager');
 // Import Vision Handler (Image recognition & processing)
 const VisionHandler = require('./vision-handler');
 
+// Import Token-Optimized Bot (3-agent architecture: Router + State + Responder)
+// Reduces token usage from 800-2000 to ~255 tokens per message
+const { getInstance: getOptimizedBot } = require('./optimized-bot');
+
 // Import Product Image Database (STRICT: Cork products only)
 // Use V2 image system with JSON database (DEPRECATED - will migrate to MongoDB)
 const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseStats } = require('./product-images-v2');
@@ -2224,6 +2228,7 @@ async function withPhoneLock(phone, fn) {
 }
 
 // Setup message processor (only called when queue is available)
+// v54: Updated to use OPTIMIZED BOT (3-agent architecture) with fallback
 function setupMessageProcessor() {
   if (!messageQueue) return;
 
@@ -2233,115 +2238,121 @@ function setupMessageProcessor() {
     await withPhoneLock(from, async () => {
     try {
       // v52 FIX: Check if we already sent a response to this message successfully
-      // Prevents queue retries from sending duplicate responses
       if (sentResponses.has(messageId)) {
         const previousResponse = sentResponses.get(messageId);
-        console.log(`✅ Message ${messageId} already processed successfully at ${previousResponse.timestamp.toISOString()}`);
-        console.log(`   Skipping resend (queue retry detected)`);
-        return; // Skip this job, message was already sent
-      }
-
-      console.log(`🔄 Processing ${messageType || 'text'} message from queue: ${from}`);
-
-      // v35: Check for conversation reset request (before getting context)
-      if (messageType !== 'image' && isResetRequest(messageBody)) {
-        console.log(`🔄 Reset request detected in queue - clearing conversation history`);
-        await clearConversationHistory(from);
-
-        // Send fresh greeting
-        const freshGreeting = "👋 Fresh start! I'm Sita from 9 Cork Sustainable Products. What brings you here today - personal use, corporate gifting, or HORECA solutions?";
-        await sendWhatsAppMessage(from, freshGreeting);
-        await storeAgentMessage(from, freshGreeting);
-
-        console.log(`✅ Conversation reset complete - fresh greeting sent`);
+        console.log(`✅ Message ${messageId} already processed at ${previousResponse.timestamp.toISOString()}`);
         return;
       }
 
-      // Get conversation context with timeout fallback
-      let context = [];
-      try {
-        const contextPromise = getConversationContext(from);
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Context timeout')), 2000)
-        );
-        context = await Promise.race([contextPromise, timeoutPromise]);
-      } catch (error) {
-        console.log('⚠️ Context unavailable - using empty context');
-        context = [];
+      console.log(`⚡ [QUEUE] Processing with OPTIMIZED BOT: ${from.slice(-4)}`);
+
+      // v35: Check for conversation reset request
+      if (messageType !== 'image' && isResetRequest(messageBody)) {
+        console.log(`🔄 Reset request detected in queue`);
+        const bot = await getOrInitOptimizedBot();
+        await bot.resetConversation(from);
+        await clearConversationHistory(from);
+
+        const freshGreeting = "👋 Fresh start! I'm Sita from 9 Cork. What brings you here - personal use, corporate gifting, or HORECA?";
+        await sendWhatsAppMessage(from, freshGreeting);
+        await storeAgentMessage(from, freshGreeting);
+        return;
       }
 
       let agentResponse;
 
-      // Handle IMAGE messages with vision AI
-      if (messageType === 'image' && mediaId) {
-        console.log('📸 Processing image message with vision AI from queue...');
-        const result = await visionHandler.handleImageMessage(
-          mediaId,
-          messageBody,
+      try {
+        // ═══════════════════════════════════════════════════════════════════
+        // OPTIMIZED BOT (3-agent architecture)
+        // ═══════════════════════════════════════════════════════════════════
+        const bot = await getOrInitOptimizedBot();
+
+        const result = await bot.processMessage(
           from,
-          context,
-          SYSTEM_PROMPT
+          messageBody || '[IMAGE]',
+          messageType,
+          mediaId
         );
+
+        console.log(`⚡ [QUEUE] OPTIMIZED: Node=${result.node}, Latency=${result.latency}ms`);
         agentResponse = result.response;
 
-        // Store image indicator in conversation
-        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
-      } else {
-        // Handle TEXT messages normally
-        agentResponse = await processWithClaudeAgent(messageBody, from, context);
-        await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+        // Send response
+        await sendWhatsAppMessage(from, agentResponse);
 
-        // v35: Auto-send HORECA catalog when HORECA-only products mentioned (no trigger words needed)
-        // HORECA products: Bar Caddies, Bill Folders, Cork Lights (from catalog)
-        const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
-        if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
-          console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
-          try {
-            await sendWhatsAppDocument(
-              from,
-              CONFIG.PDF_CATALOG_HORECA,
-              '9Cork-HORECA-Catalog.pdf',
-              'Here\'s our HORECA catalog with details on this product! 🌿'
-            );
-          } catch (err) {
-            console.error('❌ Failed to auto-send HORECA catalog:', err.message);
+        // Handle HORECA catalog
+        if (result.node === 'HORECA' && CONFIG.PDF_CATALOG_HORECA) {
+          const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
+          if (horecaProducts.test(messageBody)) {
+            console.log('📄 [QUEUE] Auto-sending HORECA catalog');
+            try {
+              await sendWhatsAppDocument(from, CONFIG.PDF_CATALOG_HORECA, '9Cork-HORECA-Catalog.pdf', 'Here\'s our HORECA catalog!');
+            } catch (err) {
+              console.error('❌ Failed to send HORECA catalog:', err.message);
+            }
           }
         }
+
+        // Handle image detection
+        const context = await bot.stateManager.getRecentMessages(from);
+        await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
+
+        // Store in main DB
+        await storeCustomerMessage(from, messageBody || '[IMAGE]', messageId).catch(() => {});
+        await storeAgentMessage(from, agentResponse).catch(() => {});
+        await extractAndSaveMetadata(from, messageBody, agentResponse, context).catch(() => {});
+
+      } catch (optimizedErr) {
+        // ═══════════════════════════════════════════════════════════════════
+        // FALLBACK: Original bot
+        // ═══════════════════════════════════════════════════════════════════
+        console.error(`⚠️ [QUEUE] Optimized bot failed, using fallback:`, optimizedErr.message);
+
+        let context = [];
+        try {
+          context = await Promise.race([
+            getConversationContext(from),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+          ]);
+        } catch (e) {
+          context = [];
+        }
+
+        if (messageType === 'image' && mediaId) {
+          const result = await visionHandler.handleImageMessage(mediaId, messageBody, from, context, SYSTEM_PROMPT);
+          agentResponse = result.response;
+          await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
+        } else {
+          agentResponse = await processWithClaudeAgent(messageBody, from, context);
+          await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+
+          const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
+          if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
+            try {
+              await sendWhatsAppDocument(from, CONFIG.PDF_CATALOG_HORECA, '9Cork-HORECA-Catalog.pdf', 'Here\'s our HORECA catalog!');
+            } catch (err) {
+              console.error('❌ Failed to send HORECA catalog:', err.message);
+            }
+          }
+        }
+
+        await sendWhatsAppMessage(from, agentResponse);
+        await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
+        await storeAgentMessage(from, agentResponse).catch(() => {});
       }
 
-      // Send response back to customer
-      await sendWhatsAppMessage(from, agentResponse);
-
-      // v52 FIX: Mark message as successfully sent to prevent queue retries from resending
+      // Mark as sent
       sentResponses.set(messageId, {
         timestamp: new Date(),
-        responseText: agentResponse.substring(0, 100), // Store first 100 chars for logging
+        responseText: agentResponse.substring(0, 100),
         phoneNumber: from
       });
-      console.log(`✅ Marked message ${messageId} as sent successfully`);
 
-      // Handle image detection and sending (SHARED FUNCTION - works for both queue and direct paths)
-      // v42: Pass conversation context for pronoun resolution
-      await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
-
-      // Store agent response in database (non-blocking)
-      await storeAgentMessage(from, agentResponse).catch(() => {});
-
-      // v53.19 NEW: Extract and save conversation metadata for cross-session memory
-      await extractAndSaveMetadata(from, messageBody, agentResponse, context).catch(err => {
-        console.error('⚠️ Metadata extraction failed:', err.message);
-      });
-
-      console.log('✅ Message processed successfully');
+      console.log('✅ [QUEUE] Message processed successfully');
     } catch (error) {
-      console.error('❌ Error processing message:', error);
+      console.error('❌ [QUEUE] Error processing message:', error);
       if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
-
-      // Send error message to customer
-      await sendWhatsAppMessage(
-        from,
-        "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
-      );
+      await sendWhatsAppMessage(from, "Sorry, I'm experiencing technical difficulties. Please try again in a moment.");
     }
     }); // end withPhoneLock
   });
@@ -2601,99 +2612,151 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
       }
 
       // Process text messages AND image messages
+      // ═══════════════════════════════════════════════════════════════════════════
+      // v54: OPTIMIZED BOT ROLLOUT - Using 3-agent architecture for all messages
+      // Token savings: 70-85% (800-2000 tokens -> ~255 tokens per message)
+      // Fallback: Original bot if optimized fails
+      // ═══════════════════════════════════════════════════════════════════════════
       if ((messageType === 'text' && messageBody) || messageType === 'image') {
         // Add to queue for processing (if queue is available)
         if (messageQueue) {
           await messageQueue.add('process-message', {
             from,
-            messageBody: messageBody || 'What is this?', // Default question for images without caption
+            messageBody: messageBody || 'What is this?',
             messageId,
             messageType,
-            mediaId, // Include media ID for images
-            timestamp: new Date()
+            mediaId,
+            timestamp: new Date(),
+            useOptimized: true // Flag for queue processor
           });
-          console.log('✅ Message added to queue');
+          console.log('✅ Message added to queue (optimized mode)');
         } else {
-          console.log('⚠️  Queue unavailable - processing directly');
+          console.log('⚡ Processing with OPTIMIZED BOT (3-agent architecture)');
 
-          // v52 FIX: Check if already sent (same check as queue processor)
+          // v52 FIX: Check if already sent
           if (sentResponses.has(messageId)) {
             const previousResponse = sentResponses.get(messageId);
             console.log(`✅ Message ${messageId} already sent at ${previousResponse.timestamp.toISOString()}`);
-            return; // Skip duplicate processing
+            return;
           }
 
-          // Process directly without queue (serialized per-phone)
+          // Process with optimized bot (serialized per-phone)
           await withPhoneLock(from, async () => {
-          try {
-            // Get conversation context with timeout fallback
-            let context = [];
             try {
-              const contextPromise = getConversationContext(from);
-              const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Context timeout')), 2000)
-              );
-              context = await Promise.race([contextPromise, timeoutPromise]);
-            } catch (error) {
-              console.log('⚠️ Context unavailable - using empty context');
-              context = [];
-            }
+              // Initialize optimized bot
+              const bot = await getOrInitOptimizedBot();
 
-            let response;
-            // Handle IMAGE messages with vision AI
-            if (messageType === 'image' && mediaId) {
-              console.log('📸 Processing image message with vision AI...');
-              const result = await visionHandler.handleImageMessage(
-                mediaId,
-                messageBody || 'What is this?',
+              // Process message with optimized 3-agent system
+              const result = await bot.processMessage(
                 from,
-                context,
-                SYSTEM_PROMPT
+                messageBody || '[IMAGE]',
+                messageType,
+                mediaId
               );
-              response = result.response;
 
-              // Store image indicator in conversation (not the image itself)
-              await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
-            } else {
-              // Handle TEXT messages normally
-              response = await processWithClaudeAgent(messageBody, from, context);
-              await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+              console.log(`[${requestId}] ⚡ OPTIMIZED: Node=${result.node}, Latency=${result.latency}ms`);
 
-              // v35: Auto-send HORECA catalog when HORECA-only products mentioned
-              const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
-              if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
-                console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
-                try {
-                  await sendWhatsAppDocument(
-                    from,
-                    CONFIG.PDF_CATALOG_HORECA,
-                    '9Cork-HORECA-Catalog.pdf',
-                    'Here\'s our HORECA catalog with details on this product! 🌿'
-                  );
-                } catch (err) {
-                  console.error('❌ Failed to auto-send HORECA catalog:', err.message);
+              // Send response
+              await sendWhatsAppMessage(from, result.response);
+
+              // Handle HORECA catalog auto-send
+              if (result.node === 'HORECA' && CONFIG.PDF_CATALOG_HORECA) {
+                const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
+                if (horecaProducts.test(messageBody)) {
+                  console.log('📄 Auto-sending HORECA catalog');
+                  try {
+                    await sendWhatsAppDocument(
+                      from,
+                      CONFIG.PDF_CATALOG_HORECA,
+                      '9Cork-HORECA-Catalog.pdf',
+                      'Here\'s our HORECA catalog!'
+                    );
+                  } catch (err) {
+                    console.error('❌ Failed to send HORECA catalog:', err.message);
+                  }
                 }
               }
+
+              // Handle image detection for non-optimized media triggers
+              // (optimized bot handles its own media via media-handler.js)
+              const context = await bot.stateManager.getRecentMessages(from);
+              await handleImageDetectionAndSending(from, result.response, messageBody, context);
+
+              // Store in main conversation DB for compatibility
+              await storeCustomerMessage(from, messageBody || '[IMAGE]', messageId).catch(() => {});
+              await storeAgentMessage(from, result.response).catch(() => {});
+
+              // Extract metadata for 4-day memory
+              await extractAndSaveMetadata(from, messageBody, result.response, context).catch(() => {});
+
+            } catch (optimizedErr) {
+              // ═══════════════════════════════════════════════════════════════════
+              // FALLBACK: Use original bot if optimized fails
+              // ═══════════════════════════════════════════════════════════════════
+              console.error(`[${requestId}] ⚠️ Optimized bot failed, using fallback:`, optimizedErr.message);
+
+              try {
+                // Get conversation context with timeout fallback
+                let context = [];
+                try {
+                  const contextPromise = getConversationContext(from);
+                  const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Context timeout')), 2000)
+                  );
+                  context = await Promise.race([contextPromise, timeoutPromise]);
+                } catch (error) {
+                  console.log('⚠️ Context unavailable - using empty context');
+                  context = [];
+                }
+
+                let response;
+                // Handle IMAGE messages with vision AI
+                if (messageType === 'image' && mediaId) {
+                  console.log('📸 [FALLBACK] Processing image with vision AI...');
+                  const result = await visionHandler.handleImageMessage(
+                    mediaId,
+                    messageBody || 'What is this?',
+                    from,
+                    context,
+                    SYSTEM_PROMPT
+                  );
+                  response = result.response;
+                  await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
+                } else {
+                  // Handle TEXT messages normally
+                  response = await processWithClaudeAgent(messageBody, from, context);
+                  await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+
+                  // Auto-send HORECA catalog
+                  const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
+                  if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
+                    console.log('📄 [FALLBACK] Auto-sending HORECA catalog');
+                    try {
+                      await sendWhatsAppDocument(
+                        from,
+                        CONFIG.PDF_CATALOG_HORECA,
+                        '9Cork-HORECA-Catalog.pdf',
+                        'Here\'s our HORECA catalog!'
+                      );
+                    } catch (err) {
+                      console.error('❌ Failed to send HORECA catalog:', err.message);
+                    }
+                  }
+                }
+
+                await sendWhatsAppMessage(from, response);
+                await handleImageDetectionAndSending(from, response, messageBody, context);
+                await storeAgentMessage(from, response).catch(() => {});
+
+              } catch (fallbackErr) {
+                console.error('[FALLBACK] Also failed:', fallbackErr);
+                if (CONFIG.SENTRY_DSN) Sentry.captureException(fallbackErr);
+                await sendWhatsAppMessage(
+                  from,
+                  "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
+                ).catch(e => console.error('Failed to send error message:', e));
+              }
             }
-
-            await sendWhatsAppMessage(from, response);
-
-            // Handle image detection and sending (SHARED FUNCTION - works for both queue and direct paths)
-            // v42: Pass conversation context for pronoun resolution
-            await handleImageDetectionAndSending(from, response, messageBody, context);
-
-            await storeAgentMessage(from, response).catch(() => {});
-
-          } catch (err) {
-            console.error('Error processing message:', err);
-            if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
-
-            // CRITICAL FIX: Send error message to customer so they know bot is working
-            await sendWhatsAppMessage(
-              from,
-              "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
-            ).catch(e => console.error('Failed to send error message:', e));
-          }
           }); // end withPhoneLock
         }
       }
@@ -2703,6 +2766,205 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOKEN-OPTIMIZED WEBHOOK (3-Agent Architecture)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Route: POST /webhook-optimized
+// Token savings: 70-85% (800-2000 tokens -> ~255 tokens per message)
+// Components: Router Agent (~80 tokens) + State Manager (0 tokens) + Responder (~175 tokens)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Initialize optimized bot instance
+let optimizedBot = null;
+
+async function getOrInitOptimizedBot() {
+  if (!optimizedBot) {
+    optimizedBot = getOptimizedBot({
+      GROQ_API_KEY: CONFIG.GROQ_API_KEY,
+      GROQ_API_KEY_2: CONFIG.GROQ_API_KEY_2,
+      GROQ_API_KEY_3: CONFIG.GROQ_API_KEY_3,
+      GROQ_API_KEY_4: CONFIG.GROQ_API_KEY_4,
+      WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
+      WHATSAPP_PHONE_NUMBER_ID: CONFIG.WHATSAPP_PHONE_NUMBER_ID,
+      PDF_CATALOG_HORECA: CONFIG.PDF_CATALOG_HORECA,
+      PDF_CATALOG_PRODUCTS: CONFIG.PDF_CATALOG_PRODUCTS,
+      PDF_CATALOG_COMBOS: CONFIG.PDF_CATALOG_COMBOS
+    });
+
+    // Set send message function
+    optimizedBot.setSendMessageFunction(sendWhatsAppMessage);
+
+    // Initialize
+    await optimizedBot.initialize();
+    console.log('✅ Token-Optimized Bot initialized');
+  }
+  return optimizedBot;
+}
+
+// Webhook verification for optimized endpoint (same as main)
+app.get('/webhook-optimized', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === CONFIG.VERIFY_TOKEN) {
+      console.log('✅ Optimized webhook verified');
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+// Token-optimized webhook handler
+app.post('/webhook-optimized', webhookLimiter, validateWebhookSignature, async (req, res) => {
+  console.log('📨 [OPTIMIZED] Incoming webhook');
+
+  // Acknowledge immediately to Meta
+  res.sendStatus(200);
+
+  try {
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const messages = value?.messages;
+
+    if (messages && messages[0]) {
+      const message = messages[0];
+      const from = message.from;
+      const messageBody = message.text?.body || message.image?.caption || '';
+      const messageType = message.type;
+      const messageId = message.id;
+      const mediaId = message.image?.id;
+
+      const requestId = generateRequestId();
+      console.log(`[${requestId}] 📨 [OPTIMIZED] Message from ${from.slice(-4)} (${messageType})`);
+
+      // Message deduplication
+      if (processedMessageIds.has(messageId)) {
+        console.log(`[${requestId}] 🔄 Duplicate message - skipping`);
+        return;
+      }
+      processedMessageIds.add(messageId);
+
+      // Validate message
+      const validation = validateWhatsAppMessage(message);
+      if (!validation.valid) {
+        console.warn(`[${requestId}] ❌ Invalid message: ${validation.error}`);
+        return;
+      }
+
+      // Rate limit check
+      const rateLimitCheck = checkPhoneRateLimit(from, messageBody);
+      if (rateLimitCheck === 'silent_drop') {
+        console.log(`[${requestId}] 💡 Silently dropping rapid message`);
+        return;
+      }
+
+      // Check for reset request
+      if (messageType === 'text' && isResetRequest(messageBody)) {
+        console.log(`[${requestId}] 🔄 Reset request detected`);
+        const bot = await getOrInitOptimizedBot();
+        await bot.resetConversation(from);
+
+        const freshGreeting = "👋 Fresh start! I'm Sita from 9 Cork. What brings you here - personal use, corporate gifting, or HORECA?";
+        await sendWhatsAppMessage(from, freshGreeting);
+        return;
+      }
+
+      // Process with optimized bot
+      if ((messageType === 'text' && messageBody) || messageType === 'image') {
+        await withPhoneLock(from, async () => {
+          try {
+            const bot = await getOrInitOptimizedBot();
+
+            // Process message
+            const result = await bot.processMessage(
+              from,
+              messageBody || '[IMAGE]',
+              messageType,
+              mediaId
+            );
+
+            console.log(`[${requestId}] [OPTIMIZED] Node: ${result.node}, Latency: ${result.latency}ms`);
+
+            // Send response
+            await sendWhatsAppMessage(from, result.response);
+
+            // Handle auto-send HORECA catalog for HORECA products
+            if (result.node === 'HORECA' && CONFIG.PDF_CATALOG_HORECA) {
+              const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
+              if (horecaProducts.test(messageBody)) {
+                console.log(`[${requestId}] 📄 Auto-sending HORECA catalog`);
+                try {
+                  await sendWhatsAppDocument(
+                    from,
+                    CONFIG.PDF_CATALOG_HORECA,
+                    '9Cork-HORECA-Catalog.pdf',
+                    'Here\'s our HORECA catalog!'
+                  );
+                } catch (err) {
+                  console.error('❌ Failed to send HORECA catalog:', err.message);
+                }
+              }
+            }
+
+            // Store messages in main conversation DB (for cross-system compatibility)
+            await storeCustomerMessage(from, messageBody || '[IMAGE]', messageId).catch(() => {});
+            await storeAgentMessage(from, result.response).catch(() => {});
+
+            // Extract metadata for 4-day memory
+            const context = await bot.stateManager.getRecentMessages(from);
+            await extractAndSaveMetadata(from, messageBody, result.response, context).catch(() => {});
+
+          } catch (err) {
+            console.error(`[${requestId}] [OPTIMIZED] Error:`, err.message);
+
+            // Fallback: Route to existing bot on error
+            console.log(`[${requestId}] 🔄 Falling back to standard bot`);
+
+            try {
+              const context = await getConversationContext(from);
+              const response = await processWithClaudeAgent(messageBody || '[IMAGE]', from, context);
+              await sendWhatsAppMessage(from, response);
+              await storeCustomerMessage(from, messageBody || '[IMAGE]', messageId).catch(() => {});
+              await storeAgentMessage(from, response).catch(() => {});
+            } catch (fallbackErr) {
+              console.error(`[${requestId}] Fallback also failed:`, fallbackErr.message);
+              await sendWhatsAppMessage(from, "I'm having trouble. Please try again.").catch(() => {});
+            }
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.error('❌ [OPTIMIZED] Error processing webhook:', error);
+    if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
+  }
+});
+
+// Stats endpoint for optimized bot
+app.get('/optimized-stats', async (req, res) => {
+  try {
+    const bot = await getOrInitOptimizedBot();
+    const stats = bot.getStats();
+    res.json({
+      status: 'ok',
+      healthy: bot.isHealthy(),
+      stats
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// END TOKEN-OPTIMIZED WEBHOOK
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // v53.19: Extract and save conversation metadata for cross-session memory (4 days)
 async function extractAndSaveMetadata(phoneNumber, customerMessage, agentResponse, context) {
@@ -3545,6 +3807,8 @@ module.exports = {
   getConversationContext,
   clearConversationHistory,
   extractAndSaveMetadata,
+  // Token-optimized bot
+  getOrInitOptimizedBot,
   // Internal state (for testing)
   CONFIG,
   sentImagesTracker,
