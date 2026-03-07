@@ -1,0 +1,69 @@
+{
+  "startedAt": "2026-02-08T14:12:11.555Z",
+  "lastUpdated": "2026-03-07T06:49:10.542Z",
+  "totalImages": 0,
+  "providers": {
+    "smartMatcher": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "local": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "together": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "gemini": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "claude": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "googleCloud": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "huggingFace": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    },
+    "fallback": {
+      "success": 0,
+      "failures": 0,
+      "totalLatencyMs": 0,
+      "avgLatencyMs": 0
+    }
+  },
+  "latency": {
+    "min": null,
+    "max": null,
+    "avg": 0,
+    "total": 0,
+    "count": 0
+  },
+  "byType": {
+    "product": 0,
+    "logo": 0,
+    "reference": 0,
+    "unknown": 0
+  },
+  "recentImages": []
+}
