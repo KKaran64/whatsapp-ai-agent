@@ -421,6 +421,17 @@ describe('AIProviderManager - tryGemini', () => {
     const manager = new AIProviderManager({});
     await expect(manager.tryGemini('system', [], 'hello')).rejects.toThrow('No Gemini API keys configured');
   });
+
+  it('uses stable gemini model, not experimental', async () => {
+    const manager = new AIProviderManager({ GEMINI_API_KEY: 'test-key' });
+    axios.post.mockResolvedValue({
+      data: { candidates: [{ content: { parts: [{ text: 'ok' }] } }] }
+    });
+    await manager.tryGemini('sys', [], 'hello');
+    const url = axios.post.mock.calls[0]?.[0] || '';
+    expect(url).not.toContain('-exp');
+    expect(url).toContain('gemini');
+  });
 });
 
 // ─── tryClaude ───────────────────────────────────────────────────────────────
