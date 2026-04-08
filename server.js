@@ -1574,20 +1574,39 @@ async function connectDatabase() {
   }
 }
 
-// FIX #3: MongoDB Reconnection Logic (auto-recovery from disconnects)
+// FIX #3: MongoDB Reconnection Logic (auto-recovery from disconnects with exponential backoff)
+// Exported for testing
+function calculateReconnectDelay(attempt) {
+  const base = 5000;
+  const max = 60000;
+  return Math.min(base * Math.pow(2, attempt), max);
+}
+
+let reconnectAttempt = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 mongoose.connection.on('disconnected', () => {
-  console.error('❌ MongoDB disconnected. Attempting to reconnect in 5 seconds...');
+  console.error('❌ MongoDB disconnected.');
+  if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+    console.error('❌ Max reconnect attempts reached. Manual intervention required.');
+    return;
+  }
+
+  const delay = calculateReconnectDelay(reconnectAttempt);
+  reconnectAttempt++;
+  console.log(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})...`);
 
   setTimeout(() => {
     mongoose.connect(CONFIG.MONGODB_URI, {
       serverSelectionTimeoutMS: 5000
     }).then(() => {
       console.log('✅ MongoDB reconnected successfully');
+      reconnectAttempt = 0;
     }).catch(err => {
       console.error('❌ MongoDB reconnection failed:', err.message);
       if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
     });
-  }, 5000);
+  }, delay);
 });
 
 mongoose.connection.on('error', (err) => {
@@ -1597,6 +1616,7 @@ mongoose.connection.on('error', (err) => {
 
 mongoose.connection.on('reconnected', () => {
   console.log('✅ MongoDB reconnected');
+  reconnectAttempt = 0;
 });
 
 // Initialize Redis queue (non-blocking)
@@ -3500,12 +3520,17 @@ app.get('/stats', monitoringLimiter, async (req, res) => {
   try {
     const totalCustomers = await Customer.countDocuments();
     const activeConversations = await Conversation.countDocuments({ status: 'active' });
-    const queueStats = await messageQueue.getJobCounts();
+
+    // Guard: queue may be null if Redis is unavailable
+    const queueStats = messageQueue
+      ? await messageQueue.getJobCounts()
+      : { waiting: 0, active: 0, completed: 0, failed: 0 };
 
     res.json({
       customers: totalCustomers,
       activeConversations,
-      queue: queueStats
+      queue: queueStats,
+      queueAvailable: !!messageQueue
     });
   } catch (error) {
     console.error('Error getting stats:', error);
