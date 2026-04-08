@@ -3520,7 +3520,11 @@ app.post('/admin/clear-products', adminLimiter, async (req, res) => {
 
     // Authentication using ADMIN_SECRET (separate from webhook VERIFY_TOKEN)
     const token = req.headers['authorization']?.replace('Bearer ', '');
-    if (!CONFIG.ADMIN_SECRET || token !== CONFIG.ADMIN_SECRET) {
+    if (!CONFIG.ADMIN_SECRET) {
+      console.error('❌ ADMIN_SECRET not configured — admin endpoint is locked');
+      return res.status(503).json({ error: 'Admin endpoint not configured' });
+    }
+    if (token !== CONFIG.ADMIN_SECRET) {
       console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -3553,7 +3557,11 @@ app.post('/admin/import-products', adminLimiter, async (req, res) => {
 
     // Authentication using ADMIN_SECRET (separate from webhook VERIFY_TOKEN)
     const token = req.headers['authorization']?.replace('Bearer ', '');
-    if (!CONFIG.ADMIN_SECRET || token !== CONFIG.ADMIN_SECRET) {
+    if (!CONFIG.ADMIN_SECRET) {
+      console.error('❌ ADMIN_SECRET not configured — admin endpoint is locked');
+      return res.status(503).json({ error: 'Admin endpoint not configured' });
+    }
+    if (token !== CONFIG.ADMIN_SECRET) {
       console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -3625,6 +3633,11 @@ app.listen(CONFIG.PORT, () => {
   console.log(`🏥 Health check: http://localhost:${CONFIG.PORT}/health`);
   console.log(`📊 Stats: http://localhost:${CONFIG.PORT}/stats`);
   console.log(`📦 Admin import: http://localhost:${CONFIG.PORT}/admin/import-products\n`);
+
+  // Validate admin configuration
+  if (!CONFIG.ADMIN_SECRET) {
+    console.warn('⚠️ WARNING: ADMIN_SECRET is not set. Admin endpoints are locked but misconfigured. Set ADMIN_SECRET env var.');
+  }
 
   // Connect to services in the background (non-blocking)
   console.log('🔄 Connecting to databases...');
