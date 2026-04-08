@@ -1904,6 +1904,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // Initialize tracker
       if (!sentImagesTracker.has(from)) {
         sentImagesTracker.set(from, new Set());
+        sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
       }
 
       let totalSent = 0;
@@ -1919,6 +1920,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
             if (isValidImageUrl(imageUrl)) {
               await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
               sentImagesTracker.get(from).add(originalUrl);
+              sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
               totalSent++;
               console.log(`   ✅ Sent: ${product.name}`);
               await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between images
@@ -1998,6 +2000,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // Initialize sent images tracker for this phone number
       if (!sentImagesTracker.has(from)) {
         sentImagesTracker.set(from, new Set());
+        sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
       }
       const sentImages = sentImagesTracker.get(from);
 
@@ -2100,6 +2103,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
             if (imageSent) {
               sentImages.add(originalUrl); // Track only on confirmed success
+              sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
               sentCount++;
               console.log(`   📸 Image send to ${from}: ✅ delivered - ${product.name} (${sentCount}/${products.length})`);
             } else {
@@ -2387,8 +2391,45 @@ const phoneRateLimits = new Map();
 
 // v49: Message deduplication cache (prevent processing same message twice)
 // Meta sometimes sends duplicate webhooks for reliability - causes duplicate AI responses
-const processedMessageIds = new Set();
+// TTL-based Map: replaces size-based Set clear to avoid wiping recent IDs
+class MessageDeduplicator {
+  constructor(ttlMs = 5 * 60 * 1000) {
+    this.ttlMs = ttlMs;
+    this.store = new Map(); // id -> timestamp
+  }
+
+  add(id) {
+    this.store.set(id, Date.now());
+  }
+
+  has(id) {
+    const ts = this.store.get(id);
+    if (!ts) return false;
+    if (Date.now() - ts > this.ttlMs) {
+      this.store.delete(id);
+      return false;
+    }
+    return true;
+  }
+
+  cleanup() {
+    const now = Date.now();
+    for (const [id, ts] of this.store) {
+      if (now - ts > this.ttlMs) {
+        this.store.delete(id);
+      }
+    }
+  }
+
+  clear() {
+    this.store.clear();
+  }
+
+  get size() { return this.store.size; }
+}
+
 const MESSAGE_DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
+const processedMessageIds = new MessageDeduplicator(MESSAGE_DEDUP_TTL);
 
 // v52 FIX: Track successfully sent responses to prevent queue retries from resending
 // When Bull queue retries a failed job, it must NOT resend if message was already sent
@@ -2406,11 +2447,8 @@ setInterval(() => {
     }
   }
 
-  // v49: Clean up message deduplication cache
-  if (processedMessageIds.size > 500) {
-    console.log(`🧹 Clearing message deduplication cache (${processedMessageIds.size} entries)`);
-    processedMessageIds.clear();
-  }
+  // v49: Clean up message deduplication cache (TTL-based, removes only expired entries)
+  processedMessageIds.cleanup();
 }, 5 * 60 * 1000);
 
 function checkPhoneRateLimit(phoneNumber, messageContent = '') {
@@ -3701,17 +3739,20 @@ setInterval(() => {
     console.log(`🧹 Memory cleanup: Removed ${cleaned} old conversations`);
   }
 
-  // Clean up sent images tracker for inactive conversations
+  // Clean up sent images tracker using independent TTL (30 minutes)
   let imagesCleaned = 0;
+  const now = Date.now();
   for (const phone of sentImagesTracker.keys()) {
-    if (!conversationMemory.has(phone)) {
+    const ts = sentImagesTimestamps.get(phone);
+    if (!ts || now - ts > SENT_IMAGES_TTL) {
       sentImagesTracker.delete(phone);
+      sentImagesTimestamps.delete(phone);
       imagesCleaned++;
     }
   }
 
   if (imagesCleaned > 0) {
-    console.log(`🧹 Memory cleanup: Removed ${imagesCleaned} image trackers`);
+    console.log(`🧹 Memory cleanup: Removed ${imagesCleaned} image trackers (TTL-based)`);
   }
 
   // Log memory stats
@@ -3784,5 +3825,7 @@ module.exports = {
   processedMessageIds,
   sentResponses,
   conversationMemory,
-  phoneRateLimits
+  phoneRateLimits,
+  // MessageDeduplicator class (for testing)
+  MessageDeduplicator
 };
