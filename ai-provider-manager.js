@@ -137,7 +137,7 @@ class AIProviderManager {
   }
 
   // Try Groq (PRIMARY - Free) with automatic key rotation
-  async tryGroq(systemPrompt, conversationHistory, userMessage) {
+  async tryGroq(systemPrompt, conversationHistory, userMessage, userId = null) {
     if (this.groqClients.length === 0) {
       throw new Error('No Groq API keys configured');
     }
@@ -170,7 +170,7 @@ class AIProviderManager {
         this.stats.groq.success++;
 
         // Cache the response
-        this.cacheResponse(userMessage, response);
+        this.cacheResponse(userMessage, response, userId);
 
         return { provider: 'groq', response };
       } catch (error) {
@@ -214,7 +214,7 @@ class AIProviderManager {
   }
 
   // Try Google Gemini (SECONDARY - Free) with automatic key rotation
-  async tryGemini(systemPrompt, conversationHistory, userMessage) {
+  async tryGemini(systemPrompt, conversationHistory, userMessage, userId = null) {
     if (this.geminiKeys.length === 0) {
       throw new Error('No Gemini API keys configured');
     }
@@ -250,7 +250,7 @@ class AIProviderManager {
         this.stats.gemini.success++;
 
         // Cache the response
-        this.cacheResponse(userMessage, aiResponse);
+        this.cacheResponse(userMessage, aiResponse, userId);
 
         return { provider: 'gemini', response: aiResponse };
       } catch (error) {
@@ -282,7 +282,7 @@ class AIProviderManager {
   }
 
   // Try Anthropic Claude (TERTIARY - Paid but most reliable)
-  async tryClaude(systemPrompt, conversationHistory, userMessage) {
+  async tryClaude(systemPrompt, conversationHistory, userMessage, userId = null) {
     if (!this.anthropic) {
       throw new Error('Claude API key not configured');
     }
@@ -304,7 +304,7 @@ class AIProviderManager {
       this.stats.claude.success++;
 
       // Cache the response
-      this.cacheResponse(userMessage, aiResponse);
+      this.cacheResponse(userMessage, aiResponse, userId);
 
       return { provider: 'claude', response: aiResponse };
     } catch (error) {
@@ -357,9 +357,9 @@ class AIProviderManager {
   }
 
   // Main method: Try all providers with fallbacks
-  async getResponse(systemPrompt, conversationHistory, userMessage) {
+  async getResponse(systemPrompt, conversationHistory, userMessage, userId = null) {
     // 1. Check cache first
-    const cachedResponse = this.checkCache(userMessage);
+    const cachedResponse = this.checkCache(userMessage, userId);
     if (cachedResponse) {
       console.log('⚡ Cache hit - instant response');
       return { provider: 'cache', response: cachedResponse };
@@ -367,14 +367,14 @@ class AIProviderManager {
 
     // 2. Try Groq FIRST (Primary - FREE & Fast)
     try {
-      return await this.tryGroq(systemPrompt, conversationHistory, userMessage);
+      return await this.tryGroq(systemPrompt, conversationHistory, userMessage, userId);
     } catch (error) {
       console.log('❌ Groq failed:', error.message);
     }
 
     // 3. Try Gemini (Secondary - FREE fallback)
     try {
-      return await this.tryGemini(systemPrompt, conversationHistory, userMessage);
+      return await this.tryGemini(systemPrompt, conversationHistory, userMessage, userId);
     } catch (error) {
       console.log('❌ Gemini failed:', error.message);
     }

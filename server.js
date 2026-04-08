@@ -3272,7 +3272,8 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     const result = await aiManager.getResponse(
       systemPrompt, // v53.20: Now dynamic based on previous conversation!
       contextWithFacts.slice(-50), // Last 50 messages (including new message with facts)
-      contextAwareMessage
+      contextAwareMessage,
+      sanitizedPhone  // Pass userId for cache isolation (prevents cross-user cache contamination)
     );
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
