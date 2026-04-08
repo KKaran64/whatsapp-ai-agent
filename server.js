@@ -190,8 +190,10 @@ const { RATE_LIMITS, DATABASE, MESSAGE } = require('./config/constants');
 
 const app = express();
 
-// Trust proxy for rate limiting when behind ngrok/reverse proxy
-app.set('trust proxy', 'loopback, linklocal, uniquelocal');
+// Trust Render.com's single-hop proxy. Render strips X-Forwarded-For from clients
+// before adding its own, so trusting one hop is safe here. This ensures req.ip is
+// correctly set for rate limiting across Render's private IP infrastructure.
+app.set('trust proxy', 1);
 
 // Security headers middleware using Helmet
 app.use(helmet({
