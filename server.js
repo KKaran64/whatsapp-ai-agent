@@ -191,7 +191,7 @@ const { RATE_LIMITS, DATABASE, MESSAGE } = require('./config/constants');
 const app = express();
 
 // Trust proxy for rate limiting when behind ngrok/reverse proxy
-app.set('trust proxy', 1);
+app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
 // Security headers middleware using Helmet
 app.use(helmet({
