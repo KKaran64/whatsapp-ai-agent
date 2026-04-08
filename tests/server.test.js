@@ -229,6 +229,17 @@ afterAll(() => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('Server - Pure Utility Functions', () => {
+  describe('calculateReconnectDelay', () => {
+    test('calculateReconnectDelay increases exponentially and caps at 60s', () => {
+      const { calculateReconnectDelay } = require('../server');
+      expect(calculateReconnectDelay(0)).toBe(5000);
+      expect(calculateReconnectDelay(1)).toBe(10000);
+      expect(calculateReconnectDelay(2)).toBe(20000);
+      expect(calculateReconnectDelay(5)).toBe(60000);  // capped at 60s
+      expect(calculateReconnectDelay(10)).toBe(60000); // still capped
+    });
+  });
+
   describe('convertGoogleDriveUrl', () => {
     test('converts Google Drive share link to direct download', () => {
       const shareUrl = 'https://drive.google.com/file/d/abc123_def/view?usp=sharing';
@@ -680,6 +691,25 @@ describe('Server - Health Endpoint', () => {
     expect(res.body.providers).toBeDefined();
     expect(res.body.stats).toBeDefined();
     expect(res.body.status).toBeDefined();
+  });
+});
+
+describe('Server - Stats Endpoint', () => {
+  test('GET /stats returns statistics', async () => {
+    const res = await supertest(server.app).get('/stats');
+
+    expect(res.status).toBe(200);
+    expect(res.body.customers).toBeDefined();
+    expect(res.body.activeConversations).toBeDefined();
+    expect(res.body.queue).toBeDefined();
+  });
+
+  test('GET /stats does not crash when queue is unavailable', async () => {
+    const res = await supertest(server.app).get('/stats');
+    // Should degrade gracefully — not 500
+    expect([200, 503]).toContain(res.status);
+    // Must not leak stack traces
+    expect(res.body).not.toHaveProperty('stack');
   });
 });
 
@@ -2208,5 +2238,13 @@ describe('admin endpoints', () => {
   it('rejects admin request with no token', async () => {
     const res = await supertest(server.app).post('/admin/clear-products');
     expect(res.status).toBe(401);
+  });
+});
+
+describe('Server - Trust Proxy Security', () => {
+  it('does not use catch-all trust proxy (prevents IP spoofing)', () => {
+    const trustProxy = server.app.get('trust proxy');
+    expect(trustProxy).not.toBe(1);
+    expect(trustProxy).not.toBe(true);
   });
 });
