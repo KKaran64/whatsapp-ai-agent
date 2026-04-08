@@ -3741,7 +3741,6 @@ setInterval(() => {
 
   // Clean up sent images tracker using independent TTL (30 minutes)
   let imagesCleaned = 0;
-  const now = Date.now();
   for (const phone of sentImagesTracker.keys()) {
     const ts = sentImagesTimestamps.get(phone);
     if (!ts || now - ts > SENT_IMAGES_TTL) {

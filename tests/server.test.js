@@ -914,8 +914,8 @@ describe('Server - Internal State Management', () => {
     expect(server.sentImagesTracker).toBeInstanceOf(Map);
   });
 
-  test('processedMessageIds is a Set', () => {
-    expect(server.processedMessageIds).toBeInstanceOf(Set);
+  test('processedMessageIds is a MessageDeduplicator', () => {
+    expect(server.processedMessageIds).toBeInstanceOf(server.MessageDeduplicator);
   });
 
   test('conversationMemory is a Map', () => {
@@ -2249,5 +2249,58 @@ describe('Server - Trust Proxy Security', () => {
     expect(trustProxy).not.toBe(false);
     // For Render.com: should be 1 (single trusted hop)
     expect(trustProxy).toBe(1);
+  });
+});
+
+describe('MessageDeduplicator', () => {
+  it('expires old IDs after TTL without clearing all', () => {
+    const { MessageDeduplicator } = require('../server');
+    const dedup = new MessageDeduplicator(100); // 100ms TTL for testing
+
+    dedup.add('id-1');
+    expect(dedup.has('id-1')).toBe(true);
+
+    // Advance time beyond TTL
+    jest.useFakeTimers();
+    jest.advanceTimersByTime(200);
+    dedup.cleanup();
+
+    expect(dedup.has('id-1')).toBe(false);
+    jest.useRealTimers();
+  });
+
+  it('keeps recent IDs after cleanup', () => {
+    const { MessageDeduplicator } = require('../server');
+    const dedup = new MessageDeduplicator(60000); // 60s TTL
+
+    dedup.add('id-fresh');
+    dedup.cleanup();
+
+    expect(dedup.has('id-fresh')).toBe(true);
+  });
+
+  it('allows checking ID without side effects when not expired', () => {
+    const { MessageDeduplicator } = require('../server');
+    const dedup = new MessageDeduplicator(60000);
+
+    dedup.add('id-2');
+    expect(dedup.has('id-2')).toBe(true);
+    expect(dedup.has('id-2')).toBe(true); // Second check should also be true
+  });
+
+  it('removes only expired IDs during cleanup, not all', () => {
+    const { MessageDeduplicator } = require('../server');
+    const dedup = new MessageDeduplicator(100);
+
+    dedup.add('id-old');
+    jest.useFakeTimers();
+    jest.advanceTimersByTime(150);
+    dedup.add('id-new');
+    jest.advanceTimersByTime(0); // Don't advance further
+    dedup.cleanup();
+
+    expect(dedup.has('id-old')).toBe(false); // Old one expired
+    expect(dedup.has('id-new')).toBe(true);  // New one still there
+    jest.useRealTimers();
   });
 });
