@@ -34,7 +34,9 @@ const sentImagesTracker = new Map(); // phoneNumber -> Set of image URLs
 const phoneProcessingLock = new Map(); // phone -> Promise
 
 // TTL for sent images tracker (reset after 30 minutes)
+// TEMPORARY: WILL BE REMOVED in Task 10 when sentImagesTracker is replaced with Redis
 const SENT_IMAGES_TTL = 30 * 60 * 1000; // 30 minutes
+// TEMPORARY: WILL BE REMOVED in Task 10 when sentImagesTracker is replaced with Redis
 const sentImagesTimestamps = new Map(); // phone -> timestamp
 
 // MongoDB Product Query Helpers
