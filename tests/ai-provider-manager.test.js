@@ -555,3 +555,33 @@ describe('AIProviderManager - Statistics', () => {
     expect(stats.totalRequests).toBe(17);
   });
 });
+
+// ─── cache userId isolation through getResponse call chain ─────────────────
+
+describe('cache userId isolation through getResponse call chain', () => {
+  it('passes userId to cacheResponse in tryGroq', async () => {
+    const manager = new AIProviderManager({ GROQ_API_KEY: 'test-key' });
+    const cacheSpy = jest.spyOn(manager, 'cacheResponse');
+
+    // Mock the Groq client call
+    const groqSpy = jest.spyOn(manager.groqClients[0].chat.completions, 'create').mockResolvedValue({
+      choices: [{ message: { content: 'mocked groq response' } }]
+    });
+
+    await manager.tryGroq('sys', [], 'hello world', 'userPhone123');
+
+    expect(cacheSpy).toHaveBeenCalledWith('hello world', 'mocked groq response', 'userPhone123');
+    cacheSpy.mockRestore();
+    groqSpy.mockRestore();
+  });
+
+  it('getResponse calls checkCache with userId', async () => {
+    const manager = new AIProviderManager({});
+    const checkSpy = jest.spyOn(manager, 'checkCache').mockReturnValue(null);
+
+    await manager.getResponse('sys', [], 'price question', 'userB').catch(() => {});
+
+    expect(checkSpy).toHaveBeenCalledWith('price question', 'userB');
+    checkSpy.mockRestore();
+  });
+});
