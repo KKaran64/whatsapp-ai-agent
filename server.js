@@ -3751,6 +3751,7 @@ setInterval(async () => {
 // Export for testing
 module.exports = {
   app,
+  calculateReconnectDelay,
   convertGoogleDriveUrl,
   isValidImageUrl,
   validateWhatsAppMessage,
