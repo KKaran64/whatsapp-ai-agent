@@ -243,6 +243,7 @@ const CONFIG = {
   WHATSAPP_TOKEN: (process.env.WHATSAPP_TOKEN || 'your_whatsapp_access_token').trim(),
   WHATSAPP_PHONE_NUMBER_ID: (process.env.WHATSAPP_PHONE_NUMBER_ID || 'your_phone_number_id').trim(),
   VERIFY_TOKEN: (process.env.VERIFY_TOKEN || 'your_verify_token').trim(),
+  ADMIN_SECRET: (process.env.ADMIN_SECRET || '').trim(),
   WHATSAPP_APP_SECRET: (process.env.WHATSAPP_APP_SECRET || '').trim(),
   PORT: process.env.PORT || 3000,
   // Groq API keys (up to 4)
@@ -2352,6 +2353,13 @@ const monitoringLimiter = rateLimit({
   legacyHeaders: false
 });
 
+// Admin endpoints rate limiter (strict — only 5 requests per minute)
+const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 5,
+  message: { error: 'Too many admin requests' }
+});
+
 // FIX #4: Per-Phone Rate Limiting (prevents spam from individual users)
 const phoneRateLimits = new Map();
 
@@ -3506,13 +3514,13 @@ app.get('/stats', monitoringLimiter, async (req, res) => {
 });
 
 // Admin endpoint: Clear all products from database
-app.post('/admin/clear-products', async (req, res) => {
+app.post('/admin/clear-products', adminLimiter, async (req, res) => {
   try {
     console.log('📥 Admin clear endpoint called');
 
-    // Simple authentication using VERIFY_TOKEN
+    // Authentication using ADMIN_SECRET (separate from webhook VERIFY_TOKEN)
     const token = req.headers['authorization']?.replace('Bearer ', '');
-    if (token !== CONFIG.VERIFY_TOKEN) {
+    if (!CONFIG.ADMIN_SECRET || token !== CONFIG.ADMIN_SECRET) {
       console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -3539,13 +3547,13 @@ app.post('/admin/clear-products', async (req, res) => {
 });
 
 // Admin endpoint: Import products (one-time setup)
-app.post('/admin/import-products', async (req, res) => {
+app.post('/admin/import-products', adminLimiter, async (req, res) => {
   try {
     console.log('📥 Admin import endpoint called');
 
-    // Simple authentication using VERIFY_TOKEN
+    // Authentication using ADMIN_SECRET (separate from webhook VERIFY_TOKEN)
     const token = req.headers['authorization']?.replace('Bearer ', '');
-    if (token !== CONFIG.VERIFY_TOKEN) {
+    if (!CONFIG.ADMIN_SECRET || token !== CONFIG.ADMIN_SECRET) {
       console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
