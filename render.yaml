@@ -36,3 +36,5 @@ services:
         sync: false
       - key: GROQ_API_KEY_4
         sync: false
+      - key: ADMIN_SECRET
+        sync: false

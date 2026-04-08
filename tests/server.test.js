@@ -19,6 +19,7 @@
 process.env.WHATSAPP_TOKEN = 'test-whatsapp-token';
 process.env.WHATSAPP_PHONE_NUMBER_ID = '123456789';
 process.env.VERIFY_TOKEN = 'test-verify-token';
+process.env.ADMIN_SECRET = 'test-admin-secret';
 process.env.MONGODB_URI = 'mongodb://localhost:27017/test';
 process.env.WHATSAPP_APP_SECRET = '';  // empty = dev mode (skip signature)
 process.env.NODE_ENV = 'development';
@@ -695,7 +696,7 @@ describe('Server - Admin Endpoints', () => {
   test('POST /admin/clear-products succeeds with valid token', async () => {
     const res = await supertest(server.app)
       .post('/admin/clear-products')
-      .set('Authorization', 'Bearer test-verify-token')
+      .set('Authorization', 'Bearer test-admin-secret')
       .send({});
 
     expect(res.status).toBe(200);
@@ -714,7 +715,7 @@ describe('Server - Admin Endpoints', () => {
   test('POST /admin/import-products succeeds with valid token', async () => {
     const res = await supertest(server.app)
       .post('/admin/import-products')
-      .set('Authorization', 'Bearer test-verify-token')
+      .set('Authorization', 'Bearer test-admin-secret')
       .send({});
 
     expect(res.status).toBe(200);
@@ -2193,5 +2194,19 @@ describe('Server - validateWhatsAppMessage edge cases', () => {
     const result = server.validateWhatsAppMessage(null);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Validation error');
+  });
+});
+
+describe('admin endpoints', () => {
+  it('rejects admin request using VERIFY_TOKEN instead of ADMIN_SECRET', async () => {
+    const res = await supertest(server.app)
+      .post('/admin/clear-products')
+      .set('Authorization', `Bearer ${process.env.VERIFY_TOKEN || 'verify-token'}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects admin request with no token', async () => {
+    const res = await supertest(server.app).post('/admin/clear-products');
+    expect(res.status).toBe(401);
   });
 });
