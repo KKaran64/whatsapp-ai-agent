@@ -2242,9 +2242,12 @@ describe('admin endpoints', () => {
 });
 
 describe('Server - Trust Proxy Security', () => {
-  it('does not use catch-all trust proxy (prevents IP spoofing)', () => {
+  it('trust proxy is set appropriately for single-hop proxy (Render.com)', () => {
     const trustProxy = server.app.get('trust proxy');
-    expect(trustProxy).not.toBe(1);
+    // Must not be 'true' (trusts all hops) or false (ignores all proxies)
     expect(trustProxy).not.toBe(true);
+    expect(trustProxy).not.toBe(false);
+    // For Render.com: should be 1 (single trusted hop)
+    expect(trustProxy).toBe(1);
   });
 });
