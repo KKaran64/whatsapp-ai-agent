@@ -30,17 +30,14 @@ const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseSt
 // Import System Prompt Builder (extracted for maintainability)
 const { buildSystemPrompt } = require('./prompts/system-prompt');
 
+// Redis-backed sent images tracker (survives deploys; falls back to in-memory when Redis unavailable)
+const { RedisSentImagesTracker } = require('./utils/redis-state');
+
 // Track sent images per conversation to avoid duplicates
-const sentImagesTracker = new Map(); // phoneNumber -> Set of image URLs
+let sentImagesTracker = new RedisSentImagesTracker(null); // will be upgraded to Redis after connectQueue
 
 // Per-phone processing queue (serialize messages from same customer to prevent race conditions)
 const phoneProcessingLock = new Map(); // phone -> Promise
-
-// TTL for sent images tracker (reset after 30 minutes)
-// TEMPORARY: WILL BE REMOVED in Task 10 when sentImagesTracker is replaced with Redis
-const SENT_IMAGES_TTL = 30 * 60 * 1000; // 30 minutes
-// TEMPORARY: WILL BE REMOVED in Task 10 when sentImagesTracker is replaced with Redis
-const sentImagesTimestamps = new Map(); // phone -> timestamp
 
 // MongoDB Product Query Helpers
 async function findProductsByCategory(category, limit = 10, phoneNumber = null, excludeSent = false) {
@@ -93,11 +90,11 @@ async function findProductsByCategory(category, limit = 10, phoneNumber = null, 
     }
 
     // Filter out already-sent images if requested
-    if (excludeSent && phoneNumber && sentImagesTracker.has(phoneNumber)) {
-      const sentImages = sentImagesTracker.get(phoneNumber);
+    if (excludeSent && phoneNumber) {
+      const sentUrls = new Set(await sentImagesTracker.getAll(phoneNumber));
       products = products.filter(p => {
         if (!p.images || p.images.length === 0) return false;
-        return !sentImages.has(p.images[0]);
+        return !sentUrls.has(p.images[0]);
       });
     }
 
@@ -523,12 +520,28 @@ async function connectQueue() {
 
     console.log('✅ Message queue initialized and connected');
 
+    // Upgrade sentImagesTracker to Redis-backed store
+    const IORedis = require('ioredis');
+    const stateRedis = new IORedis(CONFIG.REDIS_URL, {
+      tls: CONFIG.REDIS_URL?.startsWith('rediss://') ? { rejectUnauthorized: true } : undefined,
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      enableReadyCheck: false
+    });
+    stateRedis.on('error', (err) => {
+      console.warn('⚠️ State Redis error (sentImagesTracker degraded to in-memory):', err.message);
+    });
+    sentImagesTracker = new RedisSentImagesTracker(stateRedis);
+    console.log('✅ Redis-backed sentImagesTracker initialized');
+
     // Set up message processor
     setupMessageProcessor();
   } catch (err) {
     console.error('❌ Redis connection error:', err.message);
     console.log('⚠️  Continuing without queue - messages will be processed directly');
     messageQueue = null;
+    // When Redis unavailable, sentImagesTracker stays as in-memory fallback (already initialized above)
+    console.log('ℹ️ sentImagesTracker using in-memory fallback (Redis unavailable)');
     if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
   }
 }
@@ -558,17 +571,9 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
     // v54.3: Clear sent tracker when customer requests resend/reshare
     if (isResendRequest) {
-      sentImagesTracker.delete(from);
+      await sentImagesTracker.clear(from);
       console.log('🔄 Customer requested resend - cleared image tracker');
     }
-
-    // v54.3: TTL-based reset for sentImagesTracker (30 minutes)
-    if (!sentImagesTimestamps.has(from) ||
-        Date.now() - sentImagesTimestamps.get(from) > SENT_IMAGES_TTL) {
-      sentImagesTracker.delete(from);
-      console.log('🕐 Sent images tracker expired (30min TTL) - reset for fresh images');
-    }
-    sentImagesTimestamps.set(from, Date.now());
 
     // v53.28 HARD STOP: NEVER send images without trigger words - NO EXCEPTIONS!
     // This prevents ALL unsolicited image sending regardless of code paths
@@ -735,13 +740,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       console.log(`📦 Sending images for ${comboProducts.length} products in combo...`);
 
       // Clear sent tracker to allow re-sending
-      sentImagesTracker.delete(from);
-
-      // Initialize tracker
-      if (!sentImagesTracker.has(from)) {
-        sentImagesTracker.set(from, new Set());
-        sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
-      }
+      await sentImagesTracker.clear(from);
 
       let totalSent = 0;
       for (const category of comboProducts) {
@@ -755,8 +754,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
             if (isValidImageUrl(imageUrl)) {
               await sendWhatsAppImage(from, imageUrl, `${product.name} 🌿`);
-              sentImagesTracker.get(from).add(originalUrl);
-              sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
+              await sentImagesTracker.add(from, originalUrl);
               totalSent++;
               console.log(`   ✅ Sent: ${product.name}`);
               await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between images
@@ -806,7 +804,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // This allows re-sending images when customer says "share images", "send pictures", etc.
       if (hasTrigger && /\b(share|send|show|give)\b/i.test(messageBody)) {
         console.log('🔄 Explicit image request detected, clearing sent tracker for fresh images');
-        sentImagesTracker.delete(from); // Clear sent history for this customer
+        await sentImagesTracker.clear(from); // Clear sent history for this customer
       }
 
       // v53.15 NEW: Extract size modifiers from message or conversation context
@@ -833,12 +831,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         }
       }
 
-      // Initialize sent images tracker for this phone number
-      if (!sentImagesTracker.has(from)) {
-        sentImagesTracker.set(from, new Set());
-        sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
-      }
-      const sentImages = sentImagesTracker.get(from);
+      // sentImagesTracker is managed per-URL via add/has/clear — no initialization needed
 
       // First try: Get new products excluding already sent
       let products = await findProductsByCategory(catalogCategory, 10, from, true);
@@ -938,8 +931,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
             }
 
             if (imageSent) {
-              sentImages.add(originalUrl); // Track only on confirmed success
-              sentImagesTimestamps.set(from, Date.now()); // track for TTL cleanup
+              await sentImagesTracker.add(from, originalUrl); // Track only on confirmed success
               sentCount++;
               console.log(`   📸 Image send to ${from}: ✅ delivered - ${product.name} (${sentCount}/${products.length})`);
             } else {
@@ -2575,25 +2567,13 @@ setInterval(() => {
     console.log(`🧹 Memory cleanup: Removed ${cleaned} old conversations`);
   }
 
-  // Clean up sent images tracker using independent TTL (30 minutes)
-  let imagesCleaned = 0;
-  for (const phone of sentImagesTracker.keys()) {
-    const ts = sentImagesTimestamps.get(phone);
-    if (!ts || now - ts > SENT_IMAGES_TTL) {
-      sentImagesTracker.delete(phone);
-      sentImagesTimestamps.delete(phone);
-      imagesCleaned++;
-    }
-  }
-
-  if (imagesCleaned > 0) {
-    console.log(`🧹 Memory cleanup: Removed ${imagesCleaned} image trackers (TTL-based)`);
-  }
+  // sentImagesTracker: Redis handles TTL expiry automatically (30-minute TTL per key)
+  console.log('🧹 sentImagesTracker: Redis handles TTL expiry automatically');
 
   // Log memory stats
   const totalConversations = conversationMemory.size;
   const memoryMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
-  console.log(`📊 Active conversations: ${totalConversations}, Memory: ${memoryMB}MB, Image trackers: ${sentImagesTracker.size}`);
+  console.log(`📊 Active conversations: ${totalConversations}, Memory: ${memoryMB}MB`);
 }, 30 * 60 * 1000); // Every 30 minutes
 
 // Initial cleanup after 5 minutes

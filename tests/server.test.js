@@ -800,13 +800,13 @@ describe('Server - findProductsByCategory', () => {
     });
 
     // Mark one image as already sent
-    server.sentImagesTracker.set('919876543210', new Set(['https://img.com/a.jpg']));
+    await server.sentImagesTracker.add('919876543210', 'https://img.com/a.jpg');
 
     const results = await server.findProductsByCategory('coasters', 10, '919876543210', true);
     expect(results).toHaveLength(1);
     expect(results[0].name).toBe('Coaster B');
 
-    server.sentImagesTracker.delete('919876543210');
+    await server.sentImagesTracker.clear('919876543210');
   });
 });
 
@@ -841,9 +841,9 @@ describe('Server - findProductBySearch', () => {
 describe('Server - Image Detection Logic (handleImageDetectionAndSending)', () => {
   const axios = require('axios');
 
-  beforeEach(() => {
+  beforeEach(async () => {
     axios.post.mockClear();
-    server.sentImagesTracker.clear();
+    await server.sentImagesTracker.clearAll();
     mockProductModel.find.mockReturnValue({
       limit: jest.fn().mockResolvedValue([])
     });
@@ -884,7 +884,7 @@ describe('Server - Image Detection Logic (handleImageDetectionAndSending)', () =
   });
 
   test('clears sent tracker on resend request', async () => {
-    server.sentImagesTracker.set('919876543210', new Set(['old-url']));
+    await server.sentImagesTracker.add('919876543210', 'old-url');
 
     await server.handleImageDetectionAndSending(
       '919876543210',
@@ -894,7 +894,7 @@ describe('Server - Image Detection Logic (handleImageDetectionAndSending)', () =
     );
 
     // Tracker should be cleared for resend
-    expect(server.sentImagesTracker.has('919876543210')).toBe(false);
+    expect(await server.sentImagesTracker.has('919876543210', 'old-url')).toBe(false);
   });
 
   test('handles catalog/PDF request for combos', async () => {
@@ -910,8 +910,9 @@ describe('Server - Image Detection Logic (handleImageDetectionAndSending)', () =
 });
 
 describe('Server - Internal State Management', () => {
-  test('sentImagesTracker is a Map', () => {
-    expect(server.sentImagesTracker).toBeInstanceOf(Map);
+  test('sentImagesTracker is a RedisSentImagesTracker', () => {
+    const { RedisSentImagesTracker } = require('../utils/redis-state');
+    expect(server.sentImagesTracker).toBeInstanceOf(RedisSentImagesTracker);
   });
 
   test('processedMessageIds is a MessageDeduplicator', () => {
@@ -1554,10 +1555,10 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
   const axios = require('axios');
   const { uploadAndSendImage } = require('../whatsapp-media-upload');
 
-  beforeEach(() => {
+  beforeEach(async () => {
     axios.post.mockClear();
     axios.post.mockResolvedValue({ data: { messages: [{ id: 'msg-1' }] } });
-    server.sentImagesTracker.clear();
+    await server.sentImagesTracker.clearAll();
     uploadAndSendImage.mockClear();
     uploadAndSendImage.mockResolvedValue({ success: true, response: {} });
     mockProductModel.find.mockReturnValue({
@@ -1753,7 +1754,7 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
 
   test('sends "all images already shared" when all sent', async () => {
     // Pre-mark all images as sent
-    server.sentImagesTracker.set('919876543210', new Set(['https://img.com/c1.jpg']));
+    await server.sentImagesTracker.add('919876543210', 'https://img.com/c1.jpg');
 
     mockProductModel.find
       .mockReturnValueOnce({ limit: jest.fn().mockResolvedValue([]) }) // excludeSent=true returns empty
@@ -2302,5 +2303,37 @@ describe('MessageDeduplicator', () => {
     expect(dedup.has('id-old')).toBe(false); // Old one expired
     expect(dedup.has('id-new')).toBe(true);  // New one still there
     jest.useRealTimers();
+  });
+});
+
+describe('RedisSentImagesTracker', () => {
+  const { RedisSentImagesTracker } = require('../utils/redis-state');
+
+  it('returns false for unseen image URL (in-memory fallback)', async () => {
+    const tracker = new RedisSentImagesTracker(null); // null = in-memory fallback
+    const result = await tracker.has('phone1', 'https://example.com/img.jpg');
+    expect(result).toBe(false);
+  });
+
+  it('returns true after adding image URL (in-memory fallback)', async () => {
+    const tracker = new RedisSentImagesTracker(null);
+    await tracker.add('phone1', 'https://example.com/img.jpg');
+    const result = await tracker.has('phone1', 'https://example.com/img.jpg');
+    expect(result).toBe(true);
+  });
+
+  it('does not cross-contaminate between phones', async () => {
+    const tracker = new RedisSentImagesTracker(null);
+    await tracker.add('phone1', 'https://example.com/img.jpg');
+    const result = await tracker.has('phone2', 'https://example.com/img.jpg');
+    expect(result).toBe(false);
+  });
+
+  it('clears images for a specific phone', async () => {
+    const tracker = new RedisSentImagesTracker(null);
+    await tracker.add('phone1', 'https://example.com/img.jpg');
+    await tracker.clear('phone1');
+    const result = await tracker.has('phone1', 'https://example.com/img.jpg');
+    expect(result).toBe(false);
   });
 });
