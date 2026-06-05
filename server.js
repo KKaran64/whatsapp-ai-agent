@@ -24,7 +24,7 @@ const VisionHandler = require('./vision-handler');
 const { getInstance: getOptimizedBot } = require('./optimized-bot');
 
 // Import Product Image Database (STRICT: Cork products only)
-// Use V2 image system with JSON database (DEPRECATED - will migrate to MongoDB)
+// V2 JSON system is the fallback when MongoDB product search fails
 const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseStats } = require('./product-images-v2');
 
 // Import System Prompt Builder (extracted for maintainability)
@@ -276,7 +276,11 @@ const CONFIG = {
   PDF_CATALOG_HORECA: (process.env.PDF_CATALOG_HORECA || '').trim(),
   PDF_CATALOG_PRODUCTS: (process.env.PDF_CATALOG_PRODUCTS || '').trim(),
   PDF_CATALOG_COMBOS: (process.env.PDF_CATALOG_COMBOS || '').trim(),
-  NODE_ENV: process.env.NODE_ENV || 'development'
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  // Contact info (used in fallback responses — change in .env, not here)
+  CONTACT_PHONE: (process.env.CONTACT_PHONE || '+91 70090 52784').trim(),
+  CONTACT_EMAIL: (process.env.CONTACT_EMAIL || 'info@9cork.com').trim(),
+  CONTACT_WEBSITE: (process.env.CONTACT_WEBSITE || 'www.9cork.com').trim()
 };
 
 // FIX #6: Environment Variable Validation (fail-fast on startup)
@@ -398,7 +402,7 @@ async function connectDatabase() {
       maxPoolSize: 10,               // Max 10 connections in pool
       minPoolSize: 2,                // Keep 2 warm connections
       serverSelectionTimeoutMS: 5000, // 5 second timeout
-      socketTimeoutMS: 45000,        // Close sockets after 45s of inactivity
+      socketTimeoutMS: 10000,        // Close sockets after 10s (webhook must respond in ~5s)
       family: 4                      // Use IPv4, avoid IPv6 issues
     });
     console.log('✅ MongoDB connected with connection pooling (2-10 connections)');
@@ -559,7 +563,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // v54.3: Resend detection - clears sent tracker when customer didn't receive images
     const RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received)\b/i;
     // AUTO-GENERATED from product-image-database.json v1.3 - includes ALL product keywords from 9cork.com AND homedecorzstore.com - 41 products, 123 keywords
-    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|bifold|bohemian|box|breakfast|bridge|business|calendar|candle|card|case|catchall|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|for|frame|frames|fridge|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|minimalistic|mouse|mousepad|multicolor|multicolored|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|photo|picture|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|round|rubberized|runner|serving|set|shaped|sleeve|small|square|stand|stationery|striped|succulent|table|tablemat|tablemats|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|trinket|triple|trivet|trivets|tube|ushaped|wall|wallet|with|women|workspace)/i;
+    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|bifold|bohemian|box|breakfast|bridge|business|calendar|candle|card|case|catchall|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|for|frame|frames|fridge|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|minimalistic|mouse|mousepad|multicolor|multicolored|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|round|rubberized|runner|serving|set|shaped|sleeve|small|square|stand|stationery|striped|succulent|table|tablemat|tablemats|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|trinket|triple|trivet|trivets|tube|ushaped|wall|wallet|with|women|workspace)/i;
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
@@ -1116,7 +1120,7 @@ function setupMessageProcessor() {
       try {
         const contextPromise = getConversationContext(from);
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Context timeout')), 2000)
+          setTimeout(() => reject(new Error('Context timeout')), 4000)
         );
         context = await Promise.race([contextPromise, timeoutPromise]);
       } catch (error) {
@@ -1137,11 +1141,11 @@ function setupMessageProcessor() {
           SYSTEM_PROMPT
         );
         agentResponse = result.response;
-        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
+        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
       } else {
         // Handle TEXT messages normally
         agentResponse = await processWithClaudeAgent(messageBody, from, context);
-        await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+        await storeCustomerMessage(from, messageBody, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
 
         // v35: Auto-send HORECA catalog when HORECA-only products mentioned
         const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
@@ -1174,10 +1178,10 @@ function setupMessageProcessor() {
       await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
 
       // Store agent response in database
-      await storeAgentMessage(from, agentResponse).catch(() => {});
+      await storeAgentMessage(from, agentResponse).catch(err => console.error('⚠️ storeAgentMessage failed (non-blocking):', err.message));
 
       // v53.19: Extract and save conversation metadata
-      await extractAndSaveMetadata(from, messageBody, agentResponse, context).catch(() => {});
+      await extractAndSaveMetadata(from, messageBody, agentResponse, context).catch(err => console.error('⚠️ extractAndSaveMetadata failed (non-blocking):', err.message));
 
       console.log('✅ Message processed successfully');
     } catch (error) {
@@ -1277,6 +1281,13 @@ setInterval(() => {
 
   // v49: Clean up message deduplication cache (TTL-based, removes only expired entries)
   processedMessageIds.cleanup();
+
+  // Clean up sentResponses map (prevent unbounded memory growth on long-running server)
+  for (const [msgId, data] of sentResponses.entries()) {
+    if (now - data.timestamp.getTime() > cleanupAge) {
+      sentResponses.delete(msgId);
+    }
+  }
 }, 5 * 60 * 1000);
 
 function checkPhoneRateLimit(phoneNumber, messageContent = '') {
@@ -2184,6 +2195,12 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     // Limit in-memory cache to last 20 messages per customer
     if (customerMemory.length > 20) {
       conversationMemory.set(sanitizedPhone, customerMemory.slice(-20));
+    }
+
+    // Cap total in-memory map size (evict oldest entry when over 500 customers)
+    if (conversationMemory.size > 500) {
+      const oldestKey = conversationMemory.keys().next().value;
+      conversationMemory.delete(oldestKey);
     }
 
     return result.response;
