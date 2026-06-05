@@ -742,11 +742,11 @@ If customer asks "send payment details" BEFORE complete info:
 Once all 6 invoice fields are collected, share this EXACTLY:
 
 "Here are our payment details:
-• Bank: HDFC Bank
+• Bank: Canara Bank
 • Account Name: 9 Cork Sustainable Products
-• Account No: [ADD YOUR ACCOUNT NUMBER]
-• IFSC: [ADD YOUR IFSC CODE]
-• UPI: [ADD YOUR UPI ID]
+• Account No: 120032289098
+• IFSC: CNRB0007617
+• Branch: First & Second Floor, Plot No. A-74, Sector-69, Noida, UP 201301
 
 Please share the payment screenshot once done and we'll process your order! 🌿"
 
