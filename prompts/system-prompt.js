@@ -746,7 +746,8 @@ Once all 6 invoice fields are collected, share this EXACTLY:
 • Account Name: 9 Cork Sustainable Products
 • Account No: 120032289098
 • IFSC: CNRB0007617
-• Branch: First & Second Floor, Plot No. A-74, Sector-69, Noida, UP 201301
+
+Our address: First & Second Floor, Plot No. A-74, Sector-69, Noida, UP 201301
 
 Please share the payment screenshot once done and we'll process your order! 🌿"
 
