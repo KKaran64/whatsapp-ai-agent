@@ -238,7 +238,7 @@ class AIProviderManager {
         console.log(`🟢 Trying Gemini (key ${this.currentGeminiIndex || this.geminiKeys.length}/${this.geminiKeys.length})...`);
 
         const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
           {
             contents: [{
               parts: [{ text: fullPrompt }]
@@ -291,7 +291,7 @@ class AIProviderManager {
       console.log('🟣 Trying Claude...');
 
       const response = await this.anthropic.messages.create({
-        model: 'claude-3-haiku-20240307', // Cheapest Claude model
+        model: 'claude-haiku-4-5',
         max_tokens: 500,
         system: systemPrompt,
         messages: [
@@ -345,7 +345,10 @@ class AIProviderManager {
 
     // Contact/Email (informational - no context needed)
     if (msg.includes('email') || msg.includes('contact') || msg.includes('phone') || msg.includes('whatsapp')) {
-      return "📞 You can reach us at:\n• WhatsApp: +91 70090 52784\n• Email: info@9cork.com\n• Website: www.9cork.com\n\nHow can I help you today? 🌿";
+      const phone = this.config.CONTACT_PHONE || '+91 70090 52784';
+      const email = this.config.CONTACT_EMAIL || 'info@9cork.com';
+      const website = this.config.CONTACT_WEBSITE || 'www.9cork.com';
+      return `📞 You can reach us at:\n• WhatsApp: ${phone}\n• Email: ${email}\n• Website: ${website}\n\nHow can I help you today? 🌿`;
     }
 
     // CRITICAL: ALL OTHER MESSAGES SHOULD FAIL TO AI

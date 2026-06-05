@@ -35,24 +35,22 @@ const LEGACY_PROVIDERS = {
 
   gemini: {
     name: 'Gemini',
-    buildRequest: (base64, mimeType, prompt, apiKey) => ({
-      method: 'POST',
-      url: `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      data: {
-        contents: [{ parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mimeType, data: base64 } }
-        ]}],
+    execute: async (config) => {
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(config.apiKey);
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
         generationConfig: { temperature: 0.4, maxOutputTokens: 500 }
-      },
-      timeout: 30000
-    }),
-    parseResponse: (response) => {
-      if (response.data?.candidates?.[0]?.finishReason === 'SAFETY') {
-        throw new Error('Response blocked by safety filters');
-      }
-      return response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    }
+      });
+      const result = await model.generateContent([
+        config.prompt,
+        { inlineData: { mimeType: config.mimeType, data: config.base64 } }
+      ]);
+      const text = result.response.text();
+      if (!text) throw new Error('Empty response from Gemini');
+      return text;
+    },
+    buildRequest: (base64, mimeType, prompt, apiKey) => ({ base64, mimeType, prompt, apiKey })
   },
 
   claude: {
@@ -64,7 +62,7 @@ const LEGACY_PROVIDERS = {
     },
     execute: async (config) => {
       const response = await config.client.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-6',
         max_tokens: 500,
         messages: [{ role: 'user', content: [
           { type: 'image', source: { type: 'base64', media_type: config.mimeType, data: config.base64 } },
@@ -281,7 +279,7 @@ class VisionHandler {
   // Download and optionally compress image from WhatsApp
   async downloadImage(mediaId) {
     const mediaResponse = await axios.get(
-      `https://graph.facebook.com/v18.0/${mediaId}`,
+      `https://graph.facebook.com/v21.0/${mediaId}`,
       { headers: { 'Authorization': `Bearer ${this.whatsappToken}` } }
     );
 
@@ -319,7 +317,7 @@ class VisionHandler {
       let response;
 
       if (provider.execute) {
-        // Custom execution (Claude SDK)
+        // SDK-based execution (Gemini SDK, Claude SDK)
         const config = await provider.buildRequest(imageData.base64, imageData.mimeType, prompt, apiKey);
         response = await provider.execute(config);
       } else {
