@@ -9,7 +9,7 @@ const ragFailureSchema = new mongoose.Schema({
     required: true
   },
   context: { type: mongoose.Schema.Types.Mixed },
-  timestamp: { type: Date, default: Date.now, index: true }
+  timestamp: { type: Date, default: Date.now }
 });
 
 // Auto-cleanup after 30 days
