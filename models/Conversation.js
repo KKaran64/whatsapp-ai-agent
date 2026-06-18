@@ -49,7 +49,19 @@ const conversationSchema = new mongoose.Schema({
     budget: String,
     timeline: String,
     quantity: Number
-  }
+  },
+  // RAG fields
+  outcome: {
+    type: String,
+    enum: ['in_progress', 'sale', 'no_sale', 'abandoned'],
+    default: 'in_progress',
+    index: true
+  },
+  outcomeAmount: { type: Number, default: 0 },
+  outcomeDetectedAt: Date,
+  embedded: { type: Boolean, default: false, index: true },
+  embeddingIds: { type: [String], default: [] },
+  embeddingError: String,
 });
 
 // SECURITY FIX: Encrypt message content before saving (GDPR/CCPA compliance)
