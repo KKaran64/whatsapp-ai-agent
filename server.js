@@ -280,7 +280,14 @@ const CONFIG = {
   // Contact info (used in fallback responses — change in .env, not here)
   CONTACT_PHONE: (process.env.CONTACT_PHONE || '+91 70090 52784').trim(),
   CONTACT_EMAIL: (process.env.CONTACT_EMAIL || 'info@9cork.com').trim(),
-  CONTACT_WEBSITE: (process.env.CONTACT_WEBSITE || 'www.9cork.com').trim()
+  CONTACT_WEBSITE: (process.env.CONTACT_WEBSITE || 'www.9cork.com').trim(),
+  // RAG configuration
+  PINECONE_API_KEY: (process.env.PINECONE_API_KEY || '').trim(),
+  PINECONE_INDEX: (process.env.PINECONE_INDEX || 'ninecork-conversations').trim(),
+  RAG_ENABLED: process.env.RAG_ENABLED === 'true',
+  RAG_RETRIEVAL_TIMEOUT_MS: parseInt(process.env.RAG_RETRIEVAL_TIMEOUT_MS || '2000'),
+  ADMIN_WHATSAPP_NUMBER: (process.env.ADMIN_WHATSAPP_NUMBER || '').trim(),
+  WEEKLY_REPORT_ENABLED: process.env.WEEKLY_REPORT_ENABLED === 'true'
 };
 
 // FIX #6: Environment Variable Validation (fail-fast on startup)
