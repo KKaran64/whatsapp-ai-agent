@@ -30,6 +30,11 @@ const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseSt
 // Import System Prompt Builder (extracted for maintainability)
 const { buildSystemPrompt } = require('./prompts/system-prompt');
 
+// RAG modules — retrieval & async indexing of conversations
+const { retrieveContext } = require('./rag/retriever');
+const { buildRagContext } = require('./rag/context-builder');
+const { indexQAPair } = require('./rag/indexer');
+
 // Redis-backed sent images tracker (survives deploys; falls back to in-memory when Redis unavailable)
 const { RedisSentImagesTracker } = require('./utils/redis-state');
 
@@ -2176,6 +2181,24 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     if (!isConversationStart) console.log(`📊 Mid-conversation (${context.length} msgs) - skipping "Welcome back" metadata`);
     const systemPrompt = buildSystemPrompt(useMetadata);
 
+    // RAG: retrieve relevant past conversations (graceful fallback if disabled/failed)
+    let ragContext = '';
+    if (CONFIG.RAG_ENABLED) {
+      try {
+        const retrieval = await retrieveContext({
+          message: sanitizedMessage,
+          customerPhone: sanitizedPhone,
+          timeoutMs: CONFIG.RAG_RETRIEVAL_TIMEOUT_MS
+        });
+        ragContext = buildRagContext(retrieval);
+        if (retrieval.usedRAG) {
+          console.log(`📚 RAG: ${retrieval.similarConversations.length} similar, ${retrieval.customerHistory.length} customer history`);
+        }
+      } catch (err) {
+        console.warn('⚠️ RAG retrieval failed (continuing without):', err.message);
+      }
+    }
+
     // v54.4: Build context-aware message with known facts to prevent repeated questions
     const contextAwareMessage = buildContextAwareMessage(sanitizedMessage, context);
 
@@ -2187,7 +2210,8 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       systemPrompt, // v53.20: Now dynamic based on previous conversation!
       contextWithFacts.slice(-50), // Last 50 messages (including new message with facts)
       contextAwareMessage,
-      sanitizedPhone  // Pass userId for cache isolation (prevents cross-user cache contamination)
+      sanitizedPhone,  // Pass userId for cache isolation (prevents cross-user cache contamination)
+      ragContext  // RAG-augmented context (empty string if RAG_ENABLED=false)
     );
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
