@@ -1186,6 +1186,24 @@ function setupMessageProcessor() {
         phoneNumber: from
       });
 
+      // RAG: async-index this conversation (fire-and-forget — never blocks user response)
+      if (CONFIG.RAG_ENABLED) {
+        setImmediate(async () => {
+          try {
+            await indexQAPair({
+              customerPhone: from,
+              customerMessage: messageBody,
+              botResponse: agentResponse,
+              timestamp: Date.now(),
+              outcome: 'in_progress',
+              conversationStage: 'live'
+            });
+          } catch (err) {
+            console.warn('⚠️ Async indexing failed:', err.message);
+          }
+        });
+      }
+
       // Handle image detection and sending
       await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
 
