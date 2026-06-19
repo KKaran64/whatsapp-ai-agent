@@ -19,13 +19,26 @@ describe('outcome-detector', () => {
     expect(result.outcome).toBe('no_sale');
   });
 
-  test('detects abandoned on long silence', () => {
+  test('detects abandoned on long silence with 5+ messages', () => {
+    const tenDaysAgo = Date.now() - 10 * 24 * 60 * 60 * 1000;
     const messages = [
-      { role: 'customer', content: 'how much', timestamp: Date.now() - 10 * 24 * 60 * 60 * 1000 },
-      { role: 'agent', content: '₹8200', timestamp: Date.now() - 10 * 24 * 60 * 60 * 1000 }
+      { role: 'customer', content: 'hi', timestamp: tenDaysAgo },
+      { role: 'agent', content: 'hello', timestamp: tenDaysAgo + 1000 },
+      { role: 'customer', content: 'need coasters', timestamp: tenDaysAgo + 2000 },
+      { role: 'agent', content: 'how many?', timestamp: tenDaysAgo + 3000 },
+      { role: 'customer', content: 'how much for 100', timestamp: tenDaysAgo + 4000 }
     ];
     const result = detectOutcome(messages);
     expect(result.outcome).toBe('abandoned');
+  });
+
+  test('does NOT mark abandoned with fewer than 5 messages', () => {
+    const messages = [
+      { role: 'customer', content: 'hi', timestamp: Date.now() - 10 * 24 * 60 * 60 * 1000 },
+      { role: 'agent', content: 'hello', timestamp: Date.now() - 10 * 24 * 60 * 60 * 1000 }
+    ];
+    const result = detectOutcome(messages);
+    expect(result.outcome).toBe('in_progress');
   });
 
   test('returns in_progress for recent active chat', () => {
