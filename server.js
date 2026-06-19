@@ -2413,6 +2413,34 @@ app.get('/health', monitoringLimiter, async (req, res) => {
   res.json(health);
 });
 
+// RAG monitoring endpoint — conversation counts, conversion rate, recent failures
+app.get('/rag-stats', monitoringLimiter, async (req, res) => {
+  try {
+    const RagFailure = require('./models/RagFailure');
+
+    const [total, sales, embedded, recentFailures] = await Promise.all([
+      Conversation.countDocuments({}),
+      Conversation.countDocuments({ outcome: 'sale' }),
+      Conversation.countDocuments({ embedded: true }),
+      RagFailure.find({ timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } })
+        .sort({ timestamp: -1 })
+        .limit(20)
+        .lean()
+    ]);
+
+    res.json({
+      status: 'ok',
+      ragEnabled: CONFIG.RAG_ENABLED,
+      conversations: { total, sales, embedded },
+      conversionRate: total > 0 ? ((sales / total) * 100).toFixed(1) + '%' : 'N/A',
+      recentFailures: recentFailures.length,
+      failures: recentFailures.slice(0, 5)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Vision API health check (v53.29 - NEW, v53.30 - shows multiple Gemini keys)
 app.get('/health/vision', monitoringLimiter, async (req, res) => {
   // v53.30: Count Gemini keys
