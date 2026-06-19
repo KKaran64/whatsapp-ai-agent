@@ -2672,6 +2672,21 @@ setInterval(async () => {
   }
 }, 12 * 60 * 60 * 1000); // Every 12 hours
 
+// Weekly analysis cron — Mondays at 9 AM IST (3:30 AM UTC)
+if (CONFIG.WEEKLY_REPORT_ENABLED) {
+  const cron = require('node-cron');
+  const { runWeeklyAnalysis } = require('./scripts/weekly-cron');
+  cron.schedule('30 3 * * 1', async () => {
+    console.log('🗓️ Running weekly analysis...');
+    try {
+      await runWeeklyAnalysis(CONFIG);
+    } catch (err) {
+      console.error('❌ Weekly cron error:', err.message);
+    }
+  });
+  console.log('🗓️ Weekly cron scheduled: Monday 9 AM IST');
+}
+
 // Export for testing
 module.exports = {
   app,
