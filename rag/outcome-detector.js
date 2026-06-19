@@ -35,7 +35,7 @@ function detectOutcome(messages) {
     }
   }
 
-  if (daysSinceLast > ABANDONED_DAYS && messages.length >= 2) {
+  if (daysSinceLast > ABANDONED_DAYS && messages.length >= 5) {
     return { outcome: 'abandoned', confidence: 0.8, saleAmount: 0 };
   }
 
