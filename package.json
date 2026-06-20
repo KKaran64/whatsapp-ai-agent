@@ -10,7 +10,9 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:legacy": "node tests/critical-bugs.test.js",
-    "test:ai": "node tests/ai-response-validation.js"
+    "test:ai": "node tests/ai-response-validation.js",
+    "test:rag": "jest tests/rag/ --verbose",
+    "test:all": "jest"
   },
   "keywords": [
     "whatsapp",
