@@ -2461,11 +2461,27 @@ app.get('/rag-debug', monitoringLimiter, async (req, res) => {
     }
   };
   try {
-    const { embedText } = require('./rag/embed');
-    const vec = await embedText('debug test cork coasters');
-    diagnostics.embedding = vec ? `OK (${vec.length} dims)` : 'FAILED (null)';
+    // Direct axios call to bypass embed.js error swallowing
+    const axios = require('axios');
+    const key = process.env.GEMINI_API_KEY;
+    const resp = await axios.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=' + key,
+      { content: { parts: [{ text: 'debug' }] }, outputDimensionality: 1024 },
+      { timeout: 10000 }
+    );
+    diagnostics.embedding = {
+      status: 'OK',
+      dims: resp.data?.embedding?.values?.length,
+      keyPrefix: key?.substring(0, 8) + '...'
+    };
   } catch (err) {
-    diagnostics.embedding = 'ERROR: ' + err.message;
+    diagnostics.embedding = {
+      status: 'ERROR',
+      message: err.message,
+      httpStatus: err.response?.status,
+      apiError: err.response?.data?.error?.message?.substring(0, 200),
+      keyPrefix: process.env.GEMINI_API_KEY?.substring(0, 8) + '...'
+    };
   }
   try {
     const result = await indexQAPair({
