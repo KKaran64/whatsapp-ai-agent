@@ -9,11 +9,11 @@ describe('embed', () => {
     axios.post.mockReset();
   });
 
-  test('embedText returns 768-dim vector on success', async () => {
-    const fakeVector = new Array(768).fill(0.1);
+  test('embedText returns 1024-dim vector on success', async () => {
+    const fakeVector = new Array(1024).fill(0.1);
     axios.post.mockResolvedValue({ data: { embedding: { values: fakeVector } } });
     const result = await embed.embedText('hello cork coasters');
-    expect(result).toHaveLength(768);
+    expect(result).toHaveLength(1024);
     expect(result[0]).toBe(0.1);
   });
 
@@ -29,7 +29,7 @@ describe('embed', () => {
   });
 
   test('embedBatch processes array sequentially', async () => {
-    const fakeVector = new Array(768).fill(0.5);
+    const fakeVector = new Array(1024).fill(0.5);
     axios.post.mockResolvedValue({ data: { embedding: { values: fakeVector } } });
     const result = await embed.embedBatch(['a', 'b', 'c']);
     expect(result).toHaveLength(3);

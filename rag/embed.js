@@ -4,7 +4,7 @@
 const axios = require('axios');
 
 const EMBED_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent';
-const OUTPUT_DIMS = 768;
+const OUTPUT_DIMS = 1024;
 
 async function embedText(text) {
   if (!text || typeof text !== 'string' || text.trim().length === 0) {
