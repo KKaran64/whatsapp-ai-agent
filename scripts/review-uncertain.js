@@ -12,6 +12,14 @@ const REVIEW_FILE = path.join(__dirname, '..', 'data', 'uncertain-review.json');
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = q => new Promise(r => rl.question(q, r));
 
+// Mirror of extractCustomerPhone from scripts/import-chats.js so review keys match
+// what was actually written to MongoDB during import.
+function extractCustomerPhone(filename) {
+  const match = filename.match(/(\d{2})[\s-]?(\d{5})[\s-]?(\d{5})/);
+  if (match) return match[1] + match[2] + match[3];
+  return 'unknown_' + filename.substring(0, 10);
+}
+
 async function run() {
   if (!fs.existsSync(REVIEW_FILE)) {
     console.log('❌ No review file found. Run import-chats.js first.');
@@ -38,13 +46,16 @@ async function run() {
     else if (choice === 'b') newOutcome = 'abandoned';
     else if (choice === 'k') continue;
 
-    const phone = file.match(/(\d{10,12})/);
-    if (phone) {
-      await Conversation.updateMany(
-        { customerPhone: { $regex: phone[1] } },
-        { $set: { outcome: newOutcome, outcomeDetectedAt: new Date() } }
-      );
-      console.log(`  ✅ Updated outcome → ${newOutcome}`);
+    // Resolve the same customerPhone key the import script wrote with
+    const customerPhone = extractCustomerPhone(file);
+    const result = await Conversation.updateMany(
+      { customerPhone: { $eq: customerPhone } },
+      { $set: { outcome: newOutcome, outcomeDetectedAt: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`  ✅ Updated outcome → ${newOutcome} (${result.modifiedCount} record)`);
+    } else {
+      console.log(`  ⚠️ No MongoDB record found for ${customerPhone} — skipped`);
     }
   }
 
