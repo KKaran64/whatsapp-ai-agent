@@ -2447,6 +2447,41 @@ app.get('/health', monitoringLimiter, async (req, res) => {
   res.json(health);
 });
 
+// RAG debug endpoint — runs the indexer once and returns the actual result.
+// Helps diagnose silent failures in production.
+app.get('/rag-debug', monitoringLimiter, async (req, res) => {
+  const diagnostics = {
+    timestamp: new Date().toISOString(),
+    config: {
+      RAG_ENABLED: CONFIG.RAG_ENABLED,
+      PINECONE_API_KEY_present: !!CONFIG.PINECONE_API_KEY,
+      PINECONE_API_KEY_prefix: CONFIG.PINECONE_API_KEY ? CONFIG.PINECONE_API_KEY.substring(0, 8) + '...' : 'MISSING',
+      PINECONE_INDEX: CONFIG.PINECONE_INDEX,
+      GEMINI_API_KEY_present: !!process.env.GEMINI_API_KEY
+    }
+  };
+  try {
+    const { embedText } = require('./rag/embed');
+    const vec = await embedText('debug test cork coasters');
+    diagnostics.embedding = vec ? `OK (${vec.length} dims)` : 'FAILED (null)';
+  } catch (err) {
+    diagnostics.embedding = 'ERROR: ' + err.message;
+  }
+  try {
+    const result = await indexQAPair({
+      customerPhone: 'debug_endpoint',
+      customerMessage: 'debug test message',
+      botResponse: 'debug test response',
+      timestamp: Date.now(),
+      outcome: 'in_progress'
+    });
+    diagnostics.indexQAPair = result;
+  } catch (err) {
+    diagnostics.indexQAPair = { error: err.message, stack: err.stack };
+  }
+  res.json(diagnostics);
+});
+
 // RAG monitoring endpoint — conversation counts, conversion rate, recent failures
 app.get('/rag-stats', monitoringLimiter, async (req, res) => {
   try {
