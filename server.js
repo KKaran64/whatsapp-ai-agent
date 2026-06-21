@@ -1610,6 +1610,31 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
             }
 
             await sendWhatsAppMessage(from, response);
+
+            // RAG: async-index this conversation (direct path — same as queue path)
+            if (CONFIG.RAG_ENABLED) {
+              console.log('🔵 RAG: queueing async index (direct path) for', from);
+              setImmediate(async () => {
+                try {
+                  const result = await indexQAPair({
+                    customerPhone: from,
+                    customerMessage: messageBody || '[IMAGE]',
+                    botResponse: response,
+                    timestamp: Date.now(),
+                    outcome: 'in_progress',
+                    conversationStage: 'live'
+                  });
+                  if (result.success) {
+                    console.log('✅ RAG: indexed vector', result.id);
+                  } else {
+                    console.warn('⚠️ RAG: index skipped/failed:', result.reason || JSON.stringify(result));
+                  }
+                } catch (err) {
+                  console.warn('⚠️ Async indexing failed:', err.message);
+                }
+              });
+            }
+
             await handleImageDetectionAndSending(from, response, messageBody, context);
             await storeAgentMessage(from, response).catch(() => {});
 
