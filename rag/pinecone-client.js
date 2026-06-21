@@ -7,7 +7,9 @@ let client = null;
 let index = null;
 
 function isConfigured() {
-  return !!(process.env.PINECONE_API_KEY && process.env.PINECONE_INDEX);
+  // PINECONE_INDEX is optional — falls back to 'ninecork-conversations' default.
+  // Only the API key is strictly required.
+  return !!process.env.PINECONE_API_KEY;
 }
 
 function getClient() {
