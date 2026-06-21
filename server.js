@@ -30,6 +30,11 @@ const { findProductImage, getCatalogImages, isValidCorkProductUrl, getDatabaseSt
 // Import System Prompt Builder (extracted for maintainability)
 const { buildSystemPrompt } = require('./prompts/system-prompt');
 
+// RAG modules — retrieval & async indexing of conversations
+const { retrieveContext } = require('./rag/retriever');
+const { buildRagContext } = require('./rag/context-builder');
+const { indexQAPair } = require('./rag/indexer');
+
 // Redis-backed sent images tracker (survives deploys; falls back to in-memory when Redis unavailable)
 const { RedisSentImagesTracker } = require('./utils/redis-state');
 
@@ -280,7 +285,14 @@ const CONFIG = {
   // Contact info (used in fallback responses — change in .env, not here)
   CONTACT_PHONE: (process.env.CONTACT_PHONE || '+91 70090 52784').trim(),
   CONTACT_EMAIL: (process.env.CONTACT_EMAIL || 'info@9cork.com').trim(),
-  CONTACT_WEBSITE: (process.env.CONTACT_WEBSITE || 'www.9cork.com').trim()
+  CONTACT_WEBSITE: (process.env.CONTACT_WEBSITE || 'www.9cork.com').trim(),
+  // RAG configuration
+  PINECONE_API_KEY: (process.env.PINECONE_API_KEY || '').trim(),
+  PINECONE_INDEX: (process.env.PINECONE_INDEX || 'ninecork-conversations').trim(),
+  RAG_ENABLED: process.env.RAG_ENABLED === 'true',
+  RAG_RETRIEVAL_TIMEOUT_MS: parseInt(process.env.RAG_RETRIEVAL_TIMEOUT_MS || '2000'),
+  ADMIN_WHATSAPP_NUMBER: (process.env.ADMIN_WHATSAPP_NUMBER || '').trim(),
+  WEEKLY_REPORT_ENABLED: process.env.WEEKLY_REPORT_ENABLED === 'true'
 };
 
 // FIX #6: Environment Variable Validation (fail-fast on startup)
@@ -1173,6 +1185,24 @@ function setupMessageProcessor() {
         responseText: agentResponse.substring(0, 100),
         phoneNumber: from
       });
+
+      // RAG: async-index this conversation (fire-and-forget — never blocks user response)
+      if (CONFIG.RAG_ENABLED) {
+        setImmediate(async () => {
+          try {
+            await indexQAPair({
+              customerPhone: from,
+              customerMessage: messageBody,
+              botResponse: agentResponse,
+              timestamp: Date.now(),
+              outcome: 'in_progress',
+              conversationStage: 'live'
+            });
+          } catch (err) {
+            console.warn('⚠️ Async indexing failed:', err.message);
+          }
+        });
+      }
 
       // Handle image detection and sending
       await handleImageDetectionAndSending(from, agentResponse, messageBody, context);
@@ -2169,6 +2199,24 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     if (!isConversationStart) console.log(`📊 Mid-conversation (${context.length} msgs) - skipping "Welcome back" metadata`);
     const systemPrompt = buildSystemPrompt(useMetadata);
 
+    // RAG: retrieve relevant past conversations (graceful fallback if disabled/failed)
+    let ragContext = '';
+    if (CONFIG.RAG_ENABLED) {
+      try {
+        const retrieval = await retrieveContext({
+          message: sanitizedMessage,
+          customerPhone: sanitizedPhone,
+          timeoutMs: CONFIG.RAG_RETRIEVAL_TIMEOUT_MS
+        });
+        ragContext = buildRagContext(retrieval);
+        if (retrieval.usedRAG) {
+          console.log(`📚 RAG: ${retrieval.similarConversations.length} similar, ${retrieval.customerHistory.length} customer history`);
+        }
+      } catch (err) {
+        console.warn('⚠️ RAG retrieval failed (continuing without):', err.message);
+      }
+    }
+
     // v54.4: Build context-aware message with known facts to prevent repeated questions
     const contextAwareMessage = buildContextAwareMessage(sanitizedMessage, context);
 
@@ -2180,7 +2228,8 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       systemPrompt, // v53.20: Now dynamic based on previous conversation!
       contextWithFacts.slice(-50), // Last 50 messages (including new message with facts)
       contextAwareMessage,
-      sanitizedPhone  // Pass userId for cache isolation (prevents cross-user cache contamination)
+      sanitizedPhone,  // Pass userId for cache isolation (prevents cross-user cache contamination)
+      ragContext  // RAG-augmented context (empty string if RAG_ENABLED=false)
     );
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
@@ -2362,6 +2411,34 @@ app.get('/health', monitoringLimiter, async (req, res) => {
   };
 
   res.json(health);
+});
+
+// RAG monitoring endpoint — conversation counts, conversion rate, recent failures
+app.get('/rag-stats', monitoringLimiter, async (req, res) => {
+  try {
+    const RagFailure = require('./models/RagFailure');
+
+    const [total, sales, embedded, recentFailures] = await Promise.all([
+      Conversation.countDocuments({}),
+      Conversation.countDocuments({ outcome: 'sale' }),
+      Conversation.countDocuments({ embedded: true }),
+      RagFailure.find({ timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } })
+        .sort({ timestamp: -1 })
+        .limit(20)
+        .lean()
+    ]);
+
+    res.json({
+      status: 'ok',
+      ragEnabled: CONFIG.RAG_ENABLED,
+      conversations: { total, sales, embedded },
+      conversionRate: total > 0 ? ((sales / total) * 100).toFixed(1) + '%' : 'N/A',
+      recentFailures: recentFailures.length,
+      failures: recentFailures.slice(0, 5)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Vision API health check (v53.29 - NEW, v53.30 - shows multiple Gemini keys)
@@ -2622,6 +2699,21 @@ setInterval(async () => {
     console.error('❌ Conversation archiving failed:', error.message);
   }
 }, 12 * 60 * 60 * 1000); // Every 12 hours
+
+// Weekly analysis cron — Mondays at 9 AM IST (3:30 AM UTC)
+if (CONFIG.WEEKLY_REPORT_ENABLED) {
+  const cron = require('node-cron');
+  const { runWeeklyAnalysis } = require('./scripts/weekly-cron');
+  cron.schedule('30 3 * * 1', async () => {
+    console.log('🗓️ Running weekly analysis...');
+    try {
+      await runWeeklyAnalysis(CONFIG);
+    } catch (err) {
+      console.error('❌ Weekly cron error:', err.message);
+    }
+  });
+  console.log('🗓️ Weekly cron scheduled: Monday 9 AM IST');
+}
 
 // Export for testing
 module.exports = {

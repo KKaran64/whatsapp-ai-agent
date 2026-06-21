@@ -360,7 +360,7 @@ class AIProviderManager {
   }
 
   // Main method: Try all providers with fallbacks
-  async getResponse(systemPrompt, conversationHistory, userMessage, userId = null) {
+  async getResponse(systemPrompt, conversationHistory, userMessage, userId = null, ragContext = '') {
     // 1. Check cache first
     const cachedResponse = this.checkCache(userMessage, userId);
     if (cachedResponse) {
@@ -368,24 +368,27 @@ class AIProviderManager {
       return { provider: 'cache', response: cachedResponse };
     }
 
-    // 2. Try Groq FIRST (Primary - FREE & Fast)
+    // 2. Augment system prompt with RAG context (if provided)
+    const augmentedSystem = ragContext ? `${systemPrompt}\n\n${ragContext}` : systemPrompt;
+
+    // 3. Try Groq FIRST (Primary - FREE & Fast)
     try {
-      return await this.tryGroq(systemPrompt, conversationHistory, userMessage, userId);
+      return await this.tryGroq(augmentedSystem, conversationHistory, userMessage, userId);
     } catch (error) {
       console.log('❌ Groq failed:', error.message);
     }
 
-    // 3. Try Gemini (Secondary - FREE fallback)
+    // 4. Try Gemini (Secondary - FREE fallback)
     try {
-      return await this.tryGemini(systemPrompt, conversationHistory, userMessage, userId);
+      return await this.tryGemini(augmentedSystem, conversationHistory, userMessage, userId);
     } catch (error) {
       console.log('❌ Gemini failed:', error.message);
     }
 
-    // 4. Claude SKIPPED (removed to use only free providers: Groq + Gemini)
+    // 5. Claude SKIPPED (removed to use only free providers: Groq + Gemini)
     // If both Groq and Gemini fail, fallback to rule-based responses
 
-    // 5. Fallback to rule-based
+    // 6. Fallback to rule-based
     const fallbackResponse = this.getFallbackResponse(userMessage);
     return { provider: 'fallback', response: fallbackResponse };
   }
