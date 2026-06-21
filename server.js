@@ -1188,9 +1188,11 @@ function setupMessageProcessor() {
 
       // RAG: async-index this conversation (fire-and-forget — never blocks user response)
       if (CONFIG.RAG_ENABLED) {
+        console.log('🔵 RAG: queueing async index for', from);
         setImmediate(async () => {
           try {
-            await indexQAPair({
+            console.log('🔵 RAG: indexer started');
+            const result = await indexQAPair({
               customerPhone: from,
               customerMessage: messageBody,
               botResponse: agentResponse,
@@ -1198,10 +1200,17 @@ function setupMessageProcessor() {
               outcome: 'in_progress',
               conversationStage: 'live'
             });
+            if (result.success) {
+              console.log('✅ RAG: indexed vector', result.id);
+            } else {
+              console.warn('⚠️ RAG: index skipped/failed:', result.reason || result);
+            }
           } catch (err) {
-            console.warn('⚠️ Async indexing failed:', err.message);
+            console.warn('⚠️ Async indexing failed:', err.message, err.stack);
           }
         });
+      } else {
+        console.log('ℹ️ RAG_ENABLED=false, skipping index');
       }
 
       // Handle image detection and sending
