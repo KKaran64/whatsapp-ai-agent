@@ -698,6 +698,14 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         }
 
         if (catalogUrl) {
+          // v55: Dedup — same catalog only once per 30 min
+          const catalogType = catalogName.includes('HORECA') ? 'horeca'
+            : catalogName.includes('Combos') ? 'combos'
+            : 'products';
+          if (!canSendCatalog(from, catalogType)) {
+            console.log('📄 Catalog already sent recently, skipping (' + catalogType + ')');
+            return;
+          }
           await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
           return; // Exit after sending PDF, don't send images
         }
@@ -1026,7 +1034,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
       if (isHorecaSpecific && !hasProductInDB) {
         console.log('⚠️ HORECA-specific product requested - sending HORECA catalog PDF');
-        if (CONFIG.PDF_CATALOG_HORECA) {
+        if (CONFIG.PDF_CATALOG_HORECA && canSendCatalog(from, 'horeca')) {
           try {
             await sendWhatsAppDocument(
               from,
@@ -1038,6 +1046,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           } catch (err) {
             console.error('❌ Failed to send HORECA catalog:', err.message);
           }
+        } else if (CONFIG.PDF_CATALOG_HORECA) {
+          console.log('📄 HORECA catalog skipped (sent recently)');
         }
         return;
       }
@@ -1160,8 +1170,9 @@ function setupMessageProcessor() {
         await storeCustomerMessage(from, messageBody, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
 
         // v35: Auto-send HORECA catalog when HORECA-only products mentioned
+        // v55: Dedup — only send once per 30 min per customer
         const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
-        if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
+        if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA && canSendCatalog(from, 'horeca')) {
           console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
           try {
             await sendWhatsAppDocument(
@@ -1259,6 +1270,21 @@ const adminLimiter = rateLimit({
 
 // FIX #4: Per-Phone Rate Limiting (prevents spam from individual users)
 const phoneRateLimits = new Map();
+
+// Catalog send tracker — prevents the same catalog being sent twice within 30 minutes.
+// Key: `${phone}:${catalogType}`, Value: timestamp of last send.
+const catalogSendTracker = new Map();
+const CATALOG_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+
+function canSendCatalog(phone, catalogType) {
+  const key = `${phone}:${catalogType}`;
+  const lastSent = catalogSendTracker.get(key);
+  if (lastSent && Date.now() - lastSent < CATALOG_COOLDOWN_MS) {
+    return false;
+  }
+  catalogSendTracker.set(key, Date.now());
+  return true;
+}
 
 // v49: Message deduplication cache (prevent processing same message twice)
 // Meta sometimes sends duplicate webhooks for reliability - causes duplicate AI responses
@@ -1593,8 +1619,9 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
               await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
 
               // v35: Auto-send HORECA catalog when HORECA-only products mentioned
+              // v55: Dedup — only send once per 30 min per customer
               const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
-              if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA) {
+              if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA && canSendCatalog(from, 'horeca')) {
                 console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
                 try {
                   await sendWhatsAppDocument(
