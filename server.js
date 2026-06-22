@@ -1199,10 +1199,8 @@ function setupMessageProcessor() {
 
       // RAG: async-index this conversation (fire-and-forget — never blocks user response)
       if (CONFIG.RAG_ENABLED) {
-        console.log('🔵 RAG: queueing async index for', from);
         setImmediate(async () => {
           try {
-            console.log('🔵 RAG: indexer started');
             const result = await indexQAPair({
               customerPhone: from,
               customerMessage: messageBody,
@@ -1211,17 +1209,13 @@ function setupMessageProcessor() {
               outcome: 'in_progress',
               conversationStage: 'live'
             });
-            if (result.success) {
-              console.log('✅ RAG: indexed vector', result.id);
-            } else {
-              console.warn('⚠️ RAG: index skipped/failed:', result.reason || result);
+            if (!result.success) {
+              console.warn('⚠️ RAG index skipped/failed:', result.reason);
             }
           } catch (err) {
-            console.warn('⚠️ Async indexing failed:', err.message, err.stack);
+            console.warn('⚠️ Async indexing failed:', err.message);
           }
         });
-      } else {
-        console.log('ℹ️ RAG_ENABLED=false, skipping index');
       }
 
       // Handle image detection and sending
@@ -1640,7 +1634,6 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
 
             // RAG: async-index this conversation (direct path — same as queue path)
             if (CONFIG.RAG_ENABLED) {
-              console.log('🔵 RAG: queueing async index (direct path) for', from);
               setImmediate(async () => {
                 try {
                   const result = await indexQAPair({
@@ -1651,10 +1644,8 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                     outcome: 'in_progress',
                     conversationStage: 'live'
                   });
-                  if (result.success) {
-                    console.log('✅ RAG: indexed vector', result.id);
-                  } else {
-                    console.warn('⚠️ RAG: index skipped/failed:', result.reason || JSON.stringify(result));
+                  if (!result.success) {
+                    console.warn('⚠️ RAG index skipped/failed:', result.reason);
                   }
                 } catch (err) {
                   console.warn('⚠️ Async indexing failed:', err.message);
@@ -2472,57 +2463,6 @@ app.get('/health', monitoringLimiter, async (req, res) => {
   };
 
   res.json(health);
-});
-
-// RAG debug endpoint — runs the indexer once and returns the actual result.
-// Helps diagnose silent failures in production.
-app.get('/rag-debug', monitoringLimiter, async (req, res) => {
-  const diagnostics = {
-    timestamp: new Date().toISOString(),
-    config: {
-      RAG_ENABLED: CONFIG.RAG_ENABLED,
-      PINECONE_API_KEY_present: !!CONFIG.PINECONE_API_KEY,
-      PINECONE_API_KEY_prefix: CONFIG.PINECONE_API_KEY ? CONFIG.PINECONE_API_KEY.substring(0, 8) + '...' : 'MISSING',
-      PINECONE_INDEX: CONFIG.PINECONE_INDEX,
-      GEMINI_API_KEY_present: !!process.env.GEMINI_API_KEY
-    }
-  };
-  try {
-    // Direct axios call to bypass embed.js error swallowing
-    const axios = require('axios');
-    const key = process.env.GEMINI_API_KEY;
-    const resp = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=' + key,
-      { content: { parts: [{ text: 'debug' }] }, outputDimensionality: 1024 },
-      { timeout: 10000 }
-    );
-    diagnostics.embedding = {
-      status: 'OK',
-      dims: resp.data?.embedding?.values?.length,
-      keyPrefix: key?.substring(0, 8) + '...'
-    };
-  } catch (err) {
-    diagnostics.embedding = {
-      status: 'ERROR',
-      message: err.message,
-      httpStatus: err.response?.status,
-      apiError: err.response?.data?.error?.message?.substring(0, 200),
-      keyPrefix: process.env.GEMINI_API_KEY?.substring(0, 8) + '...'
-    };
-  }
-  try {
-    const result = await indexQAPair({
-      customerPhone: 'debug_endpoint',
-      customerMessage: 'debug test message',
-      botResponse: 'debug test response',
-      timestamp: Date.now(),
-      outcome: 'in_progress'
-    });
-    diagnostics.indexQAPair = result;
-  } catch (err) {
-    diagnostics.indexQAPair = { error: err.message, stack: err.stack };
-  }
-  res.json(diagnostics);
 });
 
 // RAG monitoring endpoint — conversation counts, conversion rate, recent failures
