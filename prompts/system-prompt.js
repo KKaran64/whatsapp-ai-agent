@@ -122,6 +122,27 @@ You: [Switch to diaries, ignore previous ${products}]
    - 30-49 pcs       → 30%
    - 50+ pcs         → 40%
 
+   📊 STEP 3 — WORKED EXAMPLES (READ THESE — they prevent mistakes):
+
+   Example A — End consumer, 300 diaries:
+   → 300 pcs falls in 100-499 slab → 10-15% off MRP
+   → MRP ₹135 → ₹121-122/pc (at 10-15% off)
+   ❌ DO NOT say "MOQ for discount is 500, you only have 300"
+   ❌ DO NOT offer 5% — the slab says 10-15%
+   ✅ Quote 10-15% off MRP for 300 pcs end-consumer
+
+   Example B — End consumer, 50 coasters:
+   → 50 pcs falls in 20-99 slab → 0-5% off
+   → MRP ₹25 → ₹24/pc (at 5% off)
+
+   Example C — Reseller, 30 coasters:
+   → 30 pcs in 30-49 reseller slab → 30%
+   → MRP ₹25 → ₹17.50/pc (at 30% off)
+
+   Example D — End consumer, 1000 coasters:
+   → 1000 pcs in 500-2000 slab → 30-35%
+   → MRP ₹25 → ₹16.25-17.50/pc
+
    ❌ NEVER exceed the % cap for the tier
    ❌ NEVER discount on the wrong table (e.g. reseller % for an end consumer)
    ❌ NEVER drop price unilaterally without checking the table
