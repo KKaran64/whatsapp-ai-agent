@@ -1319,6 +1319,53 @@ function canSendCatalog(phone, catalogType) {
   return true;
 }
 
+// v57: Inbound message debouncer — batches rapid customer messages within DEBOUNCE_MS
+// into a single processing pass. Prevents contradictory back-to-back responses.
+// Key: phoneNumber. Value: { messages: [...], timerId, latestEnqueued: Date.now() }
+const messageBuffer = new Map();
+const DEBOUNCE_MS = 2500;
+const MAX_BATCH_SIZE = 10;
+
+function bufferMessage(from, payload, processFn) {
+  let entry = messageBuffer.get(from);
+  if (!entry) {
+    entry = { messages: [], timerId: null };
+    messageBuffer.set(from, entry);
+  }
+
+  // Dedup: skip if this exact messageId is already buffered (Meta retry within debounce window)
+  if (payload.messageId && entry.messages.some(m => m.messageId === payload.messageId)) {
+    console.log(`🔄 Message ${payload.messageId} already buffered — skipping duplicate`);
+    return;
+  }
+
+  entry.messages.push(payload);
+
+  // Force flush if batch grows too large (prevents memory issues / runaway batches)
+  if (entry.messages.length >= MAX_BATCH_SIZE) {
+    if (entry.timerId) clearTimeout(entry.timerId);
+    const batch = entry.messages.slice();
+    messageBuffer.delete(from);
+    processFn(batch).catch(err => console.error('❌ Batch processing failed (force-flush):', err.message));
+    return;
+  }
+
+  // Reset timer — wait for more messages before processing
+  if (entry.timerId) clearTimeout(entry.timerId);
+  entry.timerId = setTimeout(() => {
+    const batch = entry.messages.slice();
+    messageBuffer.delete(from);
+    processFn(batch).catch(err => console.error('❌ Batch processing failed:', err.message));
+  }, DEBOUNCE_MS);
+}
+
+// Combine multiple message texts into one input for the AI
+function combineMessages(batch) {
+  if (batch.length === 1) return batch[0].messageBody;
+  // Concatenate with " | " separator so the AI sees the customer's full intent
+  return batch.map(m => m.messageBody).filter(Boolean).join(' | ');
+}
+
 // v49: Message deduplication cache (prevent processing same message twice)
 // Meta sometimes sends duplicate webhooks for reliability - causes duplicate AI responses
 // TTL-based Map: replaces size-based Set clear to avoid wiping recent IDs
@@ -1617,93 +1664,132 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
             return;
           }
 
-          // Process directly without queue (serialized per-phone)
-          await withPhoneLock(from, async () => {
-          try {
-            // Get conversation context with timeout fallback
-            let context = [];
-            try {
-              const contextPromise = getConversationContext(from);
-              const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Context timeout')), 2000)
-              );
-              context = await Promise.race([contextPromise, timeoutPromise]);
-            } catch (error) {
-              console.log('⚠️ Context unavailable - using empty context');
-              context = [];
+          // v57: Direct-path processor.
+          // Accepts a BATCH of messages (one or more) and processes them as a single
+          // unit so rapid customer follow-ups don't produce contradictory back-to-back replies.
+          const processBatch = async (batch) => {
+            const combinedMessageBody = combineMessages(batch);
+            const batchMessageIds = batch.map(m => m.messageId).filter(Boolean);
+            const latestMessageId = batchMessageIds[batchMessageIds.length - 1] || messageId;
+            // Use the latest batch item's type/media (relevant for images; text batches won't differ)
+            const lastItem = batch[batch.length - 1] || {};
+            const batchMessageType = lastItem.messageType || messageType;
+            const batchMediaId = lastItem.mediaId || mediaId;
+
+            // Skip if all messages in the batch were already processed (Meta retry)
+            if (batchMessageIds.length > 0 && batchMessageIds.every(id => sentResponses.has(id))) {
+              console.log(`✅ All ${batchMessageIds.length} batched messages already processed — skipping`);
+              return;
             }
 
-            let response;
-            // Handle IMAGE messages with vision AI
-            if (messageType === 'image' && mediaId) {
-              console.log('📸 Processing image message with vision AI...');
-              const result = await visionHandler.handleImageMessage(
-                mediaId,
-                messageBody || 'What is this?',
-                from,
-                context,
-                SYSTEM_PROMPT
-              );
-              response = result.response;
-              await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(() => {});
-            } else {
-              // Handle TEXT messages normally
-              response = await processWithClaudeAgent(messageBody, from, context);
-              await storeCustomerMessage(from, messageBody, messageId).catch(() => {});
+            if (batch.length > 1) {
+              console.log(`📦 Batched ${batch.length} messages from ${from}: "${combinedMessageBody.substring(0, 80)}..."`);
+            }
 
-              // v35: Auto-send HORECA catalog when HORECA-only products mentioned
-              // v55: Dedup — only send once per 30 min per customer
-              const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
-              if (horecaProducts.test(messageBody) && CONFIG.PDF_CATALOG_HORECA && canSendCatalog(from, 'horeca')) {
-                console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
+            await withPhoneLock(from, async () => {
+              try {
+                // Get conversation context with timeout fallback
+                let context = [];
                 try {
-                  await sendWhatsAppDocument(
-                    from,
-                    CONFIG.PDF_CATALOG_HORECA,
-                    '9Cork-HORECA-Catalog.pdf',
-                    'Here\'s our HORECA catalog with details on this product!'
+                  const contextPromise = getConversationContext(from);
+                  const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Context timeout')), 2000)
                   );
-                } catch (err) {
-                  console.error('❌ Failed to auto-send HORECA catalog:', err.message);
+                  context = await Promise.race([contextPromise, timeoutPromise]);
+                } catch (error) {
+                  console.log('⚠️ Context unavailable - using empty context');
+                  context = [];
                 }
-              }
-            }
 
-            await sendWhatsAppMessage(from, response);
+                let response;
+                // Handle IMAGE messages with vision AI
+                if (batchMessageType === 'image' && batchMediaId) {
+                  console.log('📸 Processing image message with vision AI...');
+                  const result = await visionHandler.handleImageMessage(
+                    batchMediaId,
+                    combinedMessageBody || 'What is this?',
+                    from,
+                    context,
+                    SYSTEM_PROMPT
+                  );
+                  response = result.response;
+                  await storeCustomerMessage(from, `[IMAGE: ${combinedMessageBody || 'no caption'}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+                } else {
+                  // Handle TEXT messages — use combined message
+                  response = await processWithClaudeAgent(combinedMessageBody, from, context);
+                  await storeCustomerMessage(from, combinedMessageBody, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
 
-            // RAG: async-index this conversation (direct path — same as queue path)
-            if (CONFIG.RAG_ENABLED) {
-              setImmediate(async () => {
-                try {
-                  const result = await indexQAPair({
-                    customerPhone: from,
-                    customerMessage: messageBody || '[IMAGE]',
-                    botResponse: response,
-                    timestamp: Date.now(),
-                    outcome: 'in_progress',
-                    conversationStage: 'live'
-                  });
-                  if (!result.success) {
-                    console.warn('⚠️ RAG index skipped/failed:', result.reason);
+                  // Auto-send HORECA catalog (dedup — once per 30 min per customer)
+                  const horecaProducts = /\b(caddy|caddies|bar caddy|bill folder|bill folders|menu folder|menu folders|cork light|cork lights|trivets?|cork stool|cork stools)\b/i;
+                  if (horecaProducts.test(combinedMessageBody) && CONFIG.PDF_CATALOG_HORECA && canSendCatalog(from, 'horeca')) {
+                    console.log('📄 Auto-sending HORECA catalog (HORECA product mentioned)');
+                    try {
+                      await sendWhatsAppDocument(
+                        from,
+                        CONFIG.PDF_CATALOG_HORECA,
+                        '9Cork-HORECA-Catalog.pdf',
+                        'Here\'s our HORECA catalog with details on this product!'
+                      );
+                    } catch (err) {
+                      console.error('❌ Failed to auto-send HORECA catalog:', err.message);
+                    }
                   }
-                } catch (err) {
-                  console.warn('⚠️ Async indexing failed:', err.message);
                 }
-              });
-            }
 
-            await handleImageDetectionAndSending(from, response, messageBody, context);
-            await storeAgentMessage(from, response).catch(() => {});
+                await sendWhatsAppMessage(from, response);
 
-          } catch (err) {
-            console.error('Error processing message:', err);
-            if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
-            await sendWhatsAppMessage(
-              from,
-              "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
-            ).catch(e => console.error('Failed to send error message:', e));
+                // Mark ALL batched messageIds as sent so future retries get deduped
+                for (const id of batchMessageIds) {
+                  sentResponses.set(id, {
+                    timestamp: new Date(),
+                    responseText: response.substring(0, 100),
+                    phoneNumber: from
+                  });
+                }
+
+                // RAG: async-index this conversation
+                if (CONFIG.RAG_ENABLED) {
+                  setImmediate(async () => {
+                    try {
+                      const result = await indexQAPair({
+                        customerPhone: from,
+                        customerMessage: combinedMessageBody || '[IMAGE]',
+                        botResponse: response,
+                        timestamp: Date.now(),
+                        outcome: 'in_progress',
+                        conversationStage: 'live'
+                      });
+                      if (!result.success) {
+                        console.warn('⚠️ RAG index skipped/failed:', result.reason);
+                      }
+                    } catch (err) {
+                      console.warn('⚠️ Async indexing failed:', err.message);
+                    }
+                  });
+                }
+
+                await handleImageDetectionAndSending(from, response, combinedMessageBody, context);
+                await storeAgentMessage(from, response).catch(err => console.warn('⚠️ storeAgentMessage failed:', err.message));
+
+              } catch (err) {
+                console.error('Error processing message:', err);
+                if (CONFIG.SENTRY_DSN) Sentry.captureException(err);
+                await sendWhatsAppMessage(
+                  from,
+                  "Sorry, I'm experiencing technical difficulties. Please try again in a moment."
+                ).catch(e => console.error('Failed to send error message:', e));
+              }
+            }); // end withPhoneLock
+          };
+
+          // Route the message: images process immediately; text gets debounced (2.5s)
+          // so rapid follow-up messages get batched into one AI call.
+          const payload = { messageBody, messageId, messageType, mediaId };
+          if (messageType === 'image') {
+            await processBatch([payload]);
+          } else {
+            bufferMessage(from, payload, processBatch);
           }
-          }); // end withPhoneLock
         }
       }
     }
