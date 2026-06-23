@@ -1323,7 +1323,7 @@ function canSendCatalog(phone, catalogType) {
 // into a single processing pass. Prevents contradictory back-to-back responses.
 // Key: phoneNumber. Value: { messages: [...], timerId, latestEnqueued: Date.now() }
 const messageBuffer = new Map();
-const DEBOUNCE_MS = 5000;  // 5s — captures normal typing gaps (3-4s between messages)
+const DEBOUNCE_MS = 8000;  // 8s — captures typing gaps up to 7s (live test showed 5-6s gaps common)
 const MAX_BATCH_SIZE = 10;
 
 function bufferMessage(from, payload, processFn) {
