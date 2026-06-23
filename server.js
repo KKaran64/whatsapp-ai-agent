@@ -281,6 +281,11 @@ const CONFIG = {
   PDF_CATALOG_HORECA: (process.env.PDF_CATALOG_HORECA || '').trim(),
   PDF_CATALOG_PRODUCTS: (process.env.PDF_CATALOG_PRODUCTS || '').trim(),
   PDF_CATALOG_COMBOS: (process.env.PDF_CATALOG_COMBOS || '').trim(),
+  PDF_CATALOG_TROPHY: (process.env.PDF_CATALOG_TROPHY || '').trim(),
+  PDF_CATALOG_YOGA: (process.env.PDF_CATALOG_YOGA || '').trim(),
+  PDF_CATALOG_PLANTERS: (process.env.PDF_CATALOG_PLANTERS || '').trim(),
+  PDF_CATALOG_ELEVATION: (process.env.PDF_CATALOG_ELEVATION || '').trim(),
+  PDF_CATALOG_MINIMALIST: (process.env.PDF_CATALOG_MINIMALIST || '').trim(),
   NODE_ENV: process.env.NODE_ENV || 'development',
   // Contact info (used in fallback responses — change in .env, not here)
   CONTACT_PHONE: (process.env.CONTACT_PHONE || '+91 70090 52784').trim(),
@@ -676,26 +681,59 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         let catalogName = '';
         let catalogCaption = '';
 
-        // HORECA catalog detection
-        if (/\b(horeca|hotel|restaurant|cafe|bar|hospitality)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_HORECA) {
+        // v56: Smart catalog routing — pick the right PDF based on keywords in the message.
+        // Order matters: more specific categories first, generic last.
+        if (/\b(trophy|trophies|award|awards|recognition|memento)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_TROPHY) {
+          catalogUrl = CONFIG.PDF_CATALOG_TROPHY;
+          catalogName = '9Cork-Trophy-Catalog.pdf';
+          catalogCaption = 'Here is our cork trophy catalog! 🏆';
+        }
+        else if (/\b(yoga|yog|mat|block|bolster|brick)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_YOGA) {
+          catalogUrl = CONFIG.PDF_CATALOG_YOGA;
+          catalogName = '9Cork-Yoga-Catalog.pdf';
+          catalogCaption = 'Here is our cork yoga essentials catalog! 🧘';
+        }
+        else if (/\b(planter|planters|plant|pot|pots|test tube)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_PLANTERS) {
+          catalogUrl = CONFIG.PDF_CATALOG_PLANTERS;
+          catalogName = '9Cork-Planters-Catalog.pdf';
+          catalogCaption = 'Here is our cork planters catalog! 🌱';
+        }
+        else if (/\b(elevation|premium|executive|luxury)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_ELEVATION) {
+          catalogUrl = CONFIG.PDF_CATALOG_ELEVATION;
+          catalogName = '9Cork-Elevation-Catalog.pdf';
+          catalogCaption = 'Here is our Elevation e-catalog (premium line)! ✨';
+        }
+        else if (/\b(minimal|minimalist|basic|simple|essential)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_MINIMALIST) {
+          catalogUrl = CONFIG.PDF_CATALOG_MINIMALIST;
+          catalogName = '9Cork-Minimalist-Catalog.pdf';
+          catalogCaption = 'Here is our Minimalist e-catalog! 🌿';
+        }
+        else if (/\b(combo|combos|gifting combo|combo catalog)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
+          catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
+          catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
+          catalogCaption = 'Here is our gifting combos catalog! 🎁';
+        }
+        // HORECA catalog detection (also covers caddy, bill folder, menu folder)
+        else if (/\b(horeca|hotel|restaurant|cafe|bar|hospitality|caddy|bill folder|menu folder|room tag|qr scanner)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_HORECA) {
           catalogUrl = CONFIG.PDF_CATALOG_HORECA;
           catalogName = '9Cork-HORECA-Catalog.pdf';
           catalogCaption = 'Here is our HORECA catalog for Hotels, Restaurants & Cafes! 🌿';
-          console.log('📄 Sending HORECA catalog to', from);
         }
         // General products catalog (default)
         else if (CONFIG.PDF_CATALOG_PRODUCTS) {
           catalogUrl = CONFIG.PDF_CATALOG_PRODUCTS;
           catalogName = '9Cork-Products-Catalog.pdf';
           catalogCaption = 'Here is our complete cork products catalog! 🌿';
-          console.log('📄 Sending Products catalog to', from);
         }
         // Fallback to legacy single catalog URL
         else if (CONFIG.PDF_CATALOG_URL) {
           catalogUrl = CONFIG.PDF_CATALOG_URL;
           catalogName = '9Cork-Catalog.pdf';
           catalogCaption = 'Here is our product catalog! 🌿';
-          console.log('📄 Sending catalog to', from);
+        }
+
+        if (catalogUrl) {
+          console.log('📄 Sending catalog (' + catalogName + ') to', from);
         }
 
         if (catalogUrl) {
