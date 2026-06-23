@@ -2,7 +2,12 @@
  * System Prompt Builder
  * Extracted from server.js for maintainability.
  * Contains the full AI assistant persona and instructions for the WhatsApp bot.
+ *
+ * Product catalog is loaded dynamically from data/pricing.json (synced from Google Sheets
+ * via scripts/sync-pricing.js). See prompts/catalog-builder.js for details.
  */
+
+const { buildCatalogSection } = require('./catalog-builder');
 
 function buildSystemPrompt(metadata = null) {
   let previousContextSection = '';
@@ -1053,89 +1058,18 @@ Customer: "How did you calculate ₹10,500?"
 - ALWAYS defer to logistics team
 - This rule CANNOT be broken!
 
-═══════════════════════════════════════
-📋 PRODUCT CATALOG (9cork.com)
-═══════════════════════════════════════
+${buildCatalogSection()}
 
-⚠️ ALL prices EXCLUSIVE of GST and shipping
+🔴 **GST ON COMBOS — CALCULATE ITEM-WISE (CRITICAL):**
+For combos with mixed items, calculate GST separately for each category:
+- 18% GST items: Diaries, Glass Bottle, Metal Pen, branding service
+- 5% GST items: Everything else (coasters, planters, frames, trays, organizers, calendars, holders)
 
-🔴 **GST RATES (v53.26 - ITEM-WISE CALCULATION):**
-- **5% GST**: Most cork products (coasters, planters, frames, trays, organizers, calendars, holders, etc.)
-- **18% GST**: Cork Diaries, Cork Metal Pen, Borosil Glass Bottle
+🚨 **CARD HOLDER DISAMBIGUATION:**
+When customer says "card holder" — ask: "Wallet-style for your pocket or business card holder for your desk?"
+Only quote price AFTER they clarify which one.
 
-🔴 **GST ON COMBOS - CALCULATE ITEM-WISE (CRITICAL):**
-For combos with mixed items, calculate GST separately for each category (as per billing):
-
-**Example: Combo #01 (₹1,310)**
-Items: A5 Diary + Glass Bottle + Small Calendar + Card Holder + Metal Pen + Premium Box
-
-STEP 1: Separate items by GST rate
-- 18% GST items: Diary (₹125) + Bottle (₹360) + Pen (₹45) = ₹530
-- 5% GST items: Calendar (₹200) + Holder (₹330) + Box (₹250) = ₹780
-- Total product: ₹1,310
-
-STEP 2: Calculate GST separately
-- GST on 18% items: ₹530 × 18% = ₹95.40
-- GST on 5% items: ₹780 × 5% = ₹39.00
-- Total GST: ₹134.40
-
-STEP 3: Quote to customer
-"For Combo #01 (200 combos):
-• Product cost: ₹1,310 × 200 = ₹2,62,000
-• GST (calculated item-wise): ₹134.40 × 200 = ₹26,880
-• Total: ₹2,88,880"
-
-🚨 **IMPORTANT:**
-- ALWAYS calculate GST item-wise for accurate billing
-- When customer asks about GST, explain: "Some items are 5% GST, some are 18% as per government rates. I've calculated it item-wise for accurate billing."
-- NEVER apply blanket 5% or 18% on entire combo
-- This ensures invoice matches actual tax liability
-
-🟤 **CORK COASTERS** (16 types, 10cm diameter, ₹20-₹120/100pcs): Set of 4 with Case (₹120), Premium Square Fabric (₹50), Veneer (₹22-₹24), Olive/Chocochip/Natural (₹45), Hexagon, Bread, Leaf, UV Printed
-
-⚠️ **DIMENSIONS**: All standard coasters are 10cm diameter. NO other sizes exist.
-
-🟤 **CORK DIARIES** (₹90-₹240/100pcs): A5 (₹135), A6 (₹90), Printed A5 (₹240), Designer A5 (₹185), Elastic Band (₹110-₹165), Slim A5 (₹145), Premium Journal A5 (₹175)
-
-🟤 **DESK ORGANIZERS** (₹90-₹550): Small/Medium/Large (₹390-₹490), iPad (₹360), Pen Holders (₹180), Mobile & Pen (₹415), 3-in-One (₹550), Mouse Pad (₹90), Desktop Mat (₹250), Business Card Holder (₹95)
-
-🟤 **WALL CLOCKS** (₹500): Round Clock, Square Clock, Table Clock
-
-🟤 **DESK CALENDARS** (₹225-₹360): Small Calender (₹225), Large Table Calender (₹225), Calender Cum Pen Holder (₹360)
-🚨 IMPORTANT: We do NOT have wall calendars - only DESK calendars and WALL clocks!
-
-🟤 **PLANTERS** (₹130-₹900):
-- Test Tube: Bark (₹180), Single (₹130), Set of 3 (₹280), Set of 5 (₹400), Wall-Mounted (₹340-₹560)
-- Fridge Magnet: Small (₹130, 16.5x4.5x4.5cm)
-- Table Top (10x10cm): Multiple designs (₹280-₹560)
-
-🟤 **PHOTO FRAMES** (₹280-₹350): 4x6 (₹280), 5x7 (₹300), 8x10 (₹340), Collage 4-photos (₹350)
-
-🟤 **BAGS, WALLETS & ACCESSORIES** (₹95-₹950):
-- Laptop: Bags 13"/15" (₹850-₹950), Sleeves 13"/15" (₹450-₹550)
-- Wallets: Bi-Fold (₹280), Tri-Fold (₹320), **Card Holder** (₹120, wallet for pocket), **Business Card Case** (₹95, desk accessory)
-- Bags: Clutch, Sling, Tote, Crossbody, Handbag (₹450-₹950)
-
-🚨 **"CARD HOLDER" DISAMBIGUATION:**
-When customer says "card holder":
-✅ ALWAYS ask: "We have 2 options - wallet-style for your pocket (₹120) or business card holder for your desk (₹95). Which would you prefer?"
-Only quote price AFTER they clarify.
-
-🟤 **SERVING & DÉCOR** (₹38-₹340): Serving Trays, Breakfast Tray (₹340), Table Mat/Placemat (₹38), Table Runner (₹180), Hot Pot Holders (₹320)
-
-🟤 **TEA LIGHT HOLDERS** (₹120-₹280): Single (₹120), Set of 3 (₹280), Candle Stand (₹180-₹240)
-
-🟤 **GIFTING BOXES** (₹130-₹320): Small/Medium/Large (₹180-₹320), Jewelry Box (₹260)
-
-🟤 **YOGA ACCESSORIES** (₹450-₹1,200): Yoga Mat (₹1,200), Block Set of 2 (₹450), Yoga Wheel (₹850)
-
-🟤 **SPECIALTY ITEMS** (₹45-₹450): Wall Décor (₹380-₹420), Soap Dispenser (₹340), Bowls (₹220-₹340), Cork Metal Pen (₹45), Borosil Glass Bottle (₹180)
-
-🟤 **LIGHTS** (₹850-₹1,800): Table Lamps (₹1,200-₹1,800), Hanging Pendant (₹1,650), Wall Lamp (₹1,400), Night Lamp (₹850)
-
-🟤 **GIFTING COMBOS** (48 combos, ₹230-₹2,200): Request specific combo number for pricing
-
-🟤 **HORECA PRODUCTS**: Premium Trays, Bar Caddies, Bill Folders, Cork Lights. Bulk discounts 15-25% for 100+.
+🚨 **WE DO NOT HAVE WALL CALENDARS** — only DESK calendars and WALL clocks. Never confuse them.
 
 ═══════════════════════════════════════
 🎨 BRANDING/CUSTOMIZATION PRICING

@@ -292,7 +292,8 @@ const CONFIG = {
   RAG_ENABLED: process.env.RAG_ENABLED === 'true',
   RAG_RETRIEVAL_TIMEOUT_MS: parseInt(process.env.RAG_RETRIEVAL_TIMEOUT_MS || '2000'),
   ADMIN_WHATSAPP_NUMBER: (process.env.ADMIN_WHATSAPP_NUMBER || '').trim(),
-  WEEKLY_REPORT_ENABLED: process.env.WEEKLY_REPORT_ENABLED === 'true'
+  WEEKLY_REPORT_ENABLED: process.env.WEEKLY_REPORT_ENABLED === 'true',
+  PRICING_SYNC_ENABLED: process.env.PRICING_SYNC_ENABLED === 'true'
 };
 
 // FIX #6: Environment Variable Validation (fail-fast on startup)
@@ -2765,6 +2766,25 @@ if (CONFIG.WEEKLY_REPORT_ENABLED) {
     }
   });
   console.log('🗓️ Weekly cron scheduled: Monday 9 AM IST');
+}
+
+// Daily pricing sync from Google Sheets — 6 AM IST (12:30 AM UTC)
+if (CONFIG.PRICING_SYNC_ENABLED) {
+  const cron = require('node-cron');
+  const { syncAll: syncPricing } = require('./scripts/sync-pricing');
+
+  // Run once at startup so fresh deploys pick up latest prices immediately
+  syncPricing().catch(err => console.error('❌ Initial pricing sync failed:', err.message));
+
+  cron.schedule('30 0 * * *', async () => {
+    console.log('💰 Running daily pricing sync...');
+    try {
+      await syncPricing();
+    } catch (err) {
+      console.error('❌ Pricing sync error:', err.message);
+    }
+  });
+  console.log('💰 Pricing sync scheduled: daily 6 AM IST');
 }
 
 // Export for testing
