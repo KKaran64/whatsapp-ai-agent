@@ -2261,60 +2261,82 @@ function isResetRequest(message) {
   return resetPatterns.test(message);
 }
 
-// v54.4: Build context-aware message with known facts to prevent repeated questions
-// CRITICAL: Only extract from RECENT messages and respect topic changes
+// Build context-aware message with known facts to prevent repeated questions.
+// CRITICAL: Current message FACTS override history. If customer changes product/qty,
+// history is reset for that field. Greeting → new product = full session reset.
 function buildContextAwareMessage(userMessage, conversationHistory) {
-  // Only use last 6 messages to avoid stale context contamination
   const recentHistory = conversationHistory.slice(-6);
 
-  // Detect topic change / product switch in recent user messages
   const TOPIC_CHANGE = /\b(no longer|not needed|cancel|don't need|instead|switch to|different|fresh chat|new chat|start over|start fresh|from scratch|not required|forget|ignore)\b/i;
+  const GREETING = /^\s*(hi|hello|hey|namaste|hi there|good morning|good evening)\b/i;
+  const PRODUCT_RE = /\b(coasters?|diary|diaries|planters?|organizers?|calend[ae]rs?|bags?|wallets?|frames?|photo frames?|trays?|combos?|bottles?|clocks?|lamps?|pens?|metal pens?|tea ?lights?|candles?|trophy|trophies|yoga|mats?|sleeves?|caddy|caddies|holders?|cases?)\b/i;
 
-  // Find the most recent topic change point
+  // Find the most recent topic change OR greeting+product (implicit session restart)
   let startIdx = 0;
   for (let i = 0; i < recentHistory.length; i++) {
-    if (recentHistory[i].role === 'user' && TOPIC_CHANGE.test(recentHistory[i].content)) {
-      startIdx = i + 1; // Only use messages AFTER the topic change
+    if (recentHistory[i].role !== 'user') continue;
+    const text = recentHistory[i].content;
+    if (TOPIC_CHANGE.test(text)) {
+      startIdx = i + 1;
+    }
+    // Implicit reset: greeting in a customer message resets context
+    if (GREETING.test(text)) {
+      startIdx = i;  // include this greeting message as the start of the new session
     }
   }
 
-  // Only extract facts from messages after the last topic change (user messages only)
-  const relevantMessages = recentHistory.slice(startIdx).filter(m => m.role === 'user');
-  if (relevantMessages.length === 0) return userMessage;
+  // The CURRENT message is the authoritative source for facts. History is fallback only.
+  const currentMessage = userMessage;
+  const historyMessages = recentHistory.slice(startIdx).filter(m => m.role === 'user');
+  // Exclude the current message from history if it ended up included
+  const historyText = historyMessages
+    .filter(m => m.content !== currentMessage)
+    .map(m => m.content)
+    .join(' ')
+    .toLowerCase();
 
-  const recentText = relevantMessages.map(m => m.content).join(' ').toLowerCase();
-
-  // Detect the CURRENT product from user's most recent message first, then recent context
-  const PRODUCT_RE = /\b(coasters?|diary|diaries|planters?|organizers?|calend[ae]rs?|bags?|wallets?|frames?|photo frames?|trays?|combos?|bottles?|clocks?|lamps?)\b/i;
-  const currentProductMatch = userMessage.match(PRODUCT_RE);
-  const contextProductMatch = recentText.match(PRODUCT_RE);
-  const activeProduct = currentProductMatch ? currentProductMatch[0] : (contextProductMatch ? contextProductMatch[0] : null);
+  // CURRENT-MESSAGE-FIRST extraction helpers
+  const matchCurrentThenHistory = (regex) => {
+    const cur = currentMessage.match(regex);
+    if (cur) return cur;
+    return historyText.match(regex);
+  };
 
   const facts = [];
 
-  // Extract product
-  if (activeProduct) facts.push(`PRODUCT: ${activeProduct}`);
+  // PRODUCT — prefer current message's product mention over history
+  const productMatch = matchCurrentThenHistory(PRODUCT_RE);
+  if (productMatch) facts.push(`PRODUCT: ${productMatch[0]}`);
 
-  // Extract quantity (only from recent relevant messages)
-  const qtyMatch = recentText.match(/(\d+)\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i);
+  // QUANTITY — prefer current message's qty over history (fixes "300 leak from prior chat")
+  const qtyMatch = matchCurrentThenHistory(/(\d+)\s*(?:pcs|pieces|nos|people|units|qty|quantity|numbers?)/i);
   if (qtyMatch) facts.push(`QUANTITY: ${qtyMatch[1]}`);
-
-  // Extract budget (only from recent relevant messages)
-  const budgetMatch = recentText.match(/(?:₹|rs\.?|inr)\s*(\d[\d,]*)/i);
-  if (budgetMatch) facts.push(`BUDGET: ₹${budgetMatch[1]}`);
-
-  // Extract use case / occasion (only from recent relevant messages)
-  if (/gift|gifting|event|occasion|corporate|wedding|birthday|anniversary|diwali|christmas/.test(recentText)) {
-    const match = recentText.match(/(?:for|gift.*?for|occasion.*?is|it'?s?\s+(?:for|a))\s+([^.!?\n]{3,40})/i);
-    if (match) facts.push(`USE CASE: ${match[1].trim()}`);
+  // Also catch bare numbers when current message has a product mention (e.g. "i need pens, 500")
+  if (!qtyMatch) {
+    const bareCur = currentMessage.match(/\b(\d{2,5})\b/);
+    if (bareCur && productMatch && currentMessage.match(PRODUCT_RE)) {
+      facts.push(`QUANTITY: ${bareCur[1]}`);
+    }
   }
 
-  // Extract timeline (only from recent relevant messages)
-  const timelineMatch = recentText.match(/\b(next week|this month|urgent|asap|year.?end|quarter|diwali|christmas|by \w+)\b/i);
+  // BUDGET — prefer current
+  const budgetMatch = matchCurrentThenHistory(/(?:₹|rs\.?|inr)\s*(\d[\d,]*)/i);
+  if (budgetMatch) facts.push(`BUDGET: ₹${budgetMatch[1]}`);
+
+  // USE CASE — prefer current
+  const useCaseRe = /(?:for|gift.*?for|occasion.*?is|it'?s?\s+(?:for|a))\s+([^.!?\n]{3,40})/i;
+  let useCaseMatch = currentMessage.match(useCaseRe);
+  if (!useCaseMatch && /gift|gifting|event|occasion|corporate|wedding|birthday|anniversary|diwali|christmas/.test(historyText)) {
+    useCaseMatch = historyText.match(useCaseRe);
+  }
+  if (useCaseMatch) facts.push(`USE CASE: ${useCaseMatch[1].trim()}`);
+
+  // TIMELINE — prefer current
+  const timelineMatch = matchCurrentThenHistory(/\b(next week|this month|urgent|asap|year.?end|quarter|diwali|christmas|by \w+)\b/i);
   if (timelineMatch) facts.push(`TIMELINE: ${timelineMatch[0]}`);
 
   if (facts.length > 0) {
-    console.log(`📋 Context facts extracted (last ${relevantMessages.length} msgs): ${facts.join(', ')}`);
+    console.log(`📋 Context facts (start@${startIdx}/${recentHistory.length}): ${facts.join(', ')}`);
     return `[ALREADY KNOWN: ${facts.join(', ')}]\n\n${userMessage}`;
   }
   return userMessage;
