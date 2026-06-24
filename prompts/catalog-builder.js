@@ -8,7 +8,14 @@ const fs = require('fs');
 const path = require('path');
 
 const PRICING_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
-const CACHE_TTL_MS = 60 * 1000;
+// v58: TTL bumped to 6h — the pricing cron only refreshes daily anyway, so 60s
+// was wasting disk I/O on every message. The cron explicitly invalidates the cache.
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function invalidateCache() {
+  cachedData = null;
+  cachedAt = 0;
+}
 
 let cachedData = null;
 let cachedAt = 0;
@@ -124,4 +131,4 @@ function buildCatalogSection() {
   return parts.filter(Boolean).join('\n');
 }
 
-module.exports = { buildCatalogSection, loadPricing };
+module.exports = { buildCatalogSection, loadPricing, invalidateCache };

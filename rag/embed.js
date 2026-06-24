@@ -22,7 +22,7 @@ async function tryEmbed(text, key) {
   const response = await axios.post(
     `${EMBED_URL}?key=${key}`,
     { content: { parts: [{ text }] }, outputDimensionality: OUTPUT_DIMS },
-    { timeout: 5000 }
+    { timeout: 2500 }  // v58: 2.5s per key (was 5s). With 9 keys worst-case is 22.5s instead of 45s.
   );
   const values = response.data?.embedding?.values;
   if (!Array.isArray(values) || values.length !== OUTPUT_DIMS) {
@@ -42,6 +42,8 @@ async function embedText(text) {
     return null;
   }
 
+  // v58: Try ALL keys for maximum resilience (user has 9 keys = 9 attempts).
+  // Per-key timeout reduced to 2.5s so worst-case total is ~22.5s for 9 keys.
   const errors = [];
   for (let i = 0; i < keys.length; i++) {
     try {
@@ -52,7 +54,7 @@ async function embedText(text) {
       // Continue to next key
     }
   }
-  console.error('❌ All ' + keys.length + ' Gemini keys failed:', errors.join(' | '));
+  console.error(`❌ All ${keys.length} Gemini keys failed:`, errors.join(' | '));
   return null;
 }
 
