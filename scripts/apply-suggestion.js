@@ -3,13 +3,20 @@
 // Reads latest report from data/reports/, applies fixes flagged autoApply: true,
 // commits and pushes for Render to deploy.
 //
+// v58 SAFETY: Requires --confirm flag to actually write+push. Default is dry-run preview.
+// This prevents an LLM-marked autoApply from silently shipping bad prompt changes to prod.
+//
 // Uses execFileSync (NOT exec) to avoid shell injection risks.
 //
-// Usage: node scripts/apply-suggestion.js [--report=path] [--dry-run]
+// Usage:
+//   node scripts/apply-suggestion.js                  → dry-run preview (default safe)
+//   node scripts/apply-suggestion.js --confirm        → apply, commit, push to main
+//   node scripts/apply-suggestion.js --report=PATH    → use a specific report file
 
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { execFileSync } = require('child_process');
 
 const PROMPT_FILE = path.join(__dirname, '..', 'prompts', 'system-prompt.js');
@@ -40,9 +47,16 @@ function gitCommitAndPush(message) {
   execFileSync('git', ['push', 'origin', 'main'], { cwd: REPO_ROOT });
 }
 
-function run() {
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans); }));
+}
+
+async function run() {
   const args = process.argv.slice(2);
-  const dryRun = args.includes('--dry-run');
+  // v58: default is dry-run. --confirm is required to actually push.
+  const explicitConfirm = args.includes('--confirm');
+  const dryRun = !explicitConfirm || args.includes('--dry-run');
   const reportPath = (args.find(a => a.startsWith('--report=')) || '').split('=')[1] || findLatestReport();
 
   if (!reportPath || !fs.existsSync(reportPath)) {
@@ -77,6 +91,14 @@ function run() {
     console.log('\n--- Modified prompt preview (dry-run) ---');
     const idx = prompt.indexOf('AUTO-APPLIED');
     console.log(prompt.substring(idx, idx + 500));
+    console.log('\n⚠️ Dry-run only. To apply, run with --confirm');
+    process.exit(0);
+  }
+
+  // v58: Even with --confirm, require interactive y/N before pushing to main
+  const answer = await ask(`\n⚠️ This will commit and push ${autoFixes.length} prompt change(s) to MAIN, redeploying production. Type "yes" to confirm: `);
+  if (answer.trim().toLowerCase() !== 'yes') {
+    console.log('Aborted — no changes written.');
     process.exit(0);
   }
 
@@ -91,4 +113,4 @@ function run() {
   }
 }
 
-run();
+run().catch(err => { console.error('Fatal:', err); process.exit(1); });

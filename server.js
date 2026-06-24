@@ -688,7 +688,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           catalogName = '9Cork-Trophy-Catalog.pdf';
           catalogCaption = 'Here is our cork trophy catalog! 🏆';
         }
-        else if (/\b(yoga|yog|mat|block|bolster|brick)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_YOGA) {
+        // v58: Tightened — match only yoga-specific phrases, not bare "mat" (which catches tablemat/dining mat)
+        else if (/\byoga\b|\byoga ?mat\b|\byoga ?block\b|\byoga ?wheel\b|\byoga ?bolster\b/i.test(userMessage) && CONFIG.PDF_CATALOG_YOGA) {
           catalogUrl = CONFIG.PDF_CATALOG_YOGA;
           catalogName = '9Cork-Yoga-Catalog.pdf';
           catalogCaption = 'Here is our cork yoga essentials catalog! 🧘';
@@ -1433,22 +1434,28 @@ setInterval(() => {
       sentResponses.delete(msgId);
     }
   }
+
+  // v58: Clean up catalogSendTracker (was leaking — every customer:catalog pair kept forever)
+  const catalogCleanupAge = 35 * 60 * 1000; // 35 min — slightly longer than CATALOG_COOLDOWN_MS so we don't drop a still-active cooldown
+  for (const [key, ts] of catalogSendTracker.entries()) {
+    if (now - ts > catalogCleanupAge) {
+      catalogSendTracker.delete(key);
+    }
+  }
 }, 5 * 60 * 1000);
 
 function checkPhoneRateLimit(phoneNumber, messageContent = '') {
   const now = Date.now();
   const lastMessage = phoneRateLimits.get(phoneNumber) || 0;
 
-  // UX FIX v41: Only block ACTUAL spam (multiple messages within 500ms)
-  // Normal typing/impatience is OK - don't punish customers!
-  const minInterval = 500; // 0.5 seconds - only catches true spam
+  // v58: The 8s debouncer batches rapid messages into a single AI call. The rate limiter
+  // is now only for genuine flood-attacks (>10 msgs in 1 second). Anything slower is
+  // legitimate typing that the debouncer will merge.
+  const minInterval = 100; // 100ms — only catches true bot/flood traffic
 
   if (now - lastMessage < minInterval) {
     const timeSinceLastMs = now - lastMessage;
-    console.warn(`⚠️ Possible spam detected for ${phoneNumber} - ${timeSinceLastMs}ms since last message`);
-
-    // ALWAYS silently drop - NEVER send rude "Please wait" messages
-    console.log(`💡 Silently dropping rapid message: "${messageContent.substring(0, 50)}..."`);
+    console.warn(`⚠️ Flood detected for ${phoneNumber} - ${timeSinceLastMs}ms since last message — dropping`);
     return 'silent_drop';
   }
 
@@ -2279,8 +2286,10 @@ function buildContextAwareMessage(userMessage, conversationHistory) {
     if (TOPIC_CHANGE.test(text)) {
       startIdx = i + 1;
     }
-    // Implicit reset: greeting in a customer message resets context
-    if (GREETING.test(text)) {
+    // Implicit reset: a SHORT greeting message resets context (e.g. "hi", "hello").
+    // Longer messages starting with "Hi" (like "Hi I need diaries continued from yesterday")
+    // should NOT trigger a reset — they're continuing the conversation.
+    if (GREETING.test(text) && text.length <= 25) {
       startIdx = i;  // include this greeting message as the start of the new session
     }
   }
@@ -2420,7 +2429,7 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     const contextAwareMessage = buildContextAwareMessage(sanitizedMessage, context);
 
     // Use multi-provider AI manager with automatic failover
-    // Send last 50 messages for context (optimized for Groq upper tier 32k+ token limit)
+    // Send last 50 messages for context (kept at 50 per user preference — accept TPM trade-off)
     // v54.3: Use context-aware message (with [ALREADY KNOWN: ...] prefix) as the current message
     const contextWithFacts = [...context, { role: 'user', content: contextAwareMessage }];
     const result = await aiManager.getResponse(
@@ -2918,14 +2927,18 @@ if (CONFIG.WEEKLY_REPORT_ENABLED) {
 if (CONFIG.PRICING_SYNC_ENABLED) {
   const cron = require('node-cron');
   const { syncAll: syncPricing } = require('./scripts/sync-pricing');
+  const { invalidateCache: invalidatePricingCache } = require('./prompts/catalog-builder');
 
   // Run once at startup so fresh deploys pick up latest prices immediately
-  syncPricing().catch(err => console.error('❌ Initial pricing sync failed:', err.message));
+  syncPricing()
+    .then(() => invalidatePricingCache())
+    .catch(err => console.error('❌ Initial pricing sync failed:', err.message));
 
   cron.schedule('30 0 * * *', async () => {
     console.log('💰 Running daily pricing sync...');
     try {
       await syncPricing();
+      invalidatePricingCache(); // force fresh read of pricing.json on next message
     } catch (err) {
       console.error('❌ Pricing sync error:', err.message);
     }

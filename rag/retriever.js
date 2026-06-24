@@ -41,7 +41,10 @@ async function retrieveContext({ message, customerPhone, timeoutMs = 2000 }) {
     timeoutMs
   );
 
-  const similarFilter = { outcome: { $in: ['sale', 'in_progress'] } };
+  // v58: ONLY retrieve confirmed-sale examples. 'in_progress' is excluded — they're
+  // unvalidated, and the bot's own buggy responses get indexed as in_progress and
+  // would otherwise loop back as "successful examples" within minutes.
+  const similarFilter = { outcome: { $eq: 'sale' } };
   if (pricing) {
     similarFilter.isStaleForPricing = { $eq: false };
     similarFilter.productStillAvailable = { $eq: true };

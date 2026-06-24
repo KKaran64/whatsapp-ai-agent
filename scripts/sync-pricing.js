@@ -59,8 +59,10 @@ function parseCsv(text) {
 function parsePrice(s) {
   if (!s) return 0;
   const cleaned = String(s).replace(/[₹,\s]/g, '');
-  const n = parseInt(cleaned, 10);
-  return isNaN(n) ? 0 : n;
+  // v58: Use parseFloat — prices like "121.50" or "17.50" must keep decimal precision.
+  // Round to 2 decimal places to avoid floating-point noise.
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : Math.round(n * 100) / 100;
 }
 
 // Parse the HORECA sheet (cleanest structure)
