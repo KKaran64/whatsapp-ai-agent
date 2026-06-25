@@ -155,15 +155,18 @@ async function createDeal({ contactId, dealName, amount, stage, products, notes 
   const closingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toISOString().split('T')[0];
 
-  // Sub_Pipeline is mandatory in Bigin's deal schema. Defaults to "Standard" which
-  // is the out-of-the-box sub-pipeline name under "Sales Pipeline" in fresh Bigin orgs.
-  // Override via env var if your org uses a different sub-pipeline name.
+  // Bigin requires BOTH Pipeline + Sub_Pipeline. Each Pipeline has its own Layout
+  // and Sub_Pipeline names; sending Sub_Pipeline alone makes Bigin guess a Layout
+  // that may not contain it ("Layout doesn't contain the Pipeline" error).
+  // Defaults match the out-of-the-box Bigin org. Override via env vars if needed.
+  const pipeline = process.env.BIGIN_PIPELINE || 'Sales Pipeline';
   const subPipeline = process.env.BIGIN_SUB_PIPELINE || 'Standard';
 
   const payload = {
     data: [{
       Deal_Name: dealName,
       Stage: stage || 'Qualification',
+      Pipeline: pipeline,
       Sub_Pipeline: subPipeline,
       Amount: amount || 0,
       Contact_Name: { id: contactId },
