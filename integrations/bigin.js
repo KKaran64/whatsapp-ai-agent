@@ -128,10 +128,12 @@ async function findOrCreateContact({ phone, name }) {
 }
 
 // Find open Deal for a contact, or null. Used so we update the same Deal instead of duplicating.
+// Bigin's related-list endpoint requires the `fields` query param (live API enforces it
+// even though docs say optional). The related-list path uses the legacy alias `Deals`.
 async function findOpenDealForContact(contactId) {
   try {
-    // Bigin Deals search by Contact_Name (lookup). We use COQL or related list.
-    const data = await biginRequest('GET', `/Contacts/${contactId}/Deals`);
+    const fields = 'Deal_Name,Stage,Amount,Pipeline,Sub_Pipeline';
+    const data = await biginRequest('GET', `/Contacts/${contactId}/Deals?fields=${fields}`);
     if (data?.data?.length > 0) {
       const open = data.data.find(d =>
         d.Stage !== 'Closed Won' &&
@@ -161,7 +163,9 @@ async function createDeal({ contactId, dealName, amount, stage, products, notes 
     }]
   };
   try {
-    const data = await biginRequest('POST', '/Deals', payload);
+    // Bigin's primary deal module is `Pipelines`, NOT `Deals`. The `/Deals` URL pattern
+    // works only as a related-list alias under /Contacts/{id}/Deals — POST/PUT must use /Pipelines.
+    const data = await biginRequest('POST', '/Pipelines', payload);
     const created = data?.data?.[0];
     if (created?.status === 'success') return created.details;
     console.warn('⚠️ Bigin deal create returned non-success:', created);
@@ -174,7 +178,7 @@ async function createDeal({ contactId, dealName, amount, stage, products, notes 
 
 async function updateDealStage(dealId, stage) {
   try {
-    const data = await biginRequest('PUT', `/Deals/${dealId}`, {
+    const data = await biginRequest('PUT', `/Pipelines/${dealId}`, {
       data: [{ Stage: stage }]
     });
     return data?.data?.[0]?.status === 'success';
