@@ -150,12 +150,18 @@ async function findOpenDealForContact(contactId) {
 }
 
 async function createDeal({ contactId, dealName, amount, stage, products, notes }) {
+  // Bigin Pipelines require Closing_Date (mandatory in the deal/pipeline schema).
+  // Default to 30 days out — the bot doesn't know the real close date yet.
+  const closingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    .toISOString().split('T')[0];
+
   const payload = {
     data: [{
       Deal_Name: dealName,
       Stage: stage || 'Qualification',
       Amount: amount || 0,
       Contact_Name: { id: contactId },
+      Closing_Date: closingDate,
       Description: [
         products?.length ? `Products: ${products.join(', ')}` : null,
         notes
@@ -168,10 +174,11 @@ async function createDeal({ contactId, dealName, amount, stage, products, notes 
     const data = await biginRequest('POST', '/Pipelines', payload);
     const created = data?.data?.[0];
     if (created?.status === 'success') return created.details;
-    console.warn('⚠️ Bigin deal create returned non-success:', created);
+    console.warn('⚠️ Bigin deal create returned non-success:', JSON.stringify(created));
     return null;
   } catch (err) {
-    console.error('❌ Bigin deal create failed:', err.response?.data || err.message);
+    // JSON.stringify so nested `details` objects show up instead of `[Object]`
+    console.error('❌ Bigin deal create failed:', JSON.stringify(err.response?.data || err.message));
     return null;
   }
 }
