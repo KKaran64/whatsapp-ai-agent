@@ -34,6 +34,8 @@ const { buildSystemPrompt } = require('./prompts/system-prompt');
 const { retrieveContext } = require('./rag/retriever');
 const { buildRagContext } = require('./rag/context-builder');
 const { indexQAPair } = require('./rag/indexer');
+const { pushLeadEvent: pushBiginEvent, isConfigured: biginConfigured } = require('./integrations/bigin');
+const { detectOutcome } = require('./rag/outcome-detector');
 
 // Redis-backed sent images tracker (survives deploys; falls back to in-memory when Redis unavailable)
 const { RedisSentImagesTracker } = require('./utils/redis-state');
@@ -298,7 +300,10 @@ const CONFIG = {
   RAG_RETRIEVAL_TIMEOUT_MS: parseInt(process.env.RAG_RETRIEVAL_TIMEOUT_MS || '2000'),
   ADMIN_WHATSAPP_NUMBER: (process.env.ADMIN_WHATSAPP_NUMBER || '').trim(),
   WEEKLY_REPORT_ENABLED: process.env.WEEKLY_REPORT_ENABLED === 'true',
-  PRICING_SYNC_ENABLED: process.env.PRICING_SYNC_ENABLED === 'true'
+  PRICING_SYNC_ENABLED: process.env.PRICING_SYNC_ENABLED === 'true',
+  // Bigin (Zoho CRM) — set BIGIN_ENABLED=true on Render + provide OAuth creds to activate
+  BIGIN_ENABLED: process.env.BIGIN_ENABLED === 'true',
+  BIGIN_DC: (process.env.BIGIN_DC || 'in').trim()
 };
 
 // FIX #6: Environment Variable Validation (fail-fast on startup)
@@ -1775,6 +1780,14 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                   });
                 }
 
+                // Bigin CRM: push lead/deal events (fire-and-forget)
+                if (biginConfigured()) {
+                  setImmediate(() => {
+                    syncBiginFromConversation(from, combinedMessageBody, response, context)
+                      .catch(err => console.warn('⚠️ Bigin sync failed:', err.message));
+                  });
+                }
+
                 await handleImageDetectionAndSending(from, response, combinedMessageBody, context);
                 await storeAgentMessage(from, response).catch(err => console.warn('⚠️ storeAgentMessage failed:', err.message));
 
@@ -2352,6 +2365,75 @@ function buildContextAwareMessage(userMessage, conversationHistory) {
 }
 
 // Process message with Multi-Provider AI agent (Groq → Gemini → Rules)
+// Bigin CRM sync — fires after each bot response. Pushes contact + deal stage changes.
+// Triggered by patterns in the bot's response:
+//   - Response contains a ₹ amount → "quoted" event (create/update Deal in Qualification)
+//   - detectOutcome marks as sale/no_sale/abandoned → close the deal accordingly
+async function syncBiginFromConversation(phone, customerMsg, botResponse, context) {
+  // Build the conversation array for outcome detection
+  const allMessages = [
+    ...context.map(m => ({
+      role: m.role === 'user' ? 'customer' : 'agent',
+      content: m.content,
+      timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now()
+    })),
+    { role: 'customer', content: customerMsg, timestamp: Date.now() - 1000 },
+    { role: 'agent', content: botResponse, timestamp: Date.now() }
+  ];
+
+  // 1) Did the bot just quote a price? (₹ + 3+ digits)
+  const priceMatch = botResponse.match(/₹\s*([\d,]{3,})/);
+  const quotedAmount = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
+
+  // 2) Has the customer reached a terminal outcome?
+  const outcome = detectOutcome(allMessages);
+
+  // Skip if nothing actionable
+  if (!priceMatch && outcome.outcome === 'in_progress') {
+    return;
+  }
+
+  // Pick the highest-priority event to push
+  let eventType = null;
+  if (outcome.outcome === 'sale' && outcome.confidence > 0.7) {
+    eventType = 'sale';
+  } else if (outcome.outcome === 'no_sale' && outcome.confidence > 0.6) {
+    eventType = 'no_sale';
+  } else if (priceMatch) {
+    eventType = 'quoted';
+  } else {
+    return;
+  }
+
+  // Extract products mentioned across the conversation (last 10 customer messages)
+  const recentCustomerText = allMessages
+    .filter(m => m.role === 'customer')
+    .slice(-10)
+    .map(m => m.content)
+    .join(' ');
+  const PRODUCT_RE = /\b(coasters?|diary|diaries|planters?|trays?|combos?|pens?|trophy|trophies|yoga ?mats?|caddy|caddies|wallets?|bags?|frames?|holders?|cases?|calendars?|organizers?)\b/gi;
+  const products = [...new Set((recentCustomerText.match(PRODUCT_RE) || []).map(p => p.toLowerCase()))];
+
+  const amount = outcome.saleAmount || quotedAmount || 0;
+  const dealName = `WhatsApp Lead — ${products.slice(0, 2).join(', ') || 'inquiry'}`;
+  const notes = `Last customer message: "${customerMsg.substring(0, 200)}"\nLast bot reply: "${botResponse.substring(0, 200)}"`;
+
+  const result = await pushBiginEvent({
+    type: eventType,
+    phone,
+    amount,
+    products,
+    dealName,
+    notes
+  });
+
+  if (result.success) {
+    console.log(`📊 Bigin ${eventType} synced (${result.action || 'ok'})${result.dealId ? ' deal=' + result.dealId : ''}`);
+  } else {
+    console.warn(`⚠️ Bigin ${eventType} skipped: ${result.reason}`);
+  }
+}
+
 async function processWithClaudeAgent(message, customerPhone, context = []) {
   try {
     console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
