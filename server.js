@@ -2365,12 +2365,18 @@ function buildContextAwareMessage(userMessage, conversationHistory) {
 }
 
 // Process message with Multi-Provider AI agent (Groq → Gemini → Rules)
-// Bigin CRM sync — fires after each bot response. Pushes contact + deal stage changes.
-// Triggered by patterns in the bot's response:
-//   - Response contains a ₹ amount → "quoted" event (create/update Deal in Qualification)
-//   - detectOutcome marks as sale/no_sale/abandoned → close the deal accordingly
+// Bigin CRM sync — triggered at TWO moments only:
+//
+// 1. PI sent → bot's response contains payment/PI markers (bank details, "payment details",
+//    "proforma", "invoice"). Creates Deal in "Qualification" / "Negotiation" stage.
+//    Indicates customer is past qualification and has shared invoice details.
+//
+// 2. Sale confirmed → outcome detector flags 'sale' (customer said "paid"/"transferred").
+//    Updates the open deal to "Closed Won". Creates one if none exists yet.
+//
+// Everything else (greetings, quotes, abandons) is ignored to keep CRM clean.
 async function syncBiginFromConversation(phone, customerMsg, botResponse, context) {
-  // Build the conversation array for outcome detection
+  // Build conversation array for outcome detection
   const allMessages = [
     ...context.map(m => ({
       role: m.role === 'user' ? 'customer' : 'agent',
@@ -2381,31 +2387,40 @@ async function syncBiginFromConversation(phone, customerMsg, botResponse, contex
     { role: 'agent', content: botResponse, timestamp: Date.now() }
   ];
 
-  // 1) Did the bot just quote a price? (₹ + 3+ digits)
-  const priceMatch = botResponse.match(/₹\s*([\d,]{3,})/);
-  const quotedAmount = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
-
-  // 2) Has the customer reached a terminal outcome?
+  // Check for SALE first (highest priority — customer confirmed payment done)
   const outcome = detectOutcome(allMessages);
+  const isSale = outcome.outcome === 'sale' && outcome.confidence >= 0.8;
 
-  // Skip if nothing actionable
-  if (!priceMatch && outcome.outcome === 'in_progress') {
-    return;
+  // Detect "intent to buy" signals from CUSTOMER messages (more reliable than bot output)
+  // Includes: invoice requests, payment-method asks, GSTIN sharing, company-name with intent
+  const customerLatest = (customerMsg || '').toLowerCase();
+  const recentCustomerOnly = allMessages
+    .filter(m => m.role === 'customer')
+    .slice(-5)
+    .map(m => m.content)
+    .join(' ')
+    .toLowerCase();
+
+  const INTENT_KEYWORDS = /\b(send (the )?(invoice|pi|proforma|bill|quote)|share (the )?(payment|bank|account|invoice|pi) details|how (do|to) (i|we) pay|payment method|send (the )?qr|share (the )?qr|bank details|account details)\b/i;
+  const GSTIN_PATTERN = /\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d]Z[A-Z\d]\b/i; // standard GSTIN format
+  const hasIntent = INTENT_KEYWORDS.test(customerLatest) || INTENT_KEYWORDS.test(recentCustomerOnly);
+  const hasGSTIN = GSTIN_PATTERN.test(recentCustomerOnly);
+
+  // Secondary: bot just sent the bank details (means PI moment has occurred)
+  const PI_MARKERS = /(canara bank|cnrb0007617|120032289098|share the payment screenshot)/i;
+  const botSentPI = PI_MARKERS.test(botResponse);
+
+  const isPISent = hasIntent || hasGSTIN || botSentPI;
+
+  // Skip if neither event happened
+  if (!isSale && !isPISent) return;
+
+  const eventType = isSale ? 'sale' : 'pi_sent';
+  if (isPISent) {
+    console.log(`📊 Bigin trigger reason: ${hasIntent ? 'customer-intent-keyword ' : ''}${hasGSTIN ? 'customer-shared-GSTIN ' : ''}${botSentPI ? 'bot-sent-bank-details' : ''}`);
   }
 
-  // Pick the highest-priority event to push
-  let eventType = null;
-  if (outcome.outcome === 'sale' && outcome.confidence > 0.7) {
-    eventType = 'sale';
-  } else if (outcome.outcome === 'no_sale' && outcome.confidence > 0.6) {
-    eventType = 'no_sale';
-  } else if (priceMatch) {
-    eventType = 'quoted';
-  } else {
-    return;
-  }
-
-  // Extract products mentioned across the conversation (last 10 customer messages)
+  // Extract products mentioned in last 10 customer messages
   const recentCustomerText = allMessages
     .filter(m => m.role === 'customer')
     .slice(-10)
@@ -2414,13 +2429,31 @@ async function syncBiginFromConversation(phone, customerMsg, botResponse, contex
   const PRODUCT_RE = /\b(coasters?|diary|diaries|planters?|trays?|combos?|pens?|trophy|trophies|yoga ?mats?|caddy|caddies|wallets?|bags?|frames?|holders?|cases?|calendars?|organizers?)\b/gi;
   const products = [...new Set((recentCustomerText.match(PRODUCT_RE) || []).map(p => p.toLowerCase()))];
 
-  const amount = outcome.saleAmount || quotedAmount || 0;
-  const dealName = `WhatsApp Lead — ${products.slice(0, 2).join(', ') || 'inquiry'}`;
-  const notes = `Last customer message: "${customerMsg.substring(0, 200)}"\nLast bot reply: "${botResponse.substring(0, 200)}"`;
+  // Extract amount: prefer outcome saleAmount, else max ₹ value mentioned
+  let amount = outcome.saleAmount || 0;
+  if (!amount) {
+    const allText = allMessages.map(m => m.content).join(' ');
+    const amounts = [...allText.matchAll(/₹\s*([\d,]{3,})/g)].map(m => parseInt(m[1].replace(/,/g, '')));
+    amount = amounts.length ? Math.max(...amounts) : 0;
+  }
+
+  // Extract company name if customer shared it (look for ALL CAPS or "Pvt Ltd" style)
+  let company = null;
+  const companyMatch = recentCustomerText.match(/\b([A-Z][A-Za-z0-9& ]{2,40}(?:\s+(?:Pvt|Private|Ltd|Limited|LLP|Industries|Enterprises|Co\.?)))\b/);
+  if (companyMatch) company = companyMatch[1].trim();
+
+  const productLabel = products.slice(0, 2).join(', ') || 'order';
+  const dealName = isSale
+    ? `Sale — ${company || phone} — ${productLabel}`
+    : `PI Sent — ${company || phone} — ${productLabel}`;
+
+  const lastFew = allMessages.slice(-8).map(m => `${m.role}: ${m.content.substring(0, 200)}`).join('\n');
+  const notes = `Triggered by: ${eventType}\n${company ? 'Company: ' + company + '\n' : ''}\nRecent exchange:\n${lastFew}`;
 
   const result = await pushBiginEvent({
     type: eventType,
     phone,
+    name: company,
     amount,
     products,
     dealName,
@@ -2428,9 +2461,9 @@ async function syncBiginFromConversation(phone, customerMsg, botResponse, contex
   });
 
   if (result.success) {
-    console.log(`📊 Bigin ${eventType} synced (${result.action || 'ok'})${result.dealId ? ' deal=' + result.dealId : ''}`);
+    console.log(`📊 Bigin ${eventType} synced (${result.action})${result.dealId ? ' deal=' + result.dealId : ''}`);
   } else {
-    console.warn(`⚠️ Bigin ${eventType} skipped: ${result.reason}`);
+    console.warn(`⚠️ Bigin ${eventType} push failed: ${result.reason}`);
   }
 }
 
