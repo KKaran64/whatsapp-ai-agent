@@ -83,6 +83,41 @@ async function biginRequest(method, path, data) {
   return res.data;
 }
 
+// Auto-discover the Bigin org's first Pipeline + Sub_Pipeline so we don't need to
+// hardcode IDs. Cached forever (per-process) since pipeline metadata rarely changes.
+// Returns { Pipeline: {id, name}, Sub_Pipeline: 'actual_value' } or null on failure.
+let cachedPipelineMeta = null;
+
+async function getPipelineMeta() {
+  if (cachedPipelineMeta) return cachedPipelineMeta;
+
+  // Try the v2 settings endpoint that returns pipelines + their sub-pipelines
+  const endpoints = ['/settings/pipelines', '/settings/layouts?module=Pipelines'];
+  for (const ep of endpoints) {
+    try {
+      const data = await biginRequest('GET', ep);
+      // Response shape varies: try both possible top-level keys
+      const list = data?.pipelines || data?.layouts || data?.pipeline || [];
+      const first = Array.isArray(list) ? list[0] : null;
+      if (!first?.id) continue;
+
+      const subList = first.sub_pipelines || [];
+      const firstSub = subList[0];
+
+      cachedPipelineMeta = {
+        Pipeline: { id: first.id, name: first.name || first.display_label || 'Sales Pipeline' },
+        Sub_Pipeline: firstSub?.actual_value || firstSub?.display_value || 'Sales Pipeline Standard'
+      };
+      console.log('✅ Bigin pipeline discovered:', JSON.stringify(cachedPipelineMeta));
+      return cachedPipelineMeta;
+    } catch (err) {
+      console.warn(`⚠️ Bigin pipeline discovery failed at ${ep}:`,
+        err.response?.status, err.response?.data?.code || err.message);
+    }
+  }
+  return null;
+}
+
 // Search Contact by phone. Returns contact object or null.
 async function findContactByPhone(phone) {
   try {
@@ -155,18 +190,20 @@ async function createDeal({ contactId, dealName, amount, stage, products, notes 
   const closingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toISOString().split('T')[0];
 
-  // Bigin requires BOTH Pipeline + Sub_Pipeline. Each Pipeline has its own Layout
-  // and Sub_Pipeline names; sending Sub_Pipeline alone makes Bigin guess a Layout
-  // that may not contain it ("Layout doesn't contain the Pipeline" error).
-  // Defaults match the out-of-the-box Bigin org. Override via env vars if needed.
-  const pipeline = process.env.BIGIN_PIPELINE || 'Sales Pipeline';
-  const subPipeline = process.env.BIGIN_SUB_PIPELINE || 'Standard';
+  // Bigin v2 requires Pipeline as {id, name} object + Sub_Pipeline as the FULL
+  // actual_value string (e.g. "Sales Pipeline Standard"). Auto-discover via the
+  // /settings/pipelines endpoint so we never need hardcoded IDs.
+  const meta = await getPipelineMeta();
+  const pipeline = meta?.Pipeline || (process.env.BIGIN_PIPELINE_ID
+    ? { id: process.env.BIGIN_PIPELINE_ID, name: process.env.BIGIN_PIPELINE_NAME || 'Sales Pipeline' }
+    : undefined);
+  const subPipeline = meta?.Sub_Pipeline || process.env.BIGIN_SUB_PIPELINE || 'Sales Pipeline Standard';
 
   const payload = {
     data: [{
       Deal_Name: dealName,
       Stage: stage || 'Qualification',
-      Pipeline: pipeline,
+      ...(pipeline ? { Pipeline: pipeline } : {}),
       Sub_Pipeline: subPipeline,
       Amount: amount || 0,
       Contact_Name: { id: contactId },
