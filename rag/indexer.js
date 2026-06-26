@@ -55,6 +55,28 @@ function validateConversationQuality(pair) {
     reasons.push('customer_flagged_inconsistency');
   }
 
+  // Wrong-base-price detector (v59 Scenario B enforcement):
+  // If the bot mentions a diary AND quotes a per-piece price suspiciously close to
+  // a known bulkPrice (which means it discounted off the floor instead of MRP),
+  // flag as bot_error. End consumer quotes should land in the MRP-derived range.
+  //
+  // For the A5 diary specifically: MRP ₹225 → end-consumer quotes should be ~₹191-202.
+  // A quote of ~₹118 means the bot used ₹135 (bulkPrice) as the base — exactly the
+  // bug we keep accidentally retraining. Catalog A5: mrp=225, bulk=135.
+  if (/dia(r|ies)/i.test(bot)) {
+    // Look for "per [diary|piece|each]" prices in the response
+    const perPieceMatches = [...bot.matchAll(/₹\s*(\d+(?:\.\d+)?)(?:\s*\/|\s+per\s+(?:diary|piece|pc))/gi)];
+    for (const m of perPieceMatches) {
+      const price = parseFloat(m[1]);
+      // A5 diary bulkPrice is ₹135. Quotes between ₹110-₹140 for a diary
+      // strongly imply the bot discounted off bulk instead of MRP.
+      if (price >= 110 && price <= 140) {
+        reasons.push('diary_priced_off_bulk_not_mrp');
+        break;
+      }
+    }
+  }
+
   return { valid: reasons.length === 0, reasons };
 }
 
