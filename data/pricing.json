@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-06-23T07:47:07.162Z",
+  "syncedAt": "2026-06-26T05:45:52.817Z",
   "source": "google-sheets",
   "catalogue": [
     {
@@ -1310,7 +1310,7 @@
     {
       "productId": "9C-DR1",
       "name": "ECODESK DIARY A5",
-      "category": "C0RK DIARIES",
+      "category": "CORK DIARIES",
       "bulkPrice": 135,
       "mrpPrice": 225
     },
@@ -2580,27 +2580,6 @@
       "category": "CORK GIFT BOXES",
       "bulkPrice": 550,
       "mrpPrice": 917
-    },
-    {
-      "productId": "Noida Office - A 74",
-      "name": "Sector 69",
-      "category": "Noida (UP) - 201301",
-      "bulkPrice": 0,
-      "mrpPrice": 0
-    },
-    {
-      "productId": "Delhi Office - Ring Road",
-      "name": "Naraina",
-      "category": "New Delhi - 110028",
-      "bulkPrice": 0,
-      "mrpPrice": 0
-    },
-    {
-      "productId": "07009052784",
-      "name": "07696234000",
-      "category": "08360053176,,,,",
-      "bulkPrice": 0,
-      "mrpPrice": 0
     }
   ],
   "combos": [

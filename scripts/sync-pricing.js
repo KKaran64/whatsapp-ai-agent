@@ -67,9 +67,17 @@ function parsePrice(s) {
 
 // Parse the HORECA sheet (cleanest structure)
 // Columns: Product ID, PRODUCT NAME, Category, PRICE FOR 100-500 pcs (bulk), PRICE FOR 100-500 pcs (retail/MRP)
+//
+// v59 hygiene:
+//   - Normalize "C0RK" (with zero) → "CORK" in category names to merge the typo'd
+//     ECODESK DIARY A5 with the rest of CORK DIARIES.
+//   - Drop rows missing either price — these are address/phone strings from the
+//     Google Sheet footer that the CSV parser mistakenly ingests as products
+//     ("Noida (UP) - 201301", "08360053176,,,,", etc.).
 function parseHoreca(rows) {
   const products = [];
   let headerSeen = false;
+  let dropped = 0;
   for (const row of rows) {
     if (!headerSeen) {
       if (row[0] && row[0].toLowerCase().includes('product id')) headerSeen = true;
@@ -77,14 +85,23 @@ function parseHoreca(rows) {
     }
     const [id, name, category, bulkPrice, mrpPrice] = row;
     if (!id || !name) continue;
+
+    const cleanedCategory = (category || '').trim().replace(/c0rk/gi, 'CORK');
+    const bulk = parsePrice(bulkPrice);
+    const mrp = parsePrice(mrpPrice);
+
+    // Drop rows that don't look like real products
+    if (!bulk || !mrp) { dropped++; continue; }
+
     products.push({
       productId: id.trim(),
       name: name.trim(),
-      category: (category || '').trim(),
-      bulkPrice: parsePrice(bulkPrice),
-      mrpPrice: parsePrice(mrpPrice)
+      category: cleanedCategory,
+      bulkPrice: bulk,
+      mrpPrice: mrp
     });
   }
+  if (dropped > 0) console.log(`    ↳ filtered ${dropped} junk row(s) without valid prices`);
   return products;
 }
 
