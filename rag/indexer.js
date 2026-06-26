@@ -56,24 +56,29 @@ function validateConversationQuality(pair) {
   }
 
   // Wrong-base-price detector (v59 Scenario B enforcement):
-  // If the bot mentions a diary AND quotes a per-piece price suspiciously close to
-  // a known bulkPrice (which means it discounted off the floor instead of MRP),
-  // flag as bot_error. End consumer quotes should land in the MRP-derived range.
-  //
-  // For the A5 diary specifically: MRP ₹225 → end-consumer quotes should be ~₹191-202.
-  // A quote of ~₹118 means the bot used ₹135 (bulkPrice) as the base — exactly the
-  // bug we keep accidentally retraining. Catalog A5: mrp=225, bulk=135.
-  if (/dia(r|ies)/i.test(bot)) {
-    // Look for "per [diary|piece|each]" prices in the response
-    const perPieceMatches = [...bot.matchAll(/₹\s*(\d+(?:\.\d+)?)(?:\s*\/|\s+per\s+(?:diary|piece|pc))/gi)];
-    for (const m of perPieceMatches) {
-      const price = parseFloat(m[1]);
-      // A5 diary bulkPrice is ₹135. Quotes between ₹110-₹140 for a diary
-      // strongly imply the bot discounted off bulk instead of MRP.
-      if (price >= 110 && price <= 140) {
-        reasons.push('diary_priced_off_bulk_not_mrp');
-        break;
-      }
+  // Conservative hardcoded ranges of known "discount-off-bulkPrice" bugs per category.
+  // Extending the catalog-aware approach proved too noisy — diaries with widely varying
+  // MRPs (A6 ₹153 to Organizer Cum Diary ₹917) created overlapping suspicious ranges
+  // that produced false positives on legitimate quotes. Hardcoded ranges trade
+  // coverage for high precision: we only flag specifically observed bug patterns.
+  // Extend this list as new bug patterns surface in production.
+  const KNOWN_WRONG_PRICE_RANGES = [
+    // A5 diary: bulkPrice ₹135 × discount [85-95%] = quotes ~115-130/diary
+    { noun: 'diary', min: 110, max: 132, derivation: 'A5 bulk ₹135 × discount' },
+    { noun: 'diaries', min: 110, max: 132, derivation: 'A5 bulk ₹135 × discount' },
+    // 5mm coaster: bulkPrice ₹17 × discount [85-95%] = quotes ~14-16/coaster
+    { noun: 'coaster', min: 13, max: 16, derivation: '5mm coaster bulk ₹17 × discount' },
+    { noun: 'coasters', min: 13, max: 16, derivation: '5mm coaster bulk ₹17 × discount' }
+  ];
+  const perPiecePattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|a)\s+(diary|diaries|coaster|coasters)/gi;
+  const matches = [...bot.matchAll(perPiecePattern)];
+  for (const m of matches) {
+    const price = parseFloat(m[1]);
+    const noun = m[2].toLowerCase();
+    const range = KNOWN_WRONG_PRICE_RANGES.find(r => r.noun === noun);
+    if (range && price >= range.min && price <= range.max) {
+      reasons.push(`priced_off_bulk_not_mrp_${noun}`);
+      break;
     }
   }
 
