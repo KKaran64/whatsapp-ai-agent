@@ -16,9 +16,62 @@ function isStaleForPricing(timestamp) {
   return ageMs > STALE_PRICING_DAYS * 24 * 60 * 60 * 1000;
 }
 
+// v59 quality gate: detect bot errors before they enter the retrieval pool.
+// Even though the retriever already filters for outcome='sale', a sale that
+// happened DESPITE a bad bot response would still pollute future answers.
+// Tagging with outcome='bot_error' makes the vector permanently un-retrievable
+// regardless of what outcome the conversation eventually gets.
+function validateConversationQuality(pair) {
+  const reasons = [];
+  const customer = String(pair.customerMessage || '');
+  const bot = String(pair.botResponse || '');
+
+  // Bot quoted a price range like "₹114.75-₹121.50" — RULE A violation
+  if (/₹\s*[\d,]+(?:\.\d+)?\s*[-–]\s*[\d,]+(?:\.\d+)?/.test(bot)) {
+    reasons.push('bot_quoted_price_range');
+  }
+
+  // Bot used cave-on-discount language — discount slab violation
+  if (/let'?s use \d+%|one[\s-]time exception|loyalty bonus|as a request|as a final offer/i.test(bot)) {
+    reasons.push('bot_caved_on_discount');
+  }
+
+  // GST double-counting heuristic: bot baked GST into a SUB-ITEM
+  // (e.g. "₹200 plus 18% GST, which is ₹36") AND ALSO listed "GST on [item]"
+  // as a separate aggregated line in the same response. The combo is the
+  // RULE B anti-pattern from tonight's bug. Allows the legit case where bot
+  // only adds "+ 18% GST" once at the bottom as a single tally.
+  const hasInlineGstBaked = /(?:\+|plus)\s*\d+\s*%?\s*gst[\s\S]{0,40}₹[\d,]+/i.test(bot);
+  const hasSeparateGst = /gst on \w+/i.test(bot);
+  if (hasInlineGstBaked && hasSeparateGst) {
+    reasons.push('gst_double_count');
+  }
+
+  // Customer expressed distrust or flagged inconsistency in this turn
+  if (/don'?t (want|trust)|cant go back|i don'?t believe you|gave vague|miscommunication/i.test(customer)) {
+    reasons.push('customer_distrust');
+  }
+  if (/(your )?pricing says|earlier you said|first you said|that'?s different|wasn'?t the price/i.test(customer)) {
+    reasons.push('customer_flagged_inconsistency');
+  }
+
+  return { valid: reasons.length === 0, reasons };
+}
+
 async function indexQAPair(pair) {
   if (!isConfigured()) {
     return { success: false, skipped: true, reason: 'Pinecone not configured' };
+  }
+
+  // v59 quality gate: if this turn shows bot-error signals, override outcome
+  // to 'bot_error' so it can never be retrieved (retriever filters outcome='sale').
+  // We still INDEX the vector for later analysis / prompt-improvement reports.
+  const quality = validateConversationQuality(pair);
+  const effectiveOutcome = quality.valid
+    ? (pair.outcome || 'in_progress')
+    : 'bot_error';
+  if (!quality.valid) {
+    console.warn(`⚠️ RAG quality gate: tagging vector outcome=bot_error (${quality.reasons.join(', ')})`);
   }
 
   const embedInput = `Customer: ${pair.customerMessage}\nBot: ${pair.botResponse || ''}`;
@@ -36,7 +89,8 @@ async function indexQAPair(pair) {
     products: pair.products || [],
     quantity: Number(pair.quantity) || 0,
     budget: Number(pair.budget) || 0,
-    outcome: pair.outcome || 'in_progress',
+    outcome: effectiveOutcome,
+    qualityReasons: quality.reasons, // empty array on clean conversations
     saleAmount: Number(pair.saleAmount) || 0,
     timestamp: pair.timestamp || Date.now(),
     isStaleForPricing: isStaleForPricing(pair.timestamp || Date.now()),
@@ -78,4 +132,4 @@ async function indexConversation({ customerPhone, qaPairs, outcome, saleAmount, 
   return { indexed, total: qaPairs.length, ids };
 }
 
-module.exports = { indexQAPair, indexConversation, makeVectorId };
+module.exports = { indexQAPair, indexConversation, makeVectorId, validateConversationQuality };
