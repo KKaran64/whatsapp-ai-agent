@@ -33,10 +33,17 @@ async function retrieveContext({ message, customerPhone, timeoutMs = 2000 }) {
   const index = getIndex();
   const pricing = isPricingQuery(message);
 
+  // v59: also exclude bot_error from customer history. The retriever's main
+  // filter is outcome='sale', but customerHistory has no outcome restriction —
+  // so a customer's own past bot-error turns could otherwise echo back as
+  // "your earlier conversation" and reintroduce the corrupt context.
   const customerHistoryPromise = withTimeout(
     index.query({
       vector, topK: 3, includeMetadata: true,
-      filter: { customerPhone: { $eq: customerPhone } }
+      filter: {
+        customerPhone: { $eq: customerPhone },
+        outcome: { $ne: 'bot_error' }
+      }
     }).catch(() => ({ matches: [] })),
     timeoutMs
   );
@@ -44,6 +51,7 @@ async function retrieveContext({ message, customerPhone, timeoutMs = 2000 }) {
   // v58: ONLY retrieve confirmed-sale examples. 'in_progress' is excluded — they're
   // unvalidated, and the bot's own buggy responses get indexed as in_progress and
   // would otherwise loop back as "successful examples" within minutes.
+  // v59: bot_error is implicitly excluded too because outcome must equal 'sale'.
   const similarFilter = { outcome: { $eq: 'sale' } };
   if (pricing) {
     similarFilter.isStaleForPricing = { $eq: false };
