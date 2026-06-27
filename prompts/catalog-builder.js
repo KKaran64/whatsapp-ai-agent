@@ -36,7 +36,13 @@ function loadPricing() {
   }
 }
 
-// Group HORECA products by category, return a compact table-ish string
+// Group HORECA products by category, return a compact table-ish string.
+//
+// IMPORTANT: We deliberately do NOT show bulkPrice in the catalog. The discount
+// slabs already encode the reseller 40%-off-MRP cap, which lands at bulkPrice
+// mathematically. Showing "(bulk floor: ₹X)" misled the LLM into reading "bulk"
+// as "the price for bulk orders" — causing it to use bulkPrice as the discount
+// base instead of mrpPrice. Discount math always starts from MRP per Scenario B.
 function formatHoreca(products) {
   if (!products || products.length === 0) return '';
   const byCategory = {};
@@ -48,10 +54,7 @@ function formatHoreca(products) {
   }
   const lines = ['🍽️ **HORECA CATALOG (MRP — apply discount slabs from rules above):**'];
   for (const [cat, items] of Object.entries(byCategory)) {
-    const top = items.slice(0, 8).map(p => {
-      const bulk = p.bulkPrice ? ` (bulk floor: ₹${p.bulkPrice})` : '';
-      return `${p.name} ₹${p.mrpPrice}${bulk}`;
-    }).join('; ');
+    const top = items.slice(0, 8).map(p => `${p.name} MRP ₹${p.mrpPrice}`).join('; ');
     lines.push(`  • **${cat}**: ${top}`);
   }
   return lines.join('\n');
