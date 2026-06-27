@@ -202,7 +202,31 @@ function sanitizeBotReply(text) {
     cleaned = "Sorry, I got cut off there — could you repeat your last message?";
   }
 
-  // Pass 2: round all ₹ decimal amounts to whole rupees
+  // Pass 2: strip pricing-strategy disclosure phrases. These are forbidden
+  // by v59 RULE C but the LLM sometimes leaks them anyway when justifying
+  // a price change (e.g. "since you're a reseller, I'll apply the slab").
+  // Surgical regex-based stripping so the surrounding text stays intact.
+  const disclosurePatterns = [
+    // Parenthetical "(30% off MRP ₹X)" / "(12.5% off)" / "(off MRP)"
+    /\s*\(\s*\d+(?:\.\d+)?\s*%\s*off(?:\s*MRP)?(?:\s*₹\s*[\d,]+(?:\.\d+)?)?\s*\)/gi,
+    // "I'll apply the reseller/end consumer discount slab"
+    /\s*(?:Since you'?re a (?:reseller|end consumer)[,.]?\s*)?I'?ll apply the (?:reseller|end consumer|customer)?\s*discount(?:\s*slab)?\.?/gi,
+    // "Since you're a reseller, your price is..." → strip the conditional
+    /\s*Since you'?re a (?:reseller|end consumer)[,.]?\s*/gi,
+    // Standalone "discount slab" / "reseller slab" / "MRP-based pricing"
+    /\s*(?:reseller|end consumer)\s+(?:discount\s+)?slab\b\.?/gi,
+    // "the X% discount" inline mentions
+    /\s*(?:the|a)\s+\d+(?:\.\d+)?\s*%\s*(?:reseller|end consumer|customer)?\s*discount(?:\s+on\s+MRP)?\.?/gi,
+    // "after applying our discount" / "as per our discount slab"
+    /\s*(?:after applying|as per) our discount(?:\s+slab|\s+tier|\s+structure)?\.?/gi,
+  ];
+  for (const re of disclosurePatterns) {
+    cleaned = cleaned.replace(re, '');
+  }
+  // Collapse any double-spaces or orphan punctuation left behind
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1').trim();
+
+  // Pass 3: round all ₹ decimal amounts to whole rupees
   cleaned = cleaned.replace(/₹\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?/g, (match) => {
     const numStr = match.replace(/[₹,\s]/g, '');
     const num = parseFloat(numStr);
