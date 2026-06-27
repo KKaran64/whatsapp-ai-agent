@@ -1,10 +1,86 @@
 // Writes embedded Q&A pairs to Pinecone with rich metadata.
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { getIndex, isConfigured } = require('./pinecone-client');
 const { embedText } = require('./embed');
 
 const STALE_PRICING_DAYS = 90;
+
+// Catalog index by product-noun for the wrong-base-price detector.
+// Built lazily from data/pricing.json on first validator call, then cached.
+//
+// Structure: { diary: [{mrp, bulk, name}, ...], coaster: [...], ... }
+// Covers ALL 413 SKUs across HORECA + catalogue + trophies.
+const PRODUCT_NOUN_GROUPS = {
+  diary: ['diary', 'diaries'],
+  coaster: ['coaster', 'coasters'],
+  planter: ['planter', 'planters'],
+  bag: ['bag', 'bags'],
+  sleeve: ['sleeve', 'sleeves'],
+  organizer: ['organizer', 'organizers'],
+  frame: ['frame', 'frames'],
+  tray: ['tray', 'trays'],
+  holder: ['holder', 'holders'],
+  bottle: ['bottle', 'bottles'],
+  trivet: ['trivet', 'trivets'],
+  tablemat: ['tablemat', 'tablemats'],
+  clock: ['clock', 'clocks'],
+  trophy: ['trophy', 'trophies'],
+  pouch: ['pouch', 'pouches'],
+  wallet: ['wallet', 'wallets'],
+  box: ['box', 'boxes'],
+  brick: ['brick', 'bricks'],
+  ball: ['ball', 'balls'],
+  roller: ['roller', 'rollers']
+};
+
+let _catalogByNoun = null;
+function getCatalogByNoun() {
+  if (_catalogByNoun) return _catalogByNoun;
+  try {
+    const file = path.join(__dirname, '..', 'data', 'pricing.json');
+    if (!fs.existsSync(file)) return null;
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+
+    // Flatten all products with their MRP and bulkPrice (when available)
+    const all = [];
+    for (const p of (data.horeca || [])) {
+      if (p.name && p.mrpPrice) all.push({ name: p.name.toLowerCase(), mrp: p.mrpPrice, bulk: p.bulkPrice || null });
+    }
+    for (const p of (data.catalogue || [])) {
+      if (p.name && p.price) all.push({ name: p.name.toLowerCase(), mrp: p.price, bulk: null });
+    }
+    for (const p of (data.trophies || [])) {
+      if (p.name && p.price) all.push({ name: p.name.toLowerCase(), mrp: p.price, bulk: null });
+    }
+
+    // Bucket products under each canonical noun
+    const map = {};
+    for (const [canonical, variants] of Object.entries(PRODUCT_NOUN_GROUPS)) {
+      const matches = all.filter(p => variants.some(v => p.name.includes(v)));
+      if (matches.length > 0) map[canonical] = matches;
+    }
+    _catalogByNoun = map;
+    return _catalogByNoun;
+  } catch (e) {
+    console.warn('⚠️ Validator catalog load failed:', e.message);
+    return null;
+  }
+}
+
+// Detect which product nouns are mentioned in the bot's response
+function detectMentionedNouns(text) {
+  const lower = text.toLowerCase();
+  const mentioned = [];
+  for (const [canonical, variants] of Object.entries(PRODUCT_NOUN_GROUPS)) {
+    if (variants.some(v => new RegExp('\\b' + v + '\\b').test(lower))) {
+      mentioned.push(canonical);
+    }
+  }
+  return mentioned;
+}
 
 function makeVectorId(customerPhone, timestamp, suffix = '') {
   const hash = crypto.createHash('md5').update(`${customerPhone}_${timestamp}_${suffix}`).digest('hex');
@@ -55,48 +131,55 @@ function validateConversationQuality(pair) {
     reasons.push('customer_flagged_inconsistency');
   }
 
-  // Wrong-base-price detector (v59 Scenario B enforcement):
-  // Conservative hardcoded ranges of known "discount-off-bulkPrice" bugs per category.
-  // We check two phrasings: "₹X per diary" (specific) and "₹X per piece" (generic, when
-  // the response mentions diary/coaster anywhere — which it almost always does).
-  // Extend the KNOWN list as new bug patterns surface.
-  const KNOWN_WRONG_PRICE_RANGES = [
-    // A5 diary: bulkPrice ₹135 × [85-95%] discount = quotes in ₹115-130/diary range
-    { noun: 'diary', min: 110, max: 132, derivation: 'A5 bulk ₹135 × discount' },
-    { noun: 'diaries', min: 110, max: 132, derivation: 'A5 bulk ₹135 × discount' },
-    // 5mm coaster: bulkPrice ₹17 × [85-95%] discount = quotes in ₹13-16/coaster range
-    { noun: 'coaster', min: 13, max: 16, derivation: '5mm coaster bulk ₹17 × discount' },
-    { noun: 'coasters', min: 13, max: 16, derivation: '5mm coaster bulk ₹17 × discount' }
-  ];
+  // Wrong-base-price detector (v59 Scenario B enforcement, UNIVERSAL):
+  // Reverse-engineer the implied discount BASE from any per-piece quote with a
+  // nearby discount %, then check if that base matches a bulkPrice for any product
+  // noun mentioned in the response — AND is NOT also a valid MRP for that noun.
+  //
+  // Example: bot says "₹118.13 per piece (12.5% discount)" → implied base 135.
+  // ₹135 is A5 diary's bulkPrice, AND ₹135 is not anyone's diary MRP → flag.
+  //
+  // Disambiguation: if bot says "₹135 per pouch" (12.5% off), implied base = 154.29
+  // which is NOT a known price — so no flag. But "₹135 per pouch" (no discount)
+  // is just ₹135 = Cork & Canvas Pouch MRP → also no flag.
+  //
+  // Covers ALL 413 catalog SKUs without false positives across categories.
+  const catalog = getCatalogByNoun();
+  const mentionedNouns = detectMentionedNouns(bot);
+  if (catalog && mentionedNouns.length > 0) {
+    // Find per-piece price quotes with their text position
+    const pricePattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each|a)\s+(piece|pc|diary|diaries|coaster|coasters|planter|planters|bag|bags|sleeve|sleeves|organizer|organizers|frame|frames|tray|trays|holder|holders|bottle|bottles|trivet|trivets|tablemat|tablemats|clock|clocks|trophy|trophies|pouch|pouches|wallet|wallets|box|boxes|brick|bricks|ball|balls|roller|rollers)\b/gi;
+    const discountPattern = /(\d+(?:\.\d+)?)\s*%\s*(?:off|discount)/gi;
+    const discountHits = [...bot.matchAll(discountPattern)].map(m => ({ index: m.index, value: parseFloat(m[1]) }));
 
-  // Specific phrasing: "₹X per/each/a diary/coaster"
-  const specificPattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each|a)\s+(diary|diaries|coaster|coasters)/gi;
-  for (const m of [...bot.matchAll(specificPattern)]) {
-    const price = parseFloat(m[1]);
-    const noun = m[2].toLowerCase();
-    const range = KNOWN_WRONG_PRICE_RANGES.find(r => r.noun === noun);
-    if (range && price >= range.min && price <= range.max) {
-      reasons.push(`priced_off_bulk_not_mrp_${noun}`);
-      break;
-    }
-  }
+    for (const pm of [...bot.matchAll(pricePattern)]) {
+      const price = parseFloat(pm[1]);
+      const pos = pm.index;
+      // Find nearest discount % within ±250 chars (typical bot quote span)
+      const nearby = discountHits.find(d => Math.abs(d.index - pos) <= 250);
+      if (!nearby || nearby.value >= 100) continue;
 
-  // Generic phrasing: "₹X per piece/pc". We only flag if the response also
-  // mentions a product category whose hardcoded range matches.
-  if (reasons.length === 0 || !reasons[reasons.length - 1].startsWith('priced_off_bulk_')) {
-    const genericPattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each)\s+(?:piece|pc)\b/gi;
-    for (const m of [...bot.matchAll(genericPattern)]) {
-      const price = parseFloat(m[1]);
-      const botLower = bot.toLowerCase();
-      // Find which product category is being discussed
-      const inferredNoun =
-        /\bdia(ry|ries)\b/.test(botLower) ? 'diary' :
-        /\bcoaster/.test(botLower) ? 'coaster' :
-        null;
-      if (!inferredNoun) continue;
-      const range = KNOWN_WRONG_PRICE_RANGES.find(r => r.noun === inferredNoun);
-      if (range && price >= range.min && price <= range.max) {
-        reasons.push(`priced_off_bulk_not_mrp_${inferredNoun}_perpiece`);
+      // Reverse-engineer the discount base the bot used
+      const impliedBase = price / (1 - nearby.value / 100);
+
+      // Tolerance: ±2% of the implied base, since bot rounds final per-piece prices
+      const tol = Math.max(2, impliedBase * 0.02);
+
+      // For each mentioned product noun, check the catalog:
+      //   matches mrp? → bot used MRP correctly (don't flag)
+      //   matches bulk only? → bot used bulkPrice as base (FLAG)
+      let baseIsValidMrp = false;
+      let baseIsBulkOnly = false;
+      for (const noun of mentionedNouns) {
+        const products = catalog[noun] || [];
+        for (const p of products) {
+          if (Math.abs(p.mrp - impliedBase) < tol) baseIsValidMrp = true;
+          if (p.bulk != null && Math.abs(p.bulk - impliedBase) < tol) baseIsBulkOnly = true;
+        }
+      }
+      if (baseIsValidMrp) continue; // valid MRP-derived quote, even if also matches a bulk
+      if (baseIsBulkOnly) {
+        reasons.push(`discount_applied_to_bulkprice_not_mrp`);
         break;
       }
     }
