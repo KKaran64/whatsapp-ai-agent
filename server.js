@@ -142,6 +142,24 @@ async function findProductBySearch(searchQuery, limit = 1) {
 }
 
 // Convert Google Drive share URL to direct download URL
+// v59 — RULE G escalation detector
+// Matches the canonical holding phrases the bot uses when a question is outside
+// catalog/prompt knowledge. Used to tag conversations that need human follow-up.
+const ESCALATION_PATTERNS = [
+  /\blet me check with (?:our|the) team\b/i,
+  /\bi(?:'ll| will) check with (?:our|the) team\b/i,
+  /\blet me confirm with (?:our|the) team\b/i,
+  /\bcheck with (?:our|the) team and come back to you\b/i,
+  /\bcome back to you within a few hours\b/i,
+  /\bi(?:'ll| will) get back to you\b/i,
+  /\bneed to confirm with (?:our|the) team\b/i
+];
+
+function isEscalation(text) {
+  if (!text || typeof text !== 'string') return false;
+  return ESCALATION_PATTERNS.some(re => re.test(text));
+}
+
 // v59 — Sanitize bot reply before sending to customer AND before storing.
 // Rounds all ₹ decimal amounts to whole rupees so:
 //   1. The customer never sees paise (₹196.88 → ₹197)
@@ -2578,6 +2596,32 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${cleaned.substring(0, 100)}...`);
 
+    // v59 — RULE G escalation tagging (fire-and-forget so it never blocks reply)
+    if (isEscalation(cleaned)) {
+      console.log(`📌 RULE G escalation detected for ${sanitizedPhone}`);
+      setImmediate(async () => {
+        try {
+          await Conversation.findOneAndUpdate(
+            { customerPhone: sanitizedPhone, status: 'active' },
+            {
+              $set: { 'metadata.needsHumanFollowup': true },
+              $push: {
+                'metadata.escalations': {
+                  timestamp: new Date(),
+                  customerMessage: sanitizedMessage,
+                  botResponse: cleaned.substring(0, 250),
+                  resolved: false
+                }
+              }
+            },
+            { upsert: false }
+          );
+        } catch (err) {
+          console.warn('⚠️ Escalation tagging failed:', err.message);
+        }
+      });
+    }
+
     // Store AI response in in-memory cache (use cleaned version — breaks feedback loop)
     customerMemory.push({
       role: 'assistant',
@@ -3080,6 +3124,75 @@ if (CONFIG.PRICING_SYNC_ENABLED) {
     }
   });
   console.log('💰 Pricing sync scheduled: daily 6 AM IST');
+}
+
+// v59 — Daily escalation summary to business owner (7 PM IST = 13:30 UTC)
+// Sends a WhatsApp message listing all today's escalations needing human follow-up.
+// Requires env var OWNER_WHATSAPP_NUMBER (e.g. '917696234000' — no +, no spaces).
+if (process.env.OWNER_WHATSAPP_NUMBER) {
+  const cron = require('node-cron');
+  cron.schedule('30 13 * * *', async () => {
+    console.log('📋 Running daily escalation summary...');
+    try {
+      const sinceMidnight = new Date();
+      sinceMidnight.setHours(0, 0, 0, 0);
+
+      const convos = await Conversation.find({
+        'metadata.needsHumanFollowup': true,
+        'metadata.escalations.timestamp': { $gte: sinceMidnight }
+      }).lean();
+
+      // Filter to escalations from today that haven't been notified yet
+      const items = [];
+      for (const c of convos) {
+        const todays = (c.metadata?.escalations || []).filter(
+          e => e.timestamp >= sinceMidnight && !e.notifiedAt && !e.resolved
+        );
+        for (const e of todays) {
+          items.push({
+            phone: c.customerPhone,
+            timestamp: e.timestamp,
+            customerMessage: e.customerMessage || '(no message)',
+            conversationId: c._id
+          });
+        }
+      }
+
+      if (items.length === 0) {
+        console.log('📭 No new escalations to report today.');
+        return;
+      }
+
+      let summary = `🚨 *Daily Escalation Summary — ${items.length} customer${items.length === 1 ? '' : 's'} waiting for follow-up*\n\n`;
+      items.sort((a, b) => a.timestamp - b.timestamp);
+      items.forEach((it, idx) => {
+        const time = new Date(it.timestamp).toLocaleTimeString('en-IN', {
+          hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata'
+        });
+        const qMessage = (it.customerMessage || '').substring(0, 140);
+        summary += `${idx + 1}. 🕒 ${time} IST | +${it.phone}\n   💬 "${qMessage}"\n\n`;
+      });
+      summary += `_Please follow up directly on WhatsApp with each customer._`;
+
+      await sendWhatsAppMessage(process.env.OWNER_WHATSAPP_NUMBER, summary);
+      console.log(`✅ Daily summary sent to owner (${items.length} escalations)`);
+
+      // Mark these escalations as notified so they don't appear again tomorrow
+      const phones = [...new Set(items.map(i => i.phone))];
+      for (const phone of phones) {
+        await Conversation.updateOne(
+          { customerPhone: phone, status: 'active' },
+          { $set: { 'metadata.escalations.$[elem].notifiedAt': new Date() } },
+          { arrayFilters: [{ 'elem.notifiedAt': { $exists: false }, 'elem.resolved': false }] }
+        );
+      }
+    } catch (err) {
+      console.error('❌ Daily escalation summary failed:', err.message);
+    }
+  });
+  console.log('📋 Daily escalation summary scheduled: 7 PM IST');
+} else {
+  console.log('⏭️ Daily escalation summary disabled (OWNER_WHATSAPP_NUMBER env var not set)');
 }
 
 // Export for testing

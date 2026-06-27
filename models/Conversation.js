@@ -48,7 +48,16 @@ const conversationSchema = new mongoose.Schema({
     productInterest: [String],
     budget: String,
     timeline: String,
-    quantity: Number
+    quantity: Number,
+    // v59 — RULE G escalation tracking
+    needsHumanFollowup: { type: Boolean, default: false, index: true },
+    escalations: [{
+      timestamp: { type: Date, default: Date.now },
+      customerMessage: String,
+      botResponse: String,
+      notifiedAt: Date,
+      resolved: { type: Boolean, default: false }
+    }]
   },
   // RAG fields
   outcome: {
