@@ -161,20 +161,56 @@ function isEscalation(text) {
 }
 
 // v59 — Sanitize bot reply before sending to customer AND before storing.
-// Rounds all ₹ decimal amounts to whole rupees so:
-//   1. The customer never sees paise (₹196.88 → ₹197)
-//   2. The stored message has clean numbers, so when it's loaded as context
-//      for the NEXT message, the bot doesn't pattern-match off its own decimals.
-// This breaks the feedback loop where one verbose reply seeds the next 50 replies.
+// Two passes:
+//   1. Strip LLM chat-template control tokens (Llama/Groq sometimes leak these
+//      mid-response, e.g. <|start_header_id|>assistant<|end_header_id|>). If
+//      such a marker appears, truncate at the marker so no garbage reaches
+//      the customer.
+//   2. Round all ₹ decimal amounts to whole rupees (₹196.88 → ₹197) so the
+//      customer never sees paise AND the stored message has clean numbers
+//      (prevents the feedback loop where one verbose reply seeds the next 50).
+const CONTROL_TOKEN_PATTERNS = [
+  /<\|start_header_id\|>[\s\S]*$/i,  // truncate at this marker
+  /<\|end_header_id\|>[\s\S]*$/i,
+  /<\|eot_id\|>[\s\S]*$/i,
+  /<\|begin_of_text\|>[\s\S]*$/i,
+  /<\|im_start\|>[\s\S]*$/i,
+  /<\|im_end\|>[\s\S]*$/i,
+  /<\|reserved_special_token_\d+\|>[\s\S]*$/i
+];
+
 function sanitizeBotReply(text) {
   if (!text || typeof text !== 'string') return text;
-  // Match ₹ followed by optional whitespace + digits (with optional commas + decimals)
-  return text.replace(/₹\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?/g, (match) => {
+
+  // Detect: did the LLM leak a control token in this response?
+  const hadControlToken = CONTROL_TOKEN_PATTERNS.some(re => re.test(text));
+
+  // Pass 1: strip control tokens. Truncate AT the marker (not just remove it)
+  // because anything after a leaked marker is unreliable garbage.
+  let cleaned = text;
+  for (const re of CONTROL_TOKEN_PATTERNS) {
+    cleaned = cleaned.replace(re, '');
+  }
+  cleaned = cleaned.trim();
+
+  // Fallback rule: if the LLM leaked a control token AND the remaining text
+  // is short (< 50 chars), the message was almost certainly cut off mid-sentence
+  // (e.g. "Sure, happy to help!" with no follow-up). Replace with a recoverable
+  // message so the customer can re-prompt rather than receive a dead-end.
+  if (hadControlToken && cleaned.length < 50) {
+    console.warn(`⚠️ Bot reply truncated by control-token leak (${cleaned.length} chars). Falling back to recoverable message.`);
+    cleaned = "Sorry, I got cut off there — could you repeat your last message?";
+  }
+
+  // Pass 2: round all ₹ decimal amounts to whole rupees
+  cleaned = cleaned.replace(/₹\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?/g, (match) => {
     const numStr = match.replace(/[₹,\s]/g, '');
     const num = parseFloat(numStr);
     if (isNaN(num)) return match;
     return '₹' + Math.round(num).toLocaleString('en-IN');
   });
+
+  return cleaned;
 }
 
 function convertGoogleDriveUrl(url) {
