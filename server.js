@@ -209,16 +209,24 @@ function sanitizeBotReply(text) {
   const disclosurePatterns = [
     // Parenthetical "(30% off MRP ₹X)" / "(12.5% off)" / "(off MRP)"
     /\s*\(\s*\d+(?:\.\d+)?\s*%\s*off(?:\s*MRP)?(?:\s*₹\s*[\d,]+(?:\.\d+)?)?\s*\)/gi,
-    // "I'll apply the reseller/end consumer discount slab"
-    /\s*(?:Since you'?re a (?:reseller|end consumer)[,.]?\s*)?I'?ll apply the (?:reseller|end consumer|customer)?\s*discount(?:\s*slab)?\.?/gi,
-    // "Since you're a reseller, your price is..." → strip the conditional
-    /\s*Since you'?re a (?:reseller|end consumer)[,.]?\s*/gi,
-    // Standalone "discount slab" / "reseller slab" / "MRP-based pricing"
+    // "I'll apply the reseller/end consumer discount slab" (full sentence variant)
+    /\s*(?:Since you'?re a (?:reseller|end consumer|business)[,.]?\s*)?I'?ll apply the (?:reseller|end consumer|customer)?\s*discount(?:\s*slab)?\.?/gi,
+    // "Since you're a reseller/business, ..." — strip the conditional opener
+    /\s*Since you'?re a (?:reseller|end consumer|business)[,.]?\s*/gi,
+    // "I'll apply the" then nothing meaningful (LLM cut itself off mid-sentence)
+    /\s*I'?ll apply the\s+(?=The MRP|For \d+)/gi,
+    // "The MRP for X is ₹Y" / "MRP is ₹X" / "MRP for this product is ₹X" — entire sentence
+    /\s*(?:The\s+)?MRP\s+(?:for\s+[\w\s\-.,#]+\s+)?is\s+₹\s*[\d,]+(?:\.\d+)?\.?/gi,
+    // "For 30-49 pieces, the discount is X%" — slab tier exposure, entire sentence
+    /\s*For\s+\d+[-–]\d+\s+pieces?[,.]?\s+the\s+discount\s+is\s+\d+(?:\.\d+)?\s*%\.?/gi,
+    // Standalone "discount slab" / "reseller slab"
     /\s*(?:reseller|end consumer)\s+(?:discount\s+)?slab\b\.?/gi,
     // "the X% discount" inline mentions
     /\s*(?:the|a)\s+\d+(?:\.\d+)?\s*%\s*(?:reseller|end consumer|customer)?\s*discount(?:\s+on\s+MRP)?\.?/gi,
     // "after applying our discount" / "as per our discount slab"
     /\s*(?:after applying|as per) our discount(?:\s+slab|\s+tier|\s+structure)?\.?/gi,
+    // "So, the price per piece would be ₹X" — keep the price but drop the "So, ... would be" opener
+    // (the actual ₹ number stays via normal flow)
   ];
   for (const re of disclosurePatterns) {
     cleaned = cleaned.replace(re, '');
