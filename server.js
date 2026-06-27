@@ -142,6 +142,23 @@ async function findProductBySearch(searchQuery, limit = 1) {
 }
 
 // Convert Google Drive share URL to direct download URL
+// v59 — Sanitize bot reply before sending to customer AND before storing.
+// Rounds all ₹ decimal amounts to whole rupees so:
+//   1. The customer never sees paise (₹196.88 → ₹197)
+//   2. The stored message has clean numbers, so when it's loaded as context
+//      for the NEXT message, the bot doesn't pattern-match off its own decimals.
+// This breaks the feedback loop where one verbose reply seeds the next 50 replies.
+function sanitizeBotReply(text) {
+  if (!text || typeof text !== 'string') return text;
+  // Match ₹ followed by optional whitespace + digits (with optional commas + decimals)
+  return text.replace(/₹\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?/g, (match) => {
+    const numStr = match.replace(/[₹,\s]/g, '');
+    const num = parseFloat(numStr);
+    if (isNaN(num)) return match;
+    return '₹' + Math.round(num).toLocaleString('en-IN');
+  });
+}
+
 function convertGoogleDriveUrl(url) {
   if (!url) return url;
 
@@ -1724,10 +1741,10 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                     context,
                     SYSTEM_PROMPT
                   );
-                  response = result.response;
+                  response = sanitizeBotReply(result.response); // v59: round decimals before send/store
                   await storeCustomerMessage(from, `[IMAGE: ${combinedMessageBody || 'no caption'}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
                 } else {
-                  // Handle TEXT messages — use combined message
+                  // Handle TEXT messages — use combined message (processWithClaudeAgent already sanitizes)
                   response = await processWithClaudeAgent(combinedMessageBody, from, context);
                   await storeCustomerMessage(from, combinedMessageBody, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
 
@@ -2555,12 +2572,16 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       ragContext  // RAG-augmented context (empty string if RAG_ENABLED=false)
     );
 
-    console.log(`✅ Response from ${result.provider.toUpperCase()}: ${result.response.substring(0, 100)}...`);
+    // v59 — sanitize the LLM output before BOTH cache + return so customer
+    // never sees paise and stored context can never re-train the bot on decimals
+    const cleaned = sanitizeBotReply(result.response);
 
-    // Store AI response in in-memory cache
+    console.log(`✅ Response from ${result.provider.toUpperCase()}: ${cleaned.substring(0, 100)}...`);
+
+    // Store AI response in in-memory cache (use cleaned version — breaks feedback loop)
     customerMemory.push({
       role: 'assistant',
-      content: result.response,
+      content: cleaned,
       timestamp: new Date()
     });
 
@@ -2575,7 +2596,7 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       conversationMemory.delete(oldestKey);
     }
 
-    return result.response;
+    return cleaned;
 
   } catch (error) {
     console.error('❌ Error in AI processing:', error.message);
