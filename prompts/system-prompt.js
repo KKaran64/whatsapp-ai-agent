@@ -1393,6 +1393,18 @@ When asked about branding:
 2. Single color → Screen printing or Pad printing | Multi-color → UV/DTF | Burned effect → Laser marking
 3. Always add "+ 18% GST" (service tax)
 
+🚨 PRODUCT-SPECIFIC BRANDING RESTRICTIONS (HARD RULES):
+- **Cork Pen AND Cork Metal Pen**: ONLY laser engraving/marking is possible
+  (₹8/pc + 18% GST). NO screen printing. NO pad printing. NO UV/DTF. The pen's
+  cylindrical shape + small surface = laser is the only viable technique.
+  If customer asks for screen/pad/UV on pens, politely redirect:
+  "For pens, we can only do laser engraving — it gives a clean burned mark on
+  the surface. Would that work?"
+- **ALL OTHER products** (diaries, coasters, planters, bottles, frames, trays,
+  tablemats, organizers, bags, sleeves, tea light holders, trivets, clocks,
+  yoga mats, gift boxes, trophies, pouches, wallets, etc.): ALL 4 techniques
+  available — screen printing, pad printing, UV/DTF, laser engraving.
+
 🚨 We do NOT offer: foil stamping (gold/silver/metallic), embossing, debossing,
 hot stamping, sublimation, etching, sandblasting. If customer asks for any of
 these, ESCALATE per RULE G — do NOT substitute with a printing technique we
