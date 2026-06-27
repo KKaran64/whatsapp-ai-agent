@@ -36,6 +36,49 @@ const PRODUCT_NOUN_GROUPS = {
   roller: ['roller', 'rollers']
 };
 
+// SKU-level index: keyed by productId code AND full product name.
+// Used by the second validator layer to catch cases where bot names a specific
+// SKU but still applies discount to its bulkPrice instead of mrpPrice.
+let _skuIndex = null;
+function getSkuIndex() {
+  if (_skuIndex) return _skuIndex;
+  try {
+    const file = path.join(__dirname, '..', 'data', 'pricing.json');
+    if (!fs.existsSync(file)) return null;
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+
+    const map = {};
+    // HORECA: has productId (e.g. "9C-DR1") + full name
+    for (const p of (data.horeca || [])) {
+      if (p.productId && p.mrpPrice) {
+        map[p.productId.toLowerCase()] = { mrp: p.mrpPrice, bulk: p.bulkPrice || null, name: p.name };
+      }
+      if (p.name && p.mrpPrice) {
+        map[p.name.toLowerCase()] = { mrp: p.mrpPrice, bulk: p.bulkPrice || null, name: p.name };
+      }
+    }
+    // Trophies: productCode (e.g. "9C251001") + name (single price, no bulk)
+    for (const p of (data.trophies || [])) {
+      if (p.productCode && p.price) {
+        map[p.productCode.toLowerCase()] = { mrp: p.price, bulk: null, name: p.name };
+      }
+      if (p.name && p.price) {
+        map[p.name.toLowerCase()] = { mrp: p.price, bulk: null, name: p.name };
+      }
+    }
+    // Catalogue: name only, single price
+    for (const p of (data.catalogue || [])) {
+      if (p.name && p.price) {
+        map[p.name.toLowerCase()] = { mrp: p.price, bulk: null, name: p.name };
+      }
+    }
+    _skuIndex = map;
+    return _skuIndex;
+  } catch (e) {
+    return null;
+  }
+}
+
 let _catalogByNoun = null;
 function getCatalogByNoun() {
   if (_catalogByNoun) return _catalogByNoun;
@@ -181,6 +224,48 @@ function validateConversationQuality(pair) {
       if (baseIsBulkOnly) {
         reasons.push(`discount_applied_to_bulkprice_not_mrp`);
         break;
+      }
+    }
+  }
+
+  // SECOND LAYER — SKU-CODE LEVEL CHECK:
+  // When the bot names a specific SKU (by code like "9C-DR1" or by full product
+  // name like "ECODESK DIARY A5"), we can verify the discount math against THAT
+  // specific SKU's catalog entry — no noun-disambiguation needed.
+  // This catches cases the noun-level check might miss (rare but adds confidence).
+  if (!reasons.includes('discount_applied_to_bulkprice_not_mrp')) {
+    const skuIndex = getSkuIndex();
+    if (skuIndex) {
+      const botLower = bot.toLowerCase();
+      for (const [skuKey, info] of Object.entries(skuIndex)) {
+        if (skuKey.length < 5) continue; // skip ultra-short keys to avoid false matches
+        const pos = botLower.indexOf(skuKey);
+        if (pos === -1) continue;
+
+        // Look in a window around the SKU mention for the price + discount %
+        const winStart = Math.max(0, pos - 250);
+        const winEnd = Math.min(bot.length, pos + 500);
+        const window = bot.substring(winStart, winEnd);
+
+        const pricePattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each|a)\s+(piece|pc|diary|diaries|coaster|coasters|planter|planters|bag|bags|sleeve|sleeves|organizer|organizers|frame|frames|tray|trays|holder|holders|bottle|bottles|trivet|trivets|tablemat|tablemats|clock|clocks|trophy|trophies|pouch|pouches|wallet|wallets|box|boxes|brick|bricks|ball|balls|roller|rollers)/i;
+        const discPattern = /(\d+(?:\.\d+)?)\s*%\s*(?:off|discount)/i;
+
+        const priceMatch = window.match(pricePattern);
+        const discMatch = window.match(discPattern);
+        if (!priceMatch || !discMatch) continue;
+
+        const price = parseFloat(priceMatch[1]);
+        const disc = parseFloat(discMatch[1]);
+        if (disc >= 100) continue;
+
+        const impliedBase = price / (1 - disc / 100);
+        const tol = Math.max(2, impliedBase * 0.02);
+
+        if (Math.abs(impliedBase - info.mrp) < tol) continue; // correct: base = this SKU's MRP
+        if (info.bulk != null && Math.abs(impliedBase - info.bulk) < tol) {
+          reasons.push('sku_level_discount_off_bulk');
+          break;
+        }
       }
     }
   }
