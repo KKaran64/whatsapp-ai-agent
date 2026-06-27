@@ -57,28 +57,48 @@ function validateConversationQuality(pair) {
 
   // Wrong-base-price detector (v59 Scenario B enforcement):
   // Conservative hardcoded ranges of known "discount-off-bulkPrice" bugs per category.
-  // Extending the catalog-aware approach proved too noisy — diaries with widely varying
-  // MRPs (A6 ₹153 to Organizer Cum Diary ₹917) created overlapping suspicious ranges
-  // that produced false positives on legitimate quotes. Hardcoded ranges trade
-  // coverage for high precision: we only flag specifically observed bug patterns.
-  // Extend this list as new bug patterns surface in production.
+  // We check two phrasings: "₹X per diary" (specific) and "₹X per piece" (generic, when
+  // the response mentions diary/coaster anywhere — which it almost always does).
+  // Extend the KNOWN list as new bug patterns surface.
   const KNOWN_WRONG_PRICE_RANGES = [
-    // A5 diary: bulkPrice ₹135 × discount [85-95%] = quotes ~115-130/diary
+    // A5 diary: bulkPrice ₹135 × [85-95%] discount = quotes in ₹115-130/diary range
     { noun: 'diary', min: 110, max: 132, derivation: 'A5 bulk ₹135 × discount' },
     { noun: 'diaries', min: 110, max: 132, derivation: 'A5 bulk ₹135 × discount' },
-    // 5mm coaster: bulkPrice ₹17 × discount [85-95%] = quotes ~14-16/coaster
+    // 5mm coaster: bulkPrice ₹17 × [85-95%] discount = quotes in ₹13-16/coaster range
     { noun: 'coaster', min: 13, max: 16, derivation: '5mm coaster bulk ₹17 × discount' },
     { noun: 'coasters', min: 13, max: 16, derivation: '5mm coaster bulk ₹17 × discount' }
   ];
-  const perPiecePattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|a)\s+(diary|diaries|coaster|coasters)/gi;
-  const matches = [...bot.matchAll(perPiecePattern)];
-  for (const m of matches) {
+
+  // Specific phrasing: "₹X per/each/a diary/coaster"
+  const specificPattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each|a)\s+(diary|diaries|coaster|coasters)/gi;
+  for (const m of [...bot.matchAll(specificPattern)]) {
     const price = parseFloat(m[1]);
     const noun = m[2].toLowerCase();
     const range = KNOWN_WRONG_PRICE_RANGES.find(r => r.noun === noun);
     if (range && price >= range.min && price <= range.max) {
       reasons.push(`priced_off_bulk_not_mrp_${noun}`);
       break;
+    }
+  }
+
+  // Generic phrasing: "₹X per piece/pc". We only flag if the response also
+  // mentions a product category whose hardcoded range matches.
+  if (reasons.length === 0 || !reasons[reasons.length - 1].startsWith('priced_off_bulk_')) {
+    const genericPattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each)\s+(?:piece|pc)\b/gi;
+    for (const m of [...bot.matchAll(genericPattern)]) {
+      const price = parseFloat(m[1]);
+      const botLower = bot.toLowerCase();
+      // Find which product category is being discussed
+      const inferredNoun =
+        /\bdia(ry|ries)\b/.test(botLower) ? 'diary' :
+        /\bcoaster/.test(botLower) ? 'coaster' :
+        null;
+      if (!inferredNoun) continue;
+      const range = KNOWN_WRONG_PRICE_RANGES.find(r => r.noun === inferredNoun);
+      if (range && price >= range.min && price <= range.max) {
+        reasons.push(`priced_off_bulk_not_mrp_${inferredNoun}_perpiece`);
+        break;
+      }
     }
   }
 
