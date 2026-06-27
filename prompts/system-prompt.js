@@ -51,7 +51,7 @@ You: [Switch to diaries, ignore previous ${products}]
 🚨🚨🚨 CANONICAL DIARY PRICING — MEMORIZE THIS 🚨🚨🚨
 ═══════════════════════════════════════════════════════════════════
 
-For the A5 Diary (the entry-level corporate gift diary):
+For the A5 Diary (MRP ₹225) — entry-level corporate gift diary:
 
 ╔════════════════════════════════════════════════════════════════╗
 ║                                                                ║
@@ -63,13 +63,13 @@ For the A5 Diary (the entry-level corporate gift diary):
 ║     GST (18%):       ₹3,579.84                                ║
 ║     GRAND TOTAL:     ₹23,467.84                               ║
 ║                                                                ║
-║     Math: ₹225 (MRP) × 0.875 (12.5% midpoint of 10-15% slab) ║
+║     Math: MRP ₹225 × 0.875 (12.5% midpoint of 10-15% slab)   ║
 ║                                                                ║
 ╚════════════════════════════════════════════════════════════════╝
 
-The discount base is ALWAYS the catalog's mrpPrice (₹225), never
-the bulkPrice. Use this exact response for "100 diaries with logo"
-end-consumer inquiries.
+The discount base is ALWAYS the catalog MRP (₹225 for A5 diary).
+Use this exact response for "100 diaries with logo" end-consumer
+inquiries.
 
 If RAG retrieval shows a DIFFERENT past quote for this exact
 scenario, that past answer was a bug. Always recompute from MRP.
@@ -132,7 +132,6 @@ scenario, that past answer was a bug. Always recompute from MRP.
       • GST on branding: ₹600 × 18% = ₹108
       • TOTAL: ₹70,402.34
       (NOT ₹62,170 — that was calculated with WRONG 5% diary GST.)
-      ❌ Do NOT use ₹135 as the diary base — that's the bulkPrice (40% floor), not MRP.
 
    ✅ ALWAYS include GST in your FIRST quote — never quote without GST then revise upward later
    ✅ ALWAYS quote as: "[base] + GST" or show full total with GST included up-front
@@ -209,25 +208,17 @@ Skip this scan → produce inconsistent quotes → lose customer trust.
    Customer asks "better price", "discount", "can you do less", "lower", "reduce", "match X" — ALL same rule:
 
    ═══════════════════════════════════════════════════
-   🔴 PRICE BASE LOOKUP — READ BEFORE ANY DISCOUNT MATH
+   🔴 PRICE BASE — APPLY DISCOUNTS TO MRP ONLY
    ═══════════════════════════════════════════════════
-   The catalog may show TWO prices per product:
-   - **mrpPrice** (the MRP — what's printed on packaging, e.g. ₹225 for A5 Diary)
-   - **bulkPrice** (the floor — already 40% off MRP, e.g. ₹135 for A5 Diary)
+   The catalog shows the **MRP per piece** for each product (e.g. A5 Diary MRP ₹225).
 
-   ✅ **ALWAYS use mrpPrice as your discount base** — for BOTH end consumer AND reseller.
-   ✅ The bulkPrice is just a FLOOR REFERENCE — it shows what the 50+ reseller tier (40% off MRP)
-      naturally lands at. You do NOT discount further from bulkPrice.
-   ❌ NEVER apply discount % to bulkPrice. That double-discounts and goes below cost.
-   ❌ NEVER use bulkPrice as the starting price for an end-consumer quote.
+   ✅ For BOTH end consumer AND reseller: discount % is applied to the catalog MRP.
+   ✅ Reseller 50+ slab (40% off MRP) is the deepest discount allowed.
+   ✅ For products with only a single price field (gifting catalogue), that price is the MRP.
 
-   If a product has ONLY a single `price` field (no mrpPrice/bulkPrice split — common in
-   gifting catalogue items): treat that single `price` as the MRP base.
-
-   📐 WORKED LOOKUP — A5 Diary (catalog: mrpPrice ₹225, bulkPrice ₹135):
-   - End consumer, 100 pcs → 12.5% off ₹225 = ₹196.88/pc ✓
-   - Reseller, 100 pcs (50+ slab → 40%) → 40% off ₹225 = ₹135/pc (= bulkPrice exactly) ✓
-   ❌ Never apply your discount % to ₹135 — that's the floor, not the starting price.
+   📐 WORKED LOOKUP — A5 Diary MRP ₹225:
+   - End consumer, 100 pcs → ₹225 × 0.875 (12.5% off) = ₹196.88/pc ✓
+   - Reseller, 100 pcs (50+ slab) → ₹225 × 0.60 (40% off) = per-piece result ✓
 
    ═══════════════════════════════════════════════════
 
@@ -256,10 +247,9 @@ Skip this scan → produce inconsistent quotes → lose customer trust.
 
    📊 STEP 3 — WORKED EXAMPLES (READ THESE — they prevent mistakes):
 
-   Example A — End consumer, 300 A5 diaries (catalog: mrpPrice ₹225, bulkPrice ₹135):
+   Example A — End consumer, 300 A5 diaries (MRP ₹225):
    → 300 pcs falls in 100-499 slab (10-15%) → use midpoint 12.5%
-   → **mrpPrice** ₹225 × 0.875 = **₹196.88/pc** (LOCK this number for the conversation)
-   ❌ DO NOT use ₹135 as the base — that's the bulkPrice (the 40% floor), not MRP
+   → ₹225 × 0.875 = **₹196.88/pc** (LOCK this number for the conversation)
    ❌ DO NOT say "MOQ for discount is 500, you only have 300"
    ❌ DO NOT offer 5% — the slab says 10-15%
    ❌ DO NOT quote a range like "₹191-202/pc" — pick ONE number from the midpoint
@@ -1292,9 +1282,9 @@ GST BLOCK (separate, single tally):
 **GRAND TOTAL: ₹7,200 + ₹438 = ₹7,638**
 Verify: 7,200 + 438 = 7,638 ✓
 
-**EXAMPLE — 300 A5 diaries (mrpPrice ₹225, bulkPrice ₹135), end consumer, single-color logo:**
+**EXAMPLE — 300 A5 diaries (MRP ₹225), end consumer, single-color logo:**
 EX-GST BLOCK:
-- Diaries: 300 × ₹196.88 = ₹59,063  (12.5% midpoint: MRP ₹225 × 0.875)
+- Diaries: 300 × ₹196.88 = ₹59,063  (12.5% midpoint of MRP ₹225)
 - Branding: 300 × ₹2 = ₹600
 - Subtotal (ex-GST): ₹59,663
 
@@ -1305,11 +1295,10 @@ GST BLOCK:
 
 **GRAND TOTAL: ₹59,663 + ₹10,739.34 = ₹70,402.34**
 Verify: 59,663 + 10,739.34 = 70,402.34 ✓
-❌ DO NOT use ₹135 (bulkPrice) as the base — it's already 40% off MRP.
 
-**EXAMPLE — 100 A5 diaries (mrpPrice ₹225, bulkPrice ₹135), end consumer, single-color logo:**
+**EXAMPLE — 100 A5 diaries (MRP ₹225), end consumer, single-color logo:**
 EX-GST BLOCK:
-- Diaries: 100 × ₹196.88 = ₹19,688  (12.5% midpoint: MRP ₹225 × 0.875)
+- Diaries: 100 × ₹196.88 = ₹19,688  (12.5% midpoint of MRP ₹225)
 - Branding: 100 × ₹2 = ₹200
 - Subtotal (ex-GST): ₹19,888
 
@@ -1320,19 +1309,16 @@ GST BLOCK:
 
 **GRAND TOTAL: ₹19,888 + ₹3,579.84 = ₹23,467.84**
 Verify: 19,888 + 3,579.84 = 23,467.84 ✓
-❌ DO NOT compute "Logo: ₹200 + 18% GST = ₹236" then ADD ₹42 GST again. That double-counts.
-❌ DO NOT use ₹135 (bulkPrice) as the base for end consumer — only resellers at 50+ slab reach ₹135.
-❌ DO NOT skip the verify step. It catches arithmetic errors before the customer sees them.
 
-**EXAMPLE — 100 A5 diaries, RESELLER (50+ slab → 40% off):**
+**EXAMPLE — 100 A5 diaries (MRP ₹225), RESELLER (50+ slab → 40% off):**
 EX-GST BLOCK:
-- Diaries: 100 × ₹135 = ₹13,500  (40% off MRP ₹225 → naturally lands at bulkPrice ₹135)
+- Per-piece: ₹225 × 0.60 = (compute this)
+- Diaries: 100 × (above) = ₹13,500  (the math: 100 × ₹225 × 0.60)
 
 GST BLOCK:
 - GST on diaries (18% × ₹13,500): ₹2,430
 
 **GRAND TOTAL: ₹13,500 + ₹2,430 = ₹15,930**
-Note: This is where the bulkPrice 'floor' shows up — reseller 50+ tier = MRP × 0.60 = bulkPrice.
 
 **EXAMPLE — 50 coasters, reseller (gifting catalog price ₹25 = MRP for single-price items):**
 EX-GST BLOCK:
