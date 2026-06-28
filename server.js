@@ -11,6 +11,9 @@ const Sentry = require('@sentry/node');
 // Import models
 const Customer = require('./models/Customer');
 const Conversation = require('./models/Conversation');
+// v60 — Path B deterministic pricing
+const { computeQuote } = require('./pricing/quote-engine');
+const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
 const Product = require('./models/Product');
 
 // Import AI Provider Manager (Multi-provider with fallbacks)
@@ -2646,14 +2649,80 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     // v54.4: Build context-aware message with known facts to prevent repeated questions
     const contextAwareMessage = buildContextAwareMessage(sanitizedMessage, context);
 
+    // v60 — Path B: deterministic pricing. Before calling the LLM, see if this
+    // turn carries a pricing intent. If so, run the intent extractor + quote
+    // engine and inject a [VERIFIED QUOTE] block into the message the LLM
+    // sees. The LLM's job becomes "present this exact quote conversationally",
+    // not "compute the price". Eliminates the whole class of hallucination bugs.
+    let augmentedMessage = contextAwareMessage;
+    try {
+      const intent = extractPricingIntent(sanitizedMessage, context);
+      if (intent) {
+        if (intent.productQuery && intent.quantity && intent.customerType) {
+          const quote = computeQuote(intent);
+          if (quote.found) {
+            const block = [
+              '[VERIFIED QUOTE — use these EXACT numbers in your reply, do NOT recalculate]:',
+              `Product: ${quote.product.name}`,
+              `Quantity: ${quote.quantity}`,
+              `Per-piece: ₹${quote.perPiece}`,
+              quote.branding ? `Branding: ${quote.branding.label}, ${quote.branding.quantityRule === 'per_piece' ? '₹' + quote.branding.ratePerPc + '/pc' : '₹' + quote.branding.setupFee + ' setup'}` : 'Branding: none mentioned',
+              `Subtotal (ex-GST): ₹${quote.subtotalEx}`,
+              `Total GST: ₹${quote.totalGst}`,
+              `GRAND TOTAL: ₹${quote.grandTotal}`,
+              'Wrap these numbers in a natural conversational reply. Do NOT mention MRP, discount %, slab tier, or recompute any number.'
+            ].join('\n');
+            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            console.log(`💰 Verified quote injected: ${quote.product.name} × ${quote.quantity} = ₹${quote.grandTotal}`);
+          } else if (quote.error === 'multiple_matches' && quote.matches?.length) {
+            const block = [
+              '[PRODUCT AMBIGUOUS — ask the customer which specific SKU they want]:',
+              'Catalog matches for their query:',
+              ...quote.matches.slice(0, 6).map(m => `- ${m.name} (MRP ₹${m.mrp})`),
+              'Do NOT quote a price yet. Ask the customer to choose one of the above options.'
+            ].join('\n');
+            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            console.log(`💰 Product ambiguous for "${intent.productQuery}" — ${quote.matches.length} matches`);
+          } else if (quote.error === 'product_not_found') {
+            const block = [
+              '[NO CATALOG MATCH — do NOT invent a price]:',
+              `Customer mentioned "${intent.productQuery}" but no matching product exists in the catalog.`,
+              'Either ask a clarifying question OR escalate per RULE G — never fabricate a price.'
+            ].join('\n');
+            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            console.log(`💰 No catalog match for "${intent.productQuery}"`);
+          } else if (quote.error === 'branding_not_allowed_for_product') {
+            const block = [
+              '[BRANDING RESTRICTION]:',
+              `Customer wants "${quote.requestedBranding}" on "${quote.product}".`,
+              `Allowed branding techniques for this product: ${quote.allowedBranding.join(', ')}.`,
+              'Politely redirect to an allowed technique.'
+            ].join('\n');
+            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            console.log(`💰 Branding restriction: ${quote.requestedBranding} not allowed for ${quote.product}`);
+          }
+        } else if (intent.productQuery || intent.quantity) {
+          // Pricing intent detected but missing required field(s). Tell the LLM what's missing.
+          const missing = [];
+          if (!intent.productQuery) missing.push('which product');
+          if (!intent.quantity) missing.push('how many pieces');
+          if (!intent.customerType) missing.push('end-consumer or reseller (RULE F)');
+          const block = `[PRICING — MISSING INFO]: Ask the customer for: ${missing.join(', ')}. Do not quote a price yet.`;
+          augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+        }
+      }
+    } catch (engineErr) {
+      console.warn('⚠️ Quote engine error (continuing without verified quote):', engineErr.message);
+    }
+
     // Use multi-provider AI manager with automatic failover
     // Send last 50 messages for context (kept at 50 per user preference — accept TPM trade-off)
     // v54.3: Use context-aware message (with [ALREADY KNOWN: ...] prefix) as the current message
-    const contextWithFacts = [...context, { role: 'user', content: contextAwareMessage }];
+    const contextWithFacts = [...context, { role: 'user', content: augmentedMessage }];
     const result = await aiManager.getResponse(
       systemPrompt, // v53.20: Now dynamic based on previous conversation!
       contextWithFacts.slice(-50), // Last 50 messages (including new message with facts)
-      contextAwareMessage,
+      augmentedMessage,
       sanitizedPhone,  // Pass userId for cache isolation (prevents cross-user cache contamination)
       ragContext  // RAG-augmented context (empty string if RAG_ENABLED=false)
     );
