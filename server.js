@@ -513,6 +513,11 @@ if (CONFIG.SENTRY_DSN) {
   });
   app.use(Sentry.Handlers.requestHandler());
   app.use(Sentry.Handlers.tracingHandler());
+  // Mask DSN in logs (security) — show only project ID portion
+  const dsnMatch = CONFIG.SENTRY_DSN.match(/\/(\d+)$/);
+  console.log(`✅ Sentry initialized (project ID: ${dsnMatch ? dsnMatch[1] : 'unknown'}, env: ${CONFIG.NODE_ENV})`);
+} else {
+  console.log(`⚠️ Sentry NOT initialized — SENTRY_DSN env var is not set`);
 }
 
 // Initialize message queue variable (will be set up after server starts)
