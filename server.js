@@ -16,6 +16,8 @@ const { computeQuote } = require('./pricing/quote-engine');
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
+// v60 — voice message transcription via Groq Whisper
+const { handleVoiceMessage } = require('./audio-handler');
 const Product = require('./models/Product');
 
 // Import AI Provider Manager (Multi-provider with fallbacks)
@@ -1742,7 +1744,8 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
       const messageBody = message.text?.body || message.image?.caption || '';
       const messageType = message.type;
       const messageId = message.id;
-      const mediaId = message.image?.id;
+      // v60: extract media ID for both image AND audio messages
+      const mediaId = message.image?.id || message.audio?.id || message.video?.id;
 
       // FIX #7: Add request ID for tracking
       const requestId = generateRequestId();
@@ -1866,6 +1869,20 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                   );
                   response = sanitizeBotReply(result.response); // v59: round decimals before send/store
                   await storeCustomerMessage(from, `[IMAGE: ${combinedMessageBody || 'no caption'}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+                }
+                // v60: Handle VOICE messages — transcribe with Groq Whisper, then process as normal text
+                else if (batchMessageType === 'audio' && batchMediaId) {
+                  console.log('🎤 Processing voice message with Groq Whisper...');
+                  const transcribedText = await handleVoiceMessage(batchMediaId, CONFIG.WHATSAPP_TOKEN);
+                  if (!transcribedText) {
+                    response = "I couldn't quite catch that voice note — could you type your message or try recording again?";
+                    await storeCustomerMessage(from, '[VOICE: transcription failed]', latestMessageId).catch(() => {});
+                  } else {
+                    // Process the transcribed text through the normal flow — quote engine,
+                    // RAG, LLM, sanitizer, everything works the same.
+                    response = await processWithClaudeAgent(transcribedText, from, context);
+                    await storeCustomerMessage(from, `[VOICE]: ${transcribedText}`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+                  }
                 } else {
                   // Handle TEXT messages — use combined message (processWithClaudeAgent already sanitizes)
                   response = await processWithClaudeAgent(combinedMessageBody, from, context);
@@ -2031,7 +2048,8 @@ app.post('/webhook-optimized', webhookLimiter, validateWebhookSignature, async (
       const messageBody = message.text?.body || message.image?.caption || '';
       const messageType = message.type;
       const messageId = message.id;
-      const mediaId = message.image?.id;
+      // v60: extract media ID for image, audio, and video messages
+      const mediaId = message.image?.id || message.audio?.id || message.video?.id;
 
       const requestId = generateRequestId();
       console.log(`[${requestId}] 📨 [OPTIMIZED] Message from ${from.slice(-4)} (${messageType})`);
