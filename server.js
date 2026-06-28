@@ -1048,32 +1048,46 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
         // v60 — image availability + PDF routing from pricing/image-routing.js.
         // If a category has no MongoDB images, route to:
-        //   1. The category's associated PDF catalog (if pdfCatalog field set)
+        //   1. PDF catalog(s) — `pdfCatalogs` array (multiple) OR `pdfCatalog` (single, backward-compat)
         //   2. Else a category-specific fallback text message
         //   3. Else a generic fallback text message
         if (resolvedCategory && !resolvedCategory.hasImages) {
           console.log(`⚠️ Category '${catalogCategory}' has no MongoDB images`);
 
-          // Try to send the associated PDF catalog if configured
-          if (resolvedCategory.pdfCatalog) {
-            const pdfKey = `PDF_CATALOG_${resolvedCategory.pdfCatalog}`;
-            const pdfUrl = CONFIG[pdfKey];
-            if (pdfUrl) {
-              const filename = `9Cork-${resolvedCategory.pdfCatalog.charAt(0) + resolvedCategory.pdfCatalog.slice(1).toLowerCase()}-Catalog.pdf`;
-              try {
-                console.log(`📄 Sending ${pdfKey} catalog to ${from} for '${catalogCategory}'`);
-                await sendWhatsAppDocument(from, pdfUrl, filename, resolvedCategory.pdfCaption || 'Here is our catalog!');
-                return;
-              } catch (err) {
-                console.warn(`⚠️ PDF send failed (${pdfKey}):`, err.message);
-                // Fall through to text fallback
+          // Normalize: support both `pdfCatalogs: [...]` (array) and `pdfCatalog: 'X'` (legacy single).
+          const pdfList = resolvedCategory.pdfCatalogs
+            || (resolvedCategory.pdfCatalog ? [resolvedCategory.pdfCatalog] : []);
+
+          if (pdfList.length > 0) {
+            // Send a brief caption FIRST (only once, even if multiple PDFs follow)
+            try {
+              if (resolvedCategory.pdfCaption) {
+                await sendWhatsAppMessage(from, resolvedCategory.pdfCaption).catch(() => {});
               }
-            } else {
-              console.warn(`⚠️ ${pdfKey} env var not set — skipping PDF send`);
+            } catch (e) { /* non-blocking */ }
+
+            // Send each PDF in order
+            let sentAny = false;
+            for (const pdfKey of pdfList) {
+              const envKey = `PDF_CATALOG_${pdfKey}`;
+              const pdfUrl = CONFIG[envKey];
+              if (!pdfUrl) {
+                console.warn(`⚠️ ${envKey} env var not set — skipping PDF`);
+                continue;
+              }
+              const filename = `9Cork-${pdfKey.charAt(0) + pdfKey.slice(1).toLowerCase()}-Catalog.pdf`;
+              try {
+                console.log(`📄 Sending ${envKey} catalog to ${from} for '${catalogCategory}'`);
+                await sendWhatsAppDocument(from, pdfUrl, filename, '');  // empty caption — already sent above
+                sentAny = true;
+              } catch (err) {
+                console.warn(`⚠️ PDF send failed (${envKey}):`, err.message);
+              }
             }
+            if (sentAny) return;
           }
 
-          // Text fallback (when no PDF configured OR PDF send failed)
+          // Text fallback (when no PDFs configured OR all sends failed)
           const fallback = resolvedCategory.fallbackMessage ||
             "I don't have product photos handy for those right now — let me check with our team and share them shortly. The prices I quoted are accurate.";
           try {
