@@ -143,22 +143,28 @@ const CATEGORY_DEFINITIONS = {
     patterns: [/\b(mirror|mirrors|wall mirror|wall mirrors)\b/i],
     mongoSearch: null,
     hasImages: false,
-    pdfCatalog: 'PRODUCTS',
-    pdfCaption: "Here's our full cork products catalog — mirror designs included! 🪞"
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — cork mirror designs included! 🪞"
   },
   'wall_panels': {
-    patterns: [/\b(wall panel|wall panels|cork panel|cork panels|acoustic panel|acoustic panels|decorative panel)\b/i],
+    patterns: [/\b(wall panel|wall panels|cork panel|cork panels|acoustic panel|acoustic panels|decorative panel|3d panel|2d panel|1d panel)\b/i],
     mongoSearch: null,
     hasImages: false,
-    pdfCatalog: 'ELEVATION',
-    pdfCaption: "Here's our Elevation e-catalog featuring cork wall panels and premium decor! ✨"
+    // Wall panels span three dimensional lines (ascending complexity):
+    //   - Minimalist (1D — flat panels)
+    //   - Elevation  (2D — textured panels)
+    //   - Opus       (3D — sculpted panels)  ← PDF env var to be set when uploaded
+    // Bot sends each catalog as a separate WhatsApp document. If OPUS env var
+    // isn't set yet, server.js logs a warning and skips it gracefully.
+    pdfCatalogs: ['MINIMALIST', 'ELEVATION', 'OPUS'],
+    pdfCaption: "Here are our cork wall panel catalogs — Minimalist (1D flat), Elevation (2D textured), and Opus (3D sculpted). Browse to find your style! ✨"
   },
   'wall_frames': {
     patterns: [/\b(wall frame|wall frames|cork wall frame)\b/i],
     mongoSearch: null,
     hasImages: false,
-    pdfCatalog: 'PRODUCTS',
-    pdfCaption: "Here's our cork products catalog — wall frames included! 🌿"
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — cork wall frames included! 🌿"
   },
   'bar_caddies': {
     patterns: [/\b(caddy|caddies|bar caddy|bar caddies)\b/i],
