@@ -1799,10 +1799,9 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
         return;
       }
 
-      // Process text messages AND image messages
-      // v54: Optimized bot available at /webhook-optimized for testing
-      // Main webhook uses original code for stability
-      if ((messageType === 'text' && messageBody) || messageType === 'image') {
+      // Process text, image, AND audio (voice note) messages.
+      // v60: audio added — transcribed via Groq Whisper inside processBatch.
+      if ((messageType === 'text' && messageBody) || messageType === 'image' || messageType === 'audio') {
         // Add to queue for processing (if queue is available)
         if (messageQueue) {
           await messageQueue.add('process-message', {
@@ -2092,8 +2091,8 @@ app.post('/webhook-optimized', webhookLimiter, validateWebhookSignature, async (
         return;
       }
 
-      // Process with optimized bot
-      if ((messageType === 'text' && messageBody) || messageType === 'image') {
+      // Process with optimized bot (text, image, audio)
+      if ((messageType === 'text' && messageBody) || messageType === 'image' || messageType === 'audio') {
         await withPhoneLock(from, async () => {
           try {
             const bot = await getOrInitOptimizedBot();
