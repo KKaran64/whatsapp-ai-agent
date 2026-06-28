@@ -691,8 +691,13 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     const OPTION_TRIGGERS = /\b(share|show|send|reshare|resend)\b.*\b(options?|varieties?|range|collection|types?|all)\b/i;
     // v54.3: Resend detection - clears sent tracker when customer didn't receive images
     const RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received)\b/i;
-    // AUTO-GENERATED from product-image-database.json v1.3 - includes ALL product keywords from 9cork.com AND homedecorzstore.com - 41 products, 123 keywords
-    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|bifold|bohemian|box|breakfast|bridge|business|calendar|candle|card|case|catchall|chip|choco|chocochip|clutch|coaster|coasters|combo|cube|cubic|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|for|frame|frames|fridge|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|laptop|large|leaf|light|lights|magnet|mat|men|minimalistic|mouse|mousepad|multicolor|multicolored|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|round|rubberized|runner|serving|set|shaped|sleeve|small|square|stand|stationery|striped|succulent|table|tablemat|tablemats|tabletop|tea|tealight|test|testtube|texture|textured|top|tote|travel|tray|trinket|triple|trivet|trivets|tube|ushaped|wall|wallet|with|women|workspace)/i;
+    // v60 — keyword regex aligned with the live catalog. Added: mirror, yoga,
+    // caddy, bar, stool, lamp, scanner, tag, napkin, tissue, ring, brick,
+    // ball, roller, clock, trophy, hot plate, soil, hanging light, menu folder,
+    // bill folder. This ensures every catalog category triggers image detection
+    // (and then either sends correct images OR falls through to the
+    // nonExistentCategories safety net below).
+    const PRODUCT_KEYWORDS = /(13inch|15inch|3in1|3inone|4pcs|accessory|and|aqua|bag|ball|bar|bifold|bill|bohemian|bottle|bottles|box|breakfast|brick|bridge|business|caddy|caddies|calendar|candle|card|case|catchall|chiller|chip|choco|chocochip|clock|clocks|clutch|coaster|coasters|combo|cube|cubic|decor|designer|desk|desktop|diamond|diaries|diary|dining|fabric|flat|folder|for|frame|frames|fridge|game|games|grain|hanging|heart|holder|hot|inch|journal|keychain|ladies|lamp|laptop|large|laser|leaf|light|lights|magnet|mat|menu|men|minimalistic|mirror|mirrors|mouse|mousepad|multicolor|multicolored|napkin|natural|notebook|office|organizer|pad|passport|pattern|patterned|pen|pencil|piece|placemat|placemats|plain|planner|plant|planter|planters|plants|pot|premium|print|ring|rings|roller|room|round|rubberized|runner|scanner|serving|set|shaped|sleeve|small|soil|square|stand|stationery|stool|striped|succulent|table|tablemat|tablemats|tabletop|tag|tags|tea|tealight|test|testtube|texture|textured|tissue|top|tote|travel|tray|trinket|triple|trivet|trivets|trophy|trophies|tube|ushaped|wall|wallet|with|women|workspace|yoga)/i;
 
     // CRITICAL FIX: Only use USER message for detection, NEVER bot response
     // This prevents bot saying "Let me show you diaries" from triggering images
@@ -947,19 +952,44 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // Catalog detection - check ONLY user message for product keywords
     // v53.5 EXPANDED: Added missing product categories that were causing image sending failures
     // IMPORTANT: 'all' is checked FIRST to handle "options" and "variety" requests properly
+    // v60 — pattern map aligned to the live MongoDB Product collection categories.
+    // Order matters: check most-specific patterns first, fall through to broader ones.
+    // Categories where MongoDB has NO images route through the nonExistentCategories
+    // safety net below — bot says "we don't have images for this" instead of sending
+    // a wrong image.
     const catalogPatterns = {
-      'all': /\b(catalog|catalogue|all products|full range|variety|options)\b/i,  // CHECK FIRST! Added "variety" and "options"
+      'all': /\b(catalog|catalogue|all products|full range|variety|options)\b/i,
+      // — Categories with MongoDB images —
       'coasters': /\b(coasters?|coaster collection)\b/i,
       'diaries': /\b(diary|diaries|notebook|notebooks)\b/i,
-      'desk': /\b(desk|organizers?|pen holder|pencil holder)\b/i,
-      'bags': /\b(bags?|wallets?|laptop|clutch|tote)\b/i,
-      'planters': /\b(planters?|test tube|testtube)\b/i,
-      'trays': /\b(trays?|serving)\b/i,
+      'desk': /\b(desk|organizers?|pen holder|pencil holder|catchall|trinket tray)\b/i,
+      'bags': /\b(bags?|wallets?|laptop|clutch|tote|sleeve|sling|purse)\b/i,
+      'planters': /\b(planters?|test tube|testtube|pot|pots|succulent)\b/i,
+      'trays': /\b(trays?|serving tray|decor tray)\b/i,
       'bottles': /\b(bottles?|water bottle)\b/i,
-      'frames': /\b(frames?|photo frames?|picture frames?)\b/i,
-      'calendar': /\b(calend[ae]rs?|table calendar|wall calendar|desk calendar)\b/i,  // v53.6: Added typo "calender"
-      'mousepad': /\b(mousepad|mouse pad|mousepads)\b/i,  // ADDED - was missing!
-      'candles': /\b(candles?|tea ?lights?|tealights?|candle holder)\b/i  // ADDED - was missing!
+      'frames': /\b(photo frames?|picture frames?|cork frame)\b/i,  // narrowed to NOT match "wall frame"
+      'calendar': /\b(calend[ae]rs?|table calendar|wall calendar|desk calendar)\b/i,
+      'mousepad': /\b(mousepad|mouse pad|mousepads)\b/i,
+      'candles': /\b(candle|candles|tea ?light|tea ?lights|tealights?|candle holder)\b/i,
+      'travel': /\b(passport holder|card holder|wallet|travel organizer|card stacker)\b/i,
+      'yoga': /\b(yoga|yoga mat|yoga brick|yoga roller|yoga ball)\b/i,
+      'gift_boxes': /\b(gift box|gift boxes|wine box)\b/i,
+      'trivets': /\b(trivet|trivets|hot ?plate)\b/i,
+      'tablemats': /\b(tablemat|tablemats|placemat|placemats)\b/i,
+      'clocks': /\b(clock|clocks|table clock|wall clock)\b/i,
+      'games': /\b(tic tac toe|fun game|cork game)\b/i,
+      // — Categories WITHOUT MongoDB images (route to safety net) —
+      'mirrors': /\b(mirror|mirrors|wall mirror|wall mirrors)\b/i,
+      'wall_frames': /\b(wall frame|wall frames|cork wall frame)\b/i,  // separate from photo frames
+      'caddies': /\b(caddy|caddies|bar caddy)\b/i,
+      'menu_folder': /\b(menu folder|bill folder|menu cover)\b/i,
+      'lamps': /\b(lamp|lamps|hanging light|pendant)\b/i,
+      'stools': /\b(stool|stools|cork stool)\b/i,
+      'napkin_rings': /\b(napkin ring|napkin rings)\b/i,
+      'tissue': /\b(tissue box|tissue holder|tissue)\b/i,
+      'room_tags': /\b(room tag|room tags|door tag)\b/i,
+      'scanners': /\b(menu scanner|qr scanner)\b/i,
+      'trophies': /\b(trophy|trophies|award)\b/i
     };
 
     let catalogCategory = null;
@@ -1052,14 +1082,32 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           return; // Exit early
         }
 
-        // v53.7 CRITICAL: If category doesn't exist in our catalog, exit without sending wrong images
-        // Let AI handle with Rule 5C ("We don't have X, would you like Y instead?")
-        // v35: Added caddy, bar caddy - HORECA products without images in database
-        const nonExistentCategories = ['mousepad', 'candles', 'caddy', 'bar caddy', 'bill folder', 'cork light']; // Products we don't have images for
+        // v60 CRITICAL: If category has NO MongoDB images, exit cleanly without
+        // sending a wrong image. The bot's text response stays accurate (uses
+        // verified-quote engine for pricing) but no image goes out.
+        // These categories exist in data/pricing.json but have no Product collection
+        // images yet — adding images later auto-removes them from this list.
+        const nonExistentCategories = [
+          'mousepad', 'candles',           // legacy
+          'mirrors',                        // CORK MIRROR (catalogue) — no MongoDB images
+          'wall_frames',                    // CORK WALL FRAME — only in catalogue
+          'caddies',                        // CORK BAR CADDIES — only in catalogue
+          'menu_folder',                    // MENU & BILL FOLDER — no images
+          'lamps',                          // CORK LAMPS / hanging lights
+          'stools',                         // CORK STOOL
+          'napkin_rings',                   // CORK NAPKIN RING
+          'tissue',                         // CORK TISSUE BOX/HOLDER
+          'room_tags',                      // CORK ROOM TAGS
+          'scanners',                       // CORK MENU SCANNER
+          'trophies'                        // Trophy catalog uses PDF, not WhatsApp images
+        ];
         if (nonExistentCategories.includes(catalogCategory)) {
-          console.log(`⚠️ Category '${catalogCategory}' doesn't exist in our catalog`);
-          console.log(`   AI will suggest alternatives via Rule 5C`);
-          return; // Exit early, don't send wrong images!
+          console.log(`⚠️ Category '${catalogCategory}' has no MongoDB images — skipping image send`);
+          // Send a polite "no image" fallback so customer knows
+          try {
+            await sendWhatsAppMessage(from, "I don't have product photos handy for those right now — let me check with our team and share them shortly. In the meantime, the prices I quoted are accurate.").catch(() => {});
+          } catch (e) { /* non-blocking */ }
+          return;
         }
         // Else: no products found at all, continue to fallback for other categories
       }
