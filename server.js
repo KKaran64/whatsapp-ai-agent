@@ -1964,10 +1964,11 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
             }); // end withPhoneLock
           };
 
-          // Route the message: images process immediately; text gets debounced (2.5s)
-          // so rapid follow-up messages get batched into one AI call.
+          // Route the message: images + audio process immediately (need transcription/
+          // vision before they can be batched with text). Text gets debounced (8s) so
+          // rapid follow-up messages get batched into one AI call.
           const payload = { messageBody, messageId, messageType, mediaId };
-          if (messageType === 'image') {
+          if (messageType === 'image' || messageType === 'audio') {
             await processBatch([payload]);
           } else {
             bufferMessage(from, payload, processBatch);
