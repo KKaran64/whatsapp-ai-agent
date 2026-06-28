@@ -129,86 +129,145 @@ const CATEGORY_DEFINITIONS = {
     hasImages: true
   },
 
-  // ═══════ Catalogue / Specialty categories (NO MongoDB images yet) ═══════
-  // Upload photos to MongoDB and flip hasImages → true to enable.
+  // ═══════ Catalogue / Specialty categories — route to PDF catalogs ═══════
+  //
+  // These categories don't have MongoDB images (one image per SKU), but they
+  // DO have curated PDF catalogs that customers can browse. Each entry below
+  // has `pdfCatalog: '<KEY>'` which maps to the env var PDF_CATALOG_<KEY>.
+  // The bot sends the PDF as an attachment + a short message.
+  //
+  // To upgrade a category from PDF-only to per-SKU images: upload photos to
+  // MongoDB Product collection, then flip hasImages→true and add mongoSearch.
 
   'mirrors': {
     patterns: [/\b(mirror|mirrors|wall mirror|wall mirrors)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "We have several cork mirror designs available — I don't have the photos handy right now. The team will share them with you shortly. Meanwhile, the prices I quoted are accurate."
+    pdfCatalog: 'PRODUCTS',
+    pdfCaption: "Here's our full cork products catalog — mirror designs included! 🪞"
+  },
+  'wall_panels': {
+    patterns: [/\b(wall panel|wall panels|cork panel|cork panels|acoustic panel|acoustic panels|decorative panel)\b/i],
+    mongoSearch: null,
+    hasImages: false,
+    pdfCatalog: 'ELEVATION',
+    pdfCaption: "Here's our Elevation e-catalog featuring cork wall panels and premium decor! ✨"
   },
   'wall_frames': {
     patterns: [/\b(wall frame|wall frames|cork wall frame)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork wall frames come in multiple sizes. Photos aren't on hand right now — the team will share them shortly. Prices I quoted are accurate."
+    pdfCatalog: 'PRODUCTS',
+    pdfCaption: "Here's our cork products catalog — wall frames included! 🌿"
   },
   'bar_caddies': {
     patterns: [/\b(caddy|caddies|bar caddy|bar caddies)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork bar caddies come in multiple sizes (No.1 through No.20+). I don't have photos handy — the team can share them shortly. The pricing is in the HORECA catalog."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — bar caddies and more! 🍽️"
   },
   'menu_bill_folders': {
     patterns: [/\b(menu folder|menu folders|bill folder|bill folders|menu cover|menu & bill)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our menu and bill folders are HORECA staples. Photos aren't handy right now — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — menu and bill folders included! 🍽️"
   },
   'lamps': {
     patterns: [/\b(lamps?|hanging light|hanging lights|pendant light|pendant lights)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "We have cork lamps and hanging lights. I don't have photos on hand — the team can share them with you shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — cork lamps and hanging lights included! 🏮"
   },
   'stools': {
     patterns: [/\bstools?\b|\bcork stool\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork stools are a HORECA seating option. Photos aren't handy right now — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — cork stools included! 🪑"
   },
   'napkin_rings': {
     patterns: [/\b(napkin rings?|cork napkin ring)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "We have cork napkin rings for table settings. Photos aren't handy — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — napkin rings included! 🍽️"
   },
   'tissue': {
     patterns: [/\b(tissue box|tissue boxes|tissue holder|tissue holders|tissue paper)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork tissue boxes and holders are stocked. Photos aren't handy right now — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — tissue boxes and holders included! 🌿"
   },
   'room_tags': {
     patterns: [/\b(room tag|room tags|door tag|door tags|do not disturb)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork room tags (do-not-disturb / housekeeping / etc.) are HORECA staples. Photos aren't handy — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — room tags (do-not-disturb / housekeeping / etc.) included! 🛎️"
   },
   'menu_scanners': {
     patterns: [/\b(menu scanner|menu scanners|qr scanner|qr stand|qr holder)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork QR menu scanners are available. Photos aren't handy — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — QR menu scanners included! 📱"
   },
   'ice_chillers': {
     patterns: [/\b(ice chiller|ice chillers|ice bucket|ice buckets|wine chiller|wine chillers|bottle chiller)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork ice/wine chillers are HORECA staples. Photos aren't handy right now — the team will share them shortly."
+    pdfCatalog: 'HORECA',
+    pdfCaption: "Here's our HORECA catalog — ice and wine chillers included! 🍷"
   },
   'soil_planters': {
     patterns: [/\b(soil planter|soil planters|earthen planter|earthen planters)\b/i],
     mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "Our cork soil planters are stocked. Photos aren't handy right now — the team will share them shortly."
+    pdfCatalog: 'PLANTERS',
+    pdfCaption: "Here's our cork planters catalog — soil planters included! 🌱"
   },
   'trophies': {
     patterns: [/\b(trophy|trophies|award|awards|recognition|memento)\b/i],
-    mongoSearch: null,  // Trophies use PDF catalog (PDF_CATALOG_TROPHY)
+    mongoSearch: null,
     hasImages: false,
-    fallbackMessage: "I'll share our cork trophy catalog with you — please give me a moment."
+    pdfCatalog: 'TROPHY',
+    pdfCaption: "Here's our cork trophy catalog! 🏆"
+  },
+  // Yoga catalog — both image and PDF available
+  'yoga_catalog': {
+    patterns: [/\b(yoga catalog|yoga catalogue|yoga brochure|yoga pdf|yoga collection)\b/i],
+    mongoSearch: null,
+    hasImages: false,
+    pdfCatalog: 'YOGA',
+    pdfCaption: "Here's our cork yoga essentials catalog! 🧘"
+  },
+  // Premium / Elevation line
+  'premium_collection': {
+    patterns: [/\b(premium catalog|premium catalogue|elevation catalog|elevation catalogue|luxury collection|executive collection)\b/i],
+    mongoSearch: null,
+    hasImages: false,
+    pdfCatalog: 'ELEVATION',
+    pdfCaption: "Here's our Elevation e-catalog — premium cork line! ✨"
+  },
+  // Minimalist line
+  'minimalist_collection': {
+    patterns: [/\b(minimalist catalog|minimal catalog|essential catalog|basic collection)\b/i],
+    mongoSearch: null,
+    hasImages: false,
+    pdfCatalog: 'MINIMALIST',
+    pdfCaption: "Here's our Minimalist e-catalog! 🌿"
+  },
+  // Combos
+  'combos_catalog': {
+    patterns: [/\b(combo catalog|combo catalogue|gifting combo|combo brochure|gifting combos)\b/i],
+    mongoSearch: null,
+    hasImages: false,
+    pdfCatalog: 'COMBOS',
+    pdfCaption: "Here's our cork gifting combos catalog! 🎁"
   },
 
   // ═══════ Catch-all generic patterns (lowest priority) ═══════
@@ -224,10 +283,16 @@ const CATEGORY_DEFINITIONS = {
 // Resolution order — more-specific patterns first, generic last
 // ─────────────────────────────────────────────────────────────────────
 const RESOLUTION_ORDER = [
-  // Specific multi-word categories BEFORE single-word ones to avoid false
-  // matches (e.g. "photo frame" must be checked before "frame")
+  // PDF-specific catalog requests checked first (more specific intent)
+  'yoga_catalog',
+  'premium_collection',
+  'minimalist_collection',
+  'combos_catalog',
+
+  // Specific multi-word categories before single-word ones
   'photo_frames',
   'wall_frames',
+  'wall_panels',
   'laptop_bags',
   'travel_organizers',
   'serving_trays',

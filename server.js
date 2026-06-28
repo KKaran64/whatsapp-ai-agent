@@ -1046,12 +1046,34 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           return; // Exit early
         }
 
-        // v60 — image availability flag comes from the centralized routing
-        // module (pricing/image-routing.js). If the resolved category has
-        // hasImages: false, we send the category-specific fallback message
-        // and exit cleanly — no wrong-image risk.
+        // v60 — image availability + PDF routing from pricing/image-routing.js.
+        // If a category has no MongoDB images, route to:
+        //   1. The category's associated PDF catalog (if pdfCatalog field set)
+        //   2. Else a category-specific fallback text message
+        //   3. Else a generic fallback text message
         if (resolvedCategory && !resolvedCategory.hasImages) {
-          console.log(`⚠️ Category '${catalogCategory}' has no MongoDB images — sending fallback message`);
+          console.log(`⚠️ Category '${catalogCategory}' has no MongoDB images`);
+
+          // Try to send the associated PDF catalog if configured
+          if (resolvedCategory.pdfCatalog) {
+            const pdfKey = `PDF_CATALOG_${resolvedCategory.pdfCatalog}`;
+            const pdfUrl = CONFIG[pdfKey];
+            if (pdfUrl) {
+              const filename = `9Cork-${resolvedCategory.pdfCatalog.charAt(0) + resolvedCategory.pdfCatalog.slice(1).toLowerCase()}-Catalog.pdf`;
+              try {
+                console.log(`📄 Sending ${pdfKey} catalog to ${from} for '${catalogCategory}'`);
+                await sendWhatsAppDocument(from, pdfUrl, filename, resolvedCategory.pdfCaption || 'Here is our catalog!');
+                return;
+              } catch (err) {
+                console.warn(`⚠️ PDF send failed (${pdfKey}):`, err.message);
+                // Fall through to text fallback
+              }
+            } else {
+              console.warn(`⚠️ ${pdfKey} env var not set — skipping PDF send`);
+            }
+          }
+
+          // Text fallback (when no PDF configured OR PDF send failed)
           const fallback = resolvedCategory.fallbackMessage ||
             "I don't have product photos handy for those right now — let me check with our team and share them shortly. The prices I quoted are accurate.";
           try {
