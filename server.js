@@ -14,6 +14,8 @@ const Conversation = require('./models/Conversation');
 // v60 — Path B deterministic pricing
 const { computeQuote } = require('./pricing/quote-engine');
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
+// v60 — comprehensive image-category routing
+const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 const Product = require('./models/Product');
 
 // Import AI Provider Manager (Multi-provider with fallbacks)
@@ -952,57 +954,12 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // Catalog detection - check ONLY user message for product keywords
     // v53.5 EXPANDED: Added missing product categories that were causing image sending failures
     // IMPORTANT: 'all' is checked FIRST to handle "options" and "variety" requests properly
-    // v60 — pattern map aligned to the live MongoDB Product collection categories.
-    // Order matters: check most-specific patterns first, fall through to broader ones.
-    // Categories where MongoDB has NO images route through the nonExistentCategories
-    // safety net below — bot says "we don't have images for this" instead of sending
-    // a wrong image.
-    const catalogPatterns = {
-      'all': /\b(catalog|catalogue|all products|full range|variety|options)\b/i,
-      // — Categories with MongoDB images —
-      'coasters': /\b(coasters?|coaster collection)\b/i,
-      'diaries': /\b(diary|diaries|notebook|notebooks)\b/i,
-      'desk': /\b(desk|organizers?|pen holder|pencil holder|catchall|trinket tray)\b/i,
-      'bags': /\b(bags?|wallets?|laptop|clutch|tote|sleeve|sling|purse)\b/i,
-      'planters': /\b(planters?|test tube|testtube|pot|pots|succulent)\b/i,
-      'trays': /\b(trays?|serving tray|decor tray)\b/i,
-      'bottles': /\b(bottles?|water bottle)\b/i,
-      'frames': /\b(photo frames?|picture frames?|cork frame)\b/i,  // narrowed to NOT match "wall frame"
-      'calendar': /\b(calend[ae]rs?|table calendar|wall calendar|desk calendar)\b/i,
-      'mousepad': /\b(mousepad|mouse pad|mousepads)\b/i,
-      'candles': /\b(candle|candles|tea ?light|tea ?lights|tealights?|candle holder)\b/i,
-      'travel': /\b(passport holder|card holder|wallet|travel organizer|card stacker)\b/i,
-      'yoga': /\b(yoga|yoga mat|yoga brick|yoga roller|yoga ball)\b/i,
-      'gift_boxes': /\b(gift box|gift boxes|wine box)\b/i,
-      'trivets': /\b(trivet|trivets|hot ?plate)\b/i,
-      'tablemats': /\b(tablemat|tablemats|placemat|placemats)\b/i,
-      'clocks': /\b(clock|clocks|table clock|wall clock)\b/i,
-      'games': /\b(tic tac toe|fun game|cork game)\b/i,
-      // — Categories WITHOUT MongoDB images (route to safety net) —
-      'mirrors': /\b(mirror|mirrors|wall mirror|wall mirrors)\b/i,
-      'wall_frames': /\b(wall frame|wall frames|cork wall frame)\b/i,  // separate from photo frames
-      'caddies': /\b(caddy|caddies|bar caddy)\b/i,
-      'menu_folder': /\b(menu folder|bill folder|menu cover)\b/i,
-      'lamps': /\b(lamp|lamps|hanging light|pendant)\b/i,
-      'stools': /\b(stool|stools|cork stool)\b/i,
-      'napkin_rings': /\b(napkin ring|napkin rings)\b/i,
-      'tissue': /\b(tissue box|tissue holder|tissue)\b/i,
-      'room_tags': /\b(room tag|room tags|door tag)\b/i,
-      'scanners': /\b(menu scanner|qr scanner)\b/i,
-      'trophies': /\b(trophy|trophies|award)\b/i
-    };
-
-    let catalogCategory = null;
-    for (const [category, pattern] of Object.entries(catalogPatterns)) {
-      // v53.27 CRITICAL FIX: ALWAYS require trigger words to prevent unsolicited image sending
-      // Customer MUST explicitly ask for images using "show", "send", "share", "pictures", "images"
-      // This prevents bot from sending images when customer only asks "Do you have planters?"
-
-      if (pattern.test(userMessage) && hasTrigger) {
-        catalogCategory = category;
-        break;
-      }
-    }
+    // v60 — Single source of truth for category routing lives in
+    // pricing/image-routing.js (CATEGORY_DEFINITIONS). One place to update
+    // when adding/changing categories or marking new categories as having
+    // images available.
+    const resolvedCategory = hasTrigger ? resolveImageCategory(userMessage) : null;
+    const catalogCategory = resolvedCategory ? resolvedCategory.code : null;
 
     if (catalogCategory) {
       // v53.24 FIX: When customer explicitly asks for images, clear sent tracker
@@ -1038,8 +995,15 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
       // sentImagesTracker is managed per-URL via add/has/clear — no initialization needed
 
+      // v60: use the routing module's mongoSearch term for MongoDB query.
+      // For 'all' category, pass 'all' string (triggers the variety code path
+      // in findProductsByCategory). Otherwise use the specific search term.
+      const mongoQueryTerm = (resolvedCategory && resolvedCategory.code === 'all')
+        ? 'all'
+        : (resolvedCategory ? resolvedCategory.mongoSearch : catalogCategory);
+
       // First try: Get new products excluding already sent
-      let products = await findProductsByCategory(catalogCategory, 10, from, true);
+      let products = await findProductsByCategory(mongoQueryTerm, 10, from, true);
 
       // v53.15 NEW: Apply size filter if specified
       if (sizeFilter && products.length > 0) {
@@ -1062,7 +1026,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         // If size filter eliminated all products, try without excludeSent flag
         if (products.length === 0) {
           console.log(`⚠️ No products match size "${sizeFilter}" in unsent products, checking all products...`);
-          const allProducts = await findProductsByCategory(catalogCategory, 10, from, false);
+          const allProducts = await findProductsByCategory(mongoQueryTerm, 10, from, false);
           products = allProducts.filter(p => {
             const nameLower = p.name.toLowerCase();
             const tagsLower = (p.tags || '').toLowerCase();
@@ -1082,30 +1046,16 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
           return; // Exit early
         }
 
-        // v60 CRITICAL: If category has NO MongoDB images, exit cleanly without
-        // sending a wrong image. The bot's text response stays accurate (uses
-        // verified-quote engine for pricing) but no image goes out.
-        // These categories exist in data/pricing.json but have no Product collection
-        // images yet — adding images later auto-removes them from this list.
-        const nonExistentCategories = [
-          'mousepad', 'candles',           // legacy
-          'mirrors',                        // CORK MIRROR (catalogue) — no MongoDB images
-          'wall_frames',                    // CORK WALL FRAME — only in catalogue
-          'caddies',                        // CORK BAR CADDIES — only in catalogue
-          'menu_folder',                    // MENU & BILL FOLDER — no images
-          'lamps',                          // CORK LAMPS / hanging lights
-          'stools',                         // CORK STOOL
-          'napkin_rings',                   // CORK NAPKIN RING
-          'tissue',                         // CORK TISSUE BOX/HOLDER
-          'room_tags',                      // CORK ROOM TAGS
-          'scanners',                       // CORK MENU SCANNER
-          'trophies'                        // Trophy catalog uses PDF, not WhatsApp images
-        ];
-        if (nonExistentCategories.includes(catalogCategory)) {
-          console.log(`⚠️ Category '${catalogCategory}' has no MongoDB images — skipping image send`);
-          // Send a polite "no image" fallback so customer knows
+        // v60 — image availability flag comes from the centralized routing
+        // module (pricing/image-routing.js). If the resolved category has
+        // hasImages: false, we send the category-specific fallback message
+        // and exit cleanly — no wrong-image risk.
+        if (resolvedCategory && !resolvedCategory.hasImages) {
+          console.log(`⚠️ Category '${catalogCategory}' has no MongoDB images — sending fallback message`);
+          const fallback = resolvedCategory.fallbackMessage ||
+            "I don't have product photos handy for those right now — let me check with our team and share them shortly. The prices I quoted are accurate.";
           try {
-            await sendWhatsAppMessage(from, "I don't have product photos handy for those right now — let me check with our team and share them shortly. In the meantime, the prices I quoted are accurate.").catch(() => {});
+            await sendWhatsAppMessage(from, fallback).catch(() => {});
           } catch (e) { /* non-blocking */ }
           return;
         }
