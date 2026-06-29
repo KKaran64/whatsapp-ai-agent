@@ -1505,13 +1505,23 @@ function bufferMessage(from, payload, processFn) {
     return;
   }
 
-  // Reset timer — wait for more messages before processing
+  // v60.1: If a previous batch is still processing for this phone (lock held),
+  // extend the debounce timer instead of firing on schedule. This prevents
+  // the "image takes 50s; 4 texts arrive; 4 separate replies fire" race.
+  // The timer will re-check every DEBOUNCE_MS until the lock is free, then fire.
   if (entry.timerId) clearTimeout(entry.timerId);
-  entry.timerId = setTimeout(() => {
+  const fireWhenIdle = () => {
+    if (phoneProcessingLock.has(from)) {
+      // Still processing — defer another DEBOUNCE_MS and re-check
+      console.log(`⏸ Debouncer: ${from} has lock held, deferring batch flush`);
+      entry.timerId = setTimeout(fireWhenIdle, DEBOUNCE_MS);
+      return;
+    }
     const batch = entry.messages.slice();
     messageBuffer.delete(from);
     processFn(batch).catch(err => console.error('❌ Batch processing failed:', err.message));
-  }, DEBOUNCE_MS);
+  };
+  entry.timerId = setTimeout(fireWhenIdle, DEBOUNCE_MS);
 }
 
 // Combine multiple message texts into one input for the AI
