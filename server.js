@@ -1871,8 +1871,35 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                     context,
                     SYSTEM_PROMPT
                   );
-                  response = sanitizeBotReply(result.response); // v59: round decimals before send/store
-                  await storeCustomerMessage(from, `[IMAGE: ${combinedMessageBody || 'no caption'}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+
+                  // v60: bridge vision → normal text flow when a product is identified
+                  // with confidence. This way RULE F (customer type), the verified
+                  // quote engine, sanitizer, and Bigin integration all run normally —
+                  // instead of using the vision handler's pre-built response that
+                  // skips those layers.
+                  const finalResult = result.analysis?.finalResult;
+                  const visionProductName = finalResult?.product?.name;
+                  const visionCategory = finalResult?.category;
+                  const visionConfidence = finalResult?.confidence || 0;
+                  const customerCaption = (combinedMessageBody || '').trim();
+
+                  if (visionConfidence >= 0.6 && (visionProductName || visionCategory)) {
+                    // Confident identification — feed into text pipeline as a synthetic
+                    // message that includes (a) what the bot recognized in the photo,
+                    // and (b) anything the customer also typed as caption.
+                    const productLabel = visionProductName || visionCategory;
+                    const virtualText = customerCaption
+                      ? `${customerCaption} [photo shows a ${productLabel}]`
+                      : `I'm interested in ${productLabel} — sent a photo for reference`;
+                    console.log(`📸 Vision identified '${productLabel}' (${(visionConfidence * 100).toFixed(0)}%) → routing through text pipeline as: "${virtualText.substring(0, 80)}"`);
+                    response = await processWithClaudeAgent(virtualText, from, context);
+                  } else {
+                    // Low confidence — fall back to vision handler's own response
+                    console.log(`📸 Vision low confidence (${(visionConfidence * 100).toFixed(0)}%) — using vision handler's built-in response`);
+                    response = sanitizeBotReply(result.response);
+                  }
+
+                  await storeCustomerMessage(from, `[IMAGE: ${customerCaption || 'no caption'}${visionProductName ? ' — identified as ' + visionProductName : ''}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
                 }
                 // v60: Handle VOICE messages — transcribe with Groq Whisper, then process as normal text
                 else if (batchMessageType === 'audio' && batchMediaId) {
