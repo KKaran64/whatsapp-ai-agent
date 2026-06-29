@@ -18,6 +18,8 @@ const { extractIntent: extractPricingIntent } = require('./pricing/intent-extrac
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // v60 — voice message transcription via Groq Whisper
 const { handleVoiceMessage } = require('./audio-handler');
+// v60 — catalog-aware vision identification via Gemini multimodal
+const { identifyProductFromImage } = require('./pricing/vision-identifier');
 const Product = require('./models/Product');
 
 // Import AI Provider Manager (Multi-provider with fallbacks)
@@ -1861,54 +1863,77 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                 }
 
                 let response;
-                // Handle IMAGE messages with vision AI
+                // v60 — Handle IMAGE messages with catalog-aware Gemini Vision.
+                // PRIMARY identifier: Gemini 2.0 Flash (multimodal) with catalog
+                //   knowledge — knows exactly which products we sell and refuses
+                //   to misclassify (e.g. won't call a keychain "Casa Planter").
+                // FALLBACK: legacy Smart Matcher if Gemini Vision is unavailable.
                 if (batchMessageType === 'image' && batchMediaId) {
-                  console.log('📸 Processing image message with vision AI...');
-                  const result = await visionHandler.handleImageMessage(
-                    batchMediaId,
-                    combinedMessageBody || 'What is this?',
-                    from,
-                    context,
-                    SYSTEM_PROMPT
-                  );
-
-                  // v60: bridge vision → normal text flow when a product is identified
-                  // with HIGH confidence. Uses tentative language so customer can
-                  // correct a misidentification instead of being locked into the wrong
-                  // product (e.g. keychain misidentified as Casa Planter).
-                  const finalResult = result.analysis?.finalResult;
-                  const visionProductName = finalResult?.product?.name;
-                  const visionCategory = finalResult?.category;
-                  const visionConfidence = finalResult?.confidence || 0;
+                  console.log('📸 Processing image with catalog-aware Gemini Vision...');
                   const customerCaption = (combinedMessageBody || '').trim();
 
-                  if (visionConfidence >= 0.75 && (visionProductName || visionCategory)) {
-                    // High-confidence identification — feed into text pipeline as
-                    // tentative synthetic message. The "looks like" / "could you
-                    // confirm" phrasing keeps the LLM open to customer correction.
-                    const productLabel = visionProductName || visionCategory;
+                  // Download image (reusing vision handler's download method)
+                  let imageData = null;
+                  try {
+                    imageData = await visionHandler.downloadImage(batchMediaId);
+                  } catch (err) {
+                    console.warn('⚠️ Image download failed:', err.message);
+                  }
+
+                  let identification = null;
+                  if (imageData?.base64) {
+                    try {
+                      const imageBuffer = Buffer.from(imageData.base64, 'base64');
+                      identification = await identifyProductFromImage(imageBuffer, imageData.mimeType || 'image/jpeg');
+                      if (identification) {
+                        console.log(`📸 Gemini Vision: "${identification.visibleObject}" (cork=${identification.isCorkProduct}, conf=${(identification.confidence * 100).toFixed(0)}%, category=${identification.matchedCategory || 'none'}, sku=${identification.matchedProductName || 'none'})`);
+                      }
+                    } catch (err) {
+                      console.warn('⚠️ Gemini Vision failed, falling back to Smart Matcher:', err.message);
+                    }
+                  }
+
+                  // ─── Decide what to do based on identification ───
+                  if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
+                    // HIGH confidence cork product — route through text pipeline
+                    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
                     const virtualText = customerCaption
-                      ? `${customerCaption} (Note: customer sent a photo. From the image it looks like a ${productLabel} — please confirm with the customer before quoting.)`
-                      : `Customer sent a photo. From the image it looks like a ${productLabel}. Ask the customer to confirm if that's what they want before quoting, and ask about quantity / customer type per usual.`;
-                    console.log(`📸 Vision identified '${productLabel}' (${(visionConfidence * 100).toFixed(0)}%, ≥0.75) → routing through text pipeline tentatively`);
+                      ? `${customerCaption} (Customer also sent a photo — Gemini Vision identified it as: ${productLabel}, confidence ${(identification.confidence * 100).toFixed(0)}%. Confirm with customer before quoting.)`
+                      : `Customer sent a photo of what appears to be a ${productLabel} (confidence ${(identification.confidence * 100).toFixed(0)}%). Confirm this is what they want, then ask quantity + customer type per RULE F.`;
+                    console.log(`📸 → routing through text pipeline (high confidence cork match)`);
                     response = await processWithClaudeAgent(virtualText, from, context);
-                  } else if (visionConfidence >= 0.5 && (visionProductName || visionCategory)) {
-                    // Borderline confidence (0.5-0.75) — ask the customer to confirm
-                    // before doing anything else. No quote attempt yet.
-                    const productLabel = visionProductName || visionCategory;
-                    const askMsg = customerCaption
-                      ? `Thanks for the photo! It looks like this could be a ${productLabel} — is that right? Once you confirm, I can share the pricing.`
-                      : `Thanks for the photo! It looks like this could be a ${productLabel} — could you confirm what you're looking for?`;
-                    console.log(`📸 Vision borderline (${(visionConfidence * 100).toFixed(0)}%) — asking customer to confirm`);
-                    response = askMsg;
+                  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.5) {
+                    // BORDERLINE cork product — ask for confirmation
+                    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
+                    response = customerCaption
+                      ? `Thanks for the photo! From what I can see this looks like a ${productLabel} — could you confirm? Once you do, I'll share the pricing.`
+                      : `Thanks for the photo! This looks like it could be a ${productLabel}. Could you confirm and let me know how many pieces you need?`;
+                    console.log(`📸 → asking customer to confirm (borderline cork match)`);
+                  } else if (identification && identification.isCorkProduct === false) {
+                    // Confidently NOT a cork product (e.g. keychain, leather wallet)
+                    response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
+                    console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
+                  } else if (identification && identification.confidence < 0.5) {
+                    // Unclear image — ask for clarification
+                    response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;
+                    console.log(`📸 → asking for clarification (low confidence: ${(identification.confidence * 100).toFixed(0)}%)`);
                   } else {
-                    // Low confidence (<0.5) — fall back to vision handler's own response
-                    // ("can you tell me what you're looking for?")
-                    console.log(`📸 Vision low confidence (${(visionConfidence * 100).toFixed(0)}%) — using vision handler's built-in response`);
+                    // Gemini Vision unavailable — fall back to legacy Smart Matcher
+                    console.log(`📸 → fallback to legacy Smart Image Matcher`);
+                    const result = await visionHandler.handleImageMessage(
+                      batchMediaId,
+                      combinedMessageBody || 'What is this?',
+                      from,
+                      context,
+                      SYSTEM_PROMPT
+                    );
                     response = sanitizeBotReply(result.response);
                   }
 
-                  await storeCustomerMessage(from, `[IMAGE: ${customerCaption || 'no caption'}${visionProductName ? ' — vision identified: ' + visionProductName + ' (conf=' + (visionConfidence * 100).toFixed(0) + '%)' : ''}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+                  const logTag = identification
+                    ? `vision: "${identification.visibleObject}" cork=${identification.isCorkProduct} conf=${(identification.confidence * 100).toFixed(0)}%`
+                    : 'vision: unavailable';
+                  await storeCustomerMessage(from, `[IMAGE: ${customerCaption || 'no caption'} — ${logTag}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
                 }
                 // v60: Handle VOICE messages — transcribe with Groq Whisper, then process as normal text
                 else if (batchMessageType === 'audio' && batchMediaId) {
