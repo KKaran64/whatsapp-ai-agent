@@ -2024,12 +2024,24 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
             }); // end withPhoneLock
           };
 
-          // Route the message: images + audio process immediately (need transcription/
-          // vision before they can be batched with text). Text gets debounced (8s) so
-          // rapid follow-up messages get batched into one AI call.
+          // v60.1: Route the message:
+          //  - Images/audio: drain any pending text buffer FIRST (combine
+          //    text + media into one batch), then process immediately.
+          //  - Text-only: debounce (8s) so rapid follow-ups get batched.
+          // Note: withPhoneLock already serializes processing per-phone, so
+          // subsequent texts that arrive WHILE this image processes will
+          // queue up behind it (waiting for the lock) and get batched then.
           const payload = { messageBody, messageId, messageType, mediaId };
           if (messageType === 'image' || messageType === 'audio') {
-            await processBatch([payload]);
+            const pendingEntry = messageBuffer.get(from);
+            let combinedBatch = [payload];
+            if (pendingEntry && pendingEntry.messages.length > 0) {
+              if (pendingEntry.timerId) clearTimeout(pendingEntry.timerId);
+              combinedBatch = [...pendingEntry.messages, payload];
+              messageBuffer.delete(from);
+              console.log(`📦 Drained ${pendingEntry.messages.length} buffered text msg(s) into image/audio batch`);
+            }
+            await processBatch(combinedBatch);
           } else {
             bufferMessage(from, payload, processBatch);
           }
