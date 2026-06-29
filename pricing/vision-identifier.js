@@ -19,7 +19,12 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const GEMINI_VISION_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+// v60.1: Switched from gemini-2.0-flash (no free tier — 429 RESOURCE_EXHAUSTED)
+// to gemini-2.5-flash, which has a working free tier and better vision accuracy.
+// Verified by hitting both models with a test image — 2.0-flash returns 429,
+// 2.5-flash returns valid JSON.
+const GEMINI_VISION_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const FALLBACK_VISION_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
 const PRICING_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
 
 function collectGeminiKeys() {
@@ -91,9 +96,9 @@ CRITICAL — be honest about uncertainty:
 - If image shows a non-cork item (leather wallet, plastic mug), is_cork_product: false
 - Never guess a specific catalog SKU unless you can clearly see distinctive features matching it`;
 
-async function callGeminiVision(imageBase64, mimeType, prompt, apiKey) {
+async function callGeminiVision(imageBase64, mimeType, prompt, apiKey, useUrl = GEMINI_VISION_URL) {
   const response = await axios.post(
-    `${GEMINI_VISION_URL}?key=${apiKey}`,
+    `${useUrl}?key=${apiKey}`,
     {
       contents: [{
         parts: [
@@ -107,7 +112,7 @@ async function callGeminiVision(imageBase64, mimeType, prompt, apiKey) {
         responseMimeType: 'application/json'
       }
     },
-    { timeout: 12000 }
+    { timeout: 15000 }
   );
   const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   if (!text) throw new Error('Empty response from Gemini Vision');
@@ -137,11 +142,17 @@ async function identifyProductFromImage(imageBuffer, mimeType = 'image/jpeg') {
   const prompt = IDENTIFICATION_PROMPT.replace('{{CATALOG_SUMMARY}}', getCatalogSummary());
   const imageBase64 = imageBuffer.toString('base64');
 
+  // Try each key on the primary model first; if a key is rate-limited (429),
+  // fall through to the next key. If ALL keys fail on the primary model,
+  // try gemini-2.5-flash-lite as a secondary model with the first key.
   const errors = [];
-  for (let i = 0; i < Math.min(keys.length, 5); i++) {
+  const maxAttempts = Math.min(keys.length, 9);
+
+  // Phase 1: try gemini-2.5-flash with each available key
+  for (let i = 0; i < maxAttempts; i++) {
     try {
-      const result = await callGeminiVision(imageBase64, mimeType, prompt, keys[i]);
-      // Normalize the response — Gemini may use snake_case or camelCase
+      const result = await callGeminiVision(imageBase64, mimeType, prompt, keys[i], GEMINI_VISION_URL);
+      console.log(`✅ Gemini Vision (2.5-flash) succeeded on key #${i + 1}`);
       return {
         visibleObject: result.visible_object || result.visibleObject || '',
         isCorkProduct: !!(result.is_cork_product ?? result.isCorkProduct),
@@ -151,11 +162,36 @@ async function identifyProductFromImage(imageBuffer, mimeType = 'image/jpeg') {
         reasoning: result.reasoning || ''
       };
     } catch (err) {
+      const status = err.response?.status;
       const msg = err.response?.data?.error?.message || err.message;
-      errors.push(`key#${i + 1}: ${msg.substring(0, 80)}`);
+      errors.push(`key#${i + 1} (2.5-flash, ${status || 'no-status'}): ${msg.substring(0, 100)}`);
     }
   }
-  console.warn(`⚠️ Gemini Vision failed across keys: ${errors.join(' | ')}`);
+
+  // Phase 2: ALL primary attempts failed — try the lighter model
+  console.warn(`⚠️ All ${maxAttempts} keys failed on 2.5-flash — trying 2.5-flash-lite as fallback`);
+  for (let i = 0; i < Math.min(keys.length, 3); i++) {
+    try {
+      const result = await callGeminiVision(imageBase64, mimeType, prompt, keys[i], FALLBACK_VISION_URL);
+      console.log(`✅ Gemini Vision (2.5-flash-lite fallback) succeeded on key #${i + 1}`);
+      return {
+        visibleObject: result.visible_object || result.visibleObject || '',
+        isCorkProduct: !!(result.is_cork_product ?? result.isCorkProduct),
+        matchedCategory: result.matched_category || result.matchedCategory || null,
+        matchedProductName: result.matched_product_name || result.matchedProductName || null,
+        confidence: Number(result.confidence) || 0,
+        reasoning: result.reasoning || ''
+      };
+    } catch (err) {
+      const status = err.response?.status;
+      const msg = err.response?.data?.error?.message || err.message;
+      errors.push(`key#${i + 1} (2.5-flash-lite, ${status || 'no-status'}): ${msg.substring(0, 100)}`);
+    }
+  }
+
+  // EVERYTHING failed — log detailed errors so the operator knows why
+  console.error(`❌ Gemini Vision ALL ATTEMPTS FAILED:`);
+  errors.forEach(e => console.error(`   ${e}`));
   return null;
 }
 
