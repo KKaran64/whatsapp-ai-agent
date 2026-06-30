@@ -2783,15 +2783,20 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     // sees. The LLM's job becomes "present this exact quote conversationally",
     // not "compute the price". Eliminates the whole class of hallucination bugs.
     let augmentedMessage = contextAwareMessage;
+    // Declared OUTSIDE the engine try-block so post-LLM code can reference
+    // them (state enforcer + StateLog telemetry). Previously these were
+    // declared inside, causing a ReferenceError at line 2892 when the
+    // try-block scope ended.
+    let intent = null;
+    let derivedState = null;
     try {
-      const intent = extractPricingIntent(sanitizedMessage, context);
+      intent = extractPricingIntent(sanitizedMessage, context);
 
       // v61 Phase B.1: derive conversation state and inject the state guard
       // into the LLM context. Read-only guidance — Phase B.2 enforces below.
       // We capture stateResult here so Phase B.2 (post-LLM enforcement) can
       // re-use the same derivation. State doesn't change between pre- and
       // post-LLM; it's derived from facts known before the LLM call.
-      let derivedState = null;
       try {
         const fullContext = [...context, { role: 'customer', content: sanitizedMessage }];
         derivedState = deriveConversationState(fullContext, intent);
