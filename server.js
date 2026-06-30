@@ -216,6 +216,10 @@ function sanitizeBotReply(text) {
   // a price change (e.g. "since you're a reseller, I'll apply the slab").
   // Surgical regex-based stripping so the surrounding text stays intact.
   const disclosurePatterns = [
+    // Parenthetical "(MRP ₹717)" — strip entirely to hide MRP from customer
+    /\s*\(\s*MRP\s+₹\s*[\d,]+(?:\.\d+)?\s*\)/gi,
+    // Inline " MRP ₹717" (no parens) — strip just the MRP phrase
+    /\s+MRP\s+₹\s*[\d,]+(?:\.\d+)?/gi,
     // Parenthetical "(30% off MRP ₹X)" / "(12.5% off)" / "(off MRP)"
     /\s*\(\s*\d+(?:\.\d+)?\s*%\s*off(?:\s*MRP)?(?:\s*₹\s*[\d,]+(?:\.\d+)?)?\s*\)/gi,
     // "I'll apply the reseller/end consumer discount slab" (full sentence variant)

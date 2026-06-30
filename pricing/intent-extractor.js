@@ -164,6 +164,57 @@ function detectProductQuery(text) {
   const skuMatch = text.match(/\b(9C[-\d][A-Z0-9-]{2,10})\b/i);
   if (skuMatch) return skuMatch[1];
 
+  // v60.2: Specific catalog SKU names that customers commonly say in full.
+  // These multi-word names must be preserved entirely so the quote engine
+  // can find an exact catalog match — not stripped down to just "organizer"
+  // or "planter" (which would return multiple matches).
+  // Check BEFORE generic noun matching.
+  const NAMED_PRODUCTS = [
+    // Diaries
+    'ecodesk diary a5', 'ecodesk diary a6', 'executive diary', 'ceo diary',
+    'ecoelite diary', 'organizer cum diary', 'pro organizer linea',
+    'spiral organizer', 'terra organizer',
+    // Planters
+    'casa planter', 'fridge magnet planter', 'ember planter', 'natural planter',
+    'donut planter', 'cork belly planter', 'pitcher bloom planter', 'oval oasis planter',
+    'cylindrical planter', 'rectangular test tube planter', 'tri edge planter',
+    'loop planter', 'round test tube planter', 'tapered test tube planter',
+    'brick test tube planter', 'box print planter', 'bohemian print planter',
+    'diamond planter', 'feather planter', 'olive planter', 'chococchip planter',
+    'abstract planter', 'striped planter', 'aqua planter', 'flat planter',
+    'triplanter', 'four bloom planter', 'three bloom planter',
+    // Bags
+    'nomad vault', 'pro laptop bag', 'jet case', 'neo hues bag', 'terra bag',
+    'ocean mist bag', 'laptop bag granco', 'laptop bag linea', 'laptop bag premia',
+    'printed laptop bag', 'conference folder',
+    // Trays
+    'olive tray', 'striped tray', 'red assiago tray', 'abstract tray', 'natural tray',
+    'small round tray', 'shot glasses tray',
+    // Holders, etc
+    'pen station', 'pen holder', 'round pen holder', 'cork belly tea light holder',
+    'cork bark tea light holder', 'cork square 4-in-1 tea light holder',
+    // Coasters
+    '5 mm round coaster', '5 mm square coaster', 'bread coaster', 'cork belly coaster',
+    'cork earthy coaster', 'cork coffee coaster', 'leaf shape coaster',
+    'box uv printed coaster', 'diamond uv printed coaster',
+    // Caddies (numeric variants matched by modifier branch below)
+    'bar caddy', 'caddy',
+    // Other
+    'cork desk organizer', 'cork ipad desk organizer', 'cork pro desk organizer',
+    'cork linear desk organizer', 'cork terra desk organizer tray',
+    'cork signature desk organizer', 'cork desktop organizer tray',
+    'cork stationery organizer', 'cork elite desk organizer tray',
+    'compact pen & mobile holder', 'pen & card holder'
+  ];
+  // Sort longest first so multi-word names beat shorter ones
+  const sortedNamed = NAMED_PRODUCTS.sort((a, b) => b.length - a.length);
+  for (const name of sortedNamed) {
+    const namePattern = new RegExp('\\b' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + '\\b', 'i');
+    if (namePattern.test(lower)) {
+      return name;
+    }
+  }
+
   // Product + numeric modifier — "caddy no 17", "trophy 5", "diary a5".
   // Only nouns that customers typically pair with a model number/code.
   const modifierMatch = lower.match(/\b(caddy|caddies|diary|diaries|trophy|trophies)\b\s+(?:no\.?\s*)?([a-z]?\d{1,4})\b/i);
