@@ -14,6 +14,8 @@ const Conversation = require('./models/Conversation');
 // v60 — Path B deterministic pricing
 const { computeQuote, formatQuoteForCustomer } = require('./pricing/quote-engine');
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
+// v61 Phase B.1 — conversation state machine (read-only guard layer)
+const { deriveState: deriveConversationState } = require('./pricing/conversation-state');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // v60 — voice message transcription via Groq Whisper
@@ -2771,6 +2773,24 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     let augmentedMessage = contextAwareMessage;
     try {
       const intent = extractPricingIntent(sanitizedMessage, context);
+
+      // v61 Phase B.1: derive conversation state and inject the state guard
+      // into the LLM context. This is READ-ONLY — the LLM still drives the
+      // reply, but it sees explicit guidance for the current state. Phase B.2
+      // will add hard enforcement (block disallowed actions).
+      try {
+        const fullContext = [...context, { role: 'customer', content: sanitizedMessage }];
+        const stateResult = deriveConversationState(fullContext, intent);
+        if (stateResult && stateResult.code !== 'GREETING' && stateResult.code !== 'POST_SALE') {
+          // Only inject for non-trivial states (greeting/post-sale don't need guidance)
+          const stateBlock = `[CONVERSATION STATE: ${stateResult.code}]\nGuidance: ${stateResult.guard}`;
+          augmentedMessage = `${augmentedMessage}\n\n${stateBlock}`;
+          console.log(`🎯 State: ${stateResult.code} — ${stateResult.reason}`);
+        }
+      } catch (stateErr) {
+        console.warn('⚠️ State derivation failed (continuing without):', stateErr.message);
+      }
+
       if (intent) {
         if (intent.productQuery && intent.quantity && intent.customerType) {
           const quote = computeQuote(intent);
