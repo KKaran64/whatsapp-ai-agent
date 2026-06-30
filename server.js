@@ -11,6 +11,7 @@ const Sentry = require('@sentry/node');
 // Import models
 const Customer = require('./models/Customer');
 const Conversation = require('./models/Conversation');
+const StateLog = require('./models/StateLog');
 // v60 — Path B deterministic pricing
 const { computeQuote, formatQuoteForCustomer } = require('./pricing/quote-engine');
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
@@ -2611,12 +2612,23 @@ async function syncBiginFromConversation(phone, customerMsg, botResponse, contex
     { role: 'agent', content: botResponse, timestamp: Date.now() }
   ];
 
-  // Check for SALE first (highest priority — customer confirmed payment done)
-  const outcome = detectOutcome(allMessages);
-  const isSale = outcome.outcome === 'sale' && outcome.confidence >= 0.8;
+  // v61 Phase B.3 — PRIMARY trigger source is the conversation state machine.
+  // State transitions are derived from accumulated facts, more reliable than
+  // keyword detection alone. Keyword detection is kept as a redundant safety net.
+  let stateBasedTrigger = null;
+  try {
+    const stateForBigin = deriveConversationState(allMessages, null);
+    if (stateForBigin?.code === 'POST_SALE') {
+      stateBasedTrigger = 'sale';
+    } else if (stateForBigin?.code === 'COLLECTING_INVOICE_INFO' || stateForBigin?.code === 'AWAITING_PAYMENT') {
+      stateBasedTrigger = 'pi_sent';
+    }
+  } catch (e) { /* fall through to keyword detection */ }
 
-  // Detect "intent to buy" signals from CUSTOMER messages (more reliable than bot output)
-  // Includes: invoice requests, payment-method asks, GSTIN sharing, company-name with intent
+  // Legacy keyword-based detection (kept as safety net)
+  const outcome = detectOutcome(allMessages);
+  const isSaleByKeyword = outcome.outcome === 'sale' && outcome.confidence >= 0.8;
+
   const customerLatest = (customerMsg || '').toLowerCase();
   const recentCustomerOnly = allMessages
     .filter(m => m.role === 'customer')
@@ -2626,23 +2638,21 @@ async function syncBiginFromConversation(phone, customerMsg, botResponse, contex
     .toLowerCase();
 
   const INTENT_KEYWORDS = /\b(send (the )?(invoice|pi|proforma|bill|quote)|share (the )?(payment|bank|account|invoice|pi) details|how (do|to) (i|we) pay|payment method|send (the )?qr|share (the )?qr|bank details|account details)\b/i;
-  const GSTIN_PATTERN = /\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d]Z[A-Z\d]\b/i; // standard GSTIN format
+  const GSTIN_PATTERN = /\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d]Z[A-Z\d]\b/i;
   const hasIntent = INTENT_KEYWORDS.test(customerLatest) || INTENT_KEYWORDS.test(recentCustomerOnly);
   const hasGSTIN = GSTIN_PATTERN.test(recentCustomerOnly);
-
-  // Secondary: bot just sent the bank details (means PI moment has occurred)
   const PI_MARKERS = /(canara bank|cnrb0007617|120032289098|share the payment screenshot)/i;
   const botSentPI = PI_MARKERS.test(botResponse);
+  const isPISentByKeyword = hasIntent || hasGSTIN || botSentPI;
 
-  const isPISent = hasIntent || hasGSTIN || botSentPI;
+  // Final decision: state machine wins if it has a verdict; otherwise fall to keyword
+  const isSale = stateBasedTrigger === 'sale' || isSaleByKeyword;
+  const isPISent = stateBasedTrigger === 'pi_sent' || isPISentByKeyword;
 
-  // Skip if neither event happened
   if (!isSale && !isPISent) return;
 
   const eventType = isSale ? 'sale' : 'pi_sent';
-  if (isPISent) {
-    console.log(`📊 Bigin trigger reason: ${hasIntent ? 'customer-intent-keyword ' : ''}${hasGSTIN ? 'customer-shared-GSTIN ' : ''}${botSentPI ? 'bot-sent-bank-details' : ''}`);
-  }
+  console.log(`📊 Bigin trigger reason: ${stateBasedTrigger ? 'state-machine[' + stateBasedTrigger + ']' : ''}${!stateBasedTrigger && hasIntent ? 'customer-intent-keyword ' : ''}${!stateBasedTrigger && hasGSTIN ? 'customer-shared-GSTIN ' : ''}${!stateBasedTrigger && botSentPI ? 'bot-sent-bank-details ' : ''}${!stateBasedTrigger && isSaleByKeyword ? 'outcome-detector-sale' : ''}`.trim());
 
   // Extract products mentioned in last 10 customer messages
   const recentCustomerText = allMessages
@@ -2876,6 +2886,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     // the enforcer either strips the offending phrase or substitutes a
     // state-appropriate canned reply.
     let cleaned = sanitized;
+    let enforcerAction = 'no_action';
+    let enforcerReason = null;
+    let enforcerViolations = [];
     if (derivedState) {
       const enforcement = enforceState(derivedState, sanitized);
       if (!enforcement.allowed) {
@@ -2883,13 +2896,47 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
         console.warn(`   Original: "${enforcement.originalReply?.substring(0, 100)}"`);
         console.warn(`   Replaced: "${enforcement.reply.substring(0, 100)}"`);
         cleaned = enforcement.reply;
+        enforcerAction = 'override';
+        enforcerReason = enforcement.reason;
+        enforcerViolations = enforcement.reason ? enforcement.reason.split(', ') : [];
       } else if (enforcement.stripped) {
         console.warn(`🚦 State enforcer STRIPPED [${derivedState.code}]: ${enforcement.reason}`);
         cleaned = enforcement.reply;
+        enforcerAction = 'strip';
+        enforcerReason = enforcement.reason;
+      } else {
+        enforcerAction = 'pass';
       }
     }
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${cleaned.substring(0, 100)}...`);
+
+    // v61 Phase B.3 — telemetry: log state + enforcer action to StateLog
+    // (fire-and-forget so logging never blocks the customer reply)
+    if (derivedState) {
+      setImmediate(async () => {
+        try {
+          await StateLog.create({
+            customerPhone: sanitizedPhone,
+            stateCode: derivedState.code,
+            stateReason: derivedState.reason,
+            enforcerAction,
+            enforcerReason,
+            enforcerViolations,
+            productQuery: intent?.productQuery || null,
+            quantity: intent?.quantity || null,
+            customerType: intent?.customerType || null,
+            hadVerifiedQuote: augmentedMessage.includes('[VERIFIED QUOTE'),
+            customerMessage: sanitizedMessage.substring(0, 100),
+            llmReplyBefore: result.response.substring(0, 150),
+            finalReply: cleaned.substring(0, 150)
+          });
+        } catch (err) {
+          // Logging failure should NEVER affect the reply path
+          console.warn('⚠️ StateLog write failed (non-blocking):', err.message);
+        }
+      });
+    }
 
     // v59 — RULE G escalation tagging (fire-and-forget so it never blocks reply)
     if (isEscalation(cleaned)) {
@@ -3293,6 +3340,218 @@ process.on('SIGTERM', async () => {
   await mongoose.connection.close();
 
   process.exit(0);
+});
+
+// v61 Phase B.3 — State Dashboard
+// JSON: GET /admin/state-dashboard.json  (consumed by HTML page or scripts)
+// HTML: GET /admin/state-dashboard       (human-friendly view)
+app.get('/admin/state-dashboard.json', monitoringLimiter, async (req, res) => {
+  try {
+    const sinceHours = parseInt(req.query.hours, 10) || 24;
+    const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
+
+    // Distribution: how many conversations in each state in the lookback window
+    const stateCounts = await StateLog.aggregate([
+      { $match: { timestamp: { $gte: since } } },
+      { $group: { _id: '$stateCode', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Enforcer activity: how often each action fires
+    const enforcerCounts = await StateLog.aggregate([
+      { $match: { timestamp: { $gte: since } } },
+      { $group: { _id: '$enforcerAction', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Most-fired violations (when enforcer overrides/strips)
+    const violationCounts = await StateLog.aggregate([
+      { $match: { timestamp: { $gte: since }, enforcerAction: { $in: ['override', 'strip'] } } },
+      { $unwind: '$enforcerViolations' },
+      { $group: { _id: '$enforcerViolations', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 }
+    ]);
+
+    // Recent unique conversations (last 20 phones to interact)
+    const recentPhones = await StateLog.aggregate([
+      { $match: { timestamp: { $gte: since } } },
+      { $sort: { timestamp: -1 } },
+      { $group: {
+          _id: '$customerPhone',
+          lastSeen: { $first: '$timestamp' },
+          currentState: { $first: '$stateCode' },
+          turnCount: { $sum: 1 },
+          overrideCount: { $sum: { $cond: [{ $eq: ['$enforcerAction', 'override'] }, 1, 0] } }
+      } },
+      { $sort: { lastSeen: -1 } },
+      { $limit: 20 }
+    ]);
+
+    res.json({
+      windowHours: sinceHours,
+      generatedAt: new Date().toISOString(),
+      stateCounts,
+      enforcerCounts,
+      topViolations: violationCounts,
+      recentPhones
+    });
+  } catch (err) {
+    console.error('State dashboard JSON error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/admin/state-dashboard', monitoringLimiter, async (req, res) => {
+  try {
+    const sinceHours = parseInt(req.query.hours, 10) || 24;
+    const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
+
+    const [stateCounts, enforcerCounts, violationCounts, recentPhones] = await Promise.all([
+      StateLog.aggregate([
+        { $match: { timestamp: { $gte: since } } },
+        { $group: { _id: '$stateCode', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
+      StateLog.aggregate([
+        { $match: { timestamp: { $gte: since } } },
+        { $group: { _id: '$enforcerAction', count: { $sum: 1 } } }
+      ]),
+      StateLog.aggregate([
+        { $match: { timestamp: { $gte: since }, enforcerAction: { $in: ['override', 'strip'] } } },
+        { $unwind: '$enforcerViolations' },
+        { $group: { _id: '$enforcerViolations', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+      StateLog.aggregate([
+        { $match: { timestamp: { $gte: since } } },
+        { $sort: { timestamp: -1 } },
+        { $group: {
+            _id: '$customerPhone',
+            lastSeen: { $first: '$timestamp' },
+            currentState: { $first: '$stateCode' },
+            turnCount: { $sum: 1 },
+            overrideCount: { $sum: { $cond: [{ $eq: ['$enforcerAction', 'override'] }, 1, 0] } }
+        } },
+        { $sort: { lastSeen: -1 } },
+        { $limit: 20 }
+      ])
+    ]);
+
+    const totalLogs = stateCounts.reduce((s, c) => s + c.count, 0);
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>9 Cork Bot — State Dashboard</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 24px; background: #f5f5f7; color: #1d1d1f; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .subtitle { color: #6e6e73; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .card h2 { font-size: 16px; margin: 0 0 12px; color: #1d1d1f; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; padding: 8px 0; border-bottom: 1px solid #e5e5e7; color: #6e6e73; font-weight: 500; }
+    td { padding: 8px 0; border-bottom: 1px solid #f5f5f7; }
+    .bar { background: #007aff; height: 8px; border-radius: 4px; }
+    .bar-bg { background: #e5e5e7; border-radius: 4px; overflow: hidden; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+    .pill-pass { background: #d1f4d4; color: #137333; }
+    .pill-strip { background: #fff4d6; color: #8c6d00; }
+    .pill-override { background: #ffd6d6; color: #b00020; }
+    .pill-no_action { background: #e5e5e7; color: #6e6e73; }
+    .controls { margin-bottom: 24px; }
+    .controls a { display: inline-block; padding: 6px 12px; border-radius: 6px; background: white; color: #007aff; text-decoration: none; margin-right: 8px; font-size: 14px; }
+    .controls a.active { background: #007aff; color: white; }
+    .empty { color: #6e6e73; font-style: italic; padding: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>🤖 State Dashboard — 9 Cork Bot</h1>
+  <div class="subtitle">Last ${sinceHours}h • ${totalLogs} total state events • Generated ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</div>
+
+  <div class="controls">
+    <a href="?hours=1" class="${sinceHours === 1 ? 'active' : ''}">Last hour</a>
+    <a href="?hours=24" class="${sinceHours === 24 ? 'active' : ''}">Last 24h</a>
+    <a href="?hours=168" class="${sinceHours === 168 ? 'active' : ''}">Last week</a>
+    <a href="/admin/state-dashboard.json?hours=${sinceHours}">JSON</a>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>🎯 Conversation states</h2>
+      ${stateCounts.length === 0 ? '<div class="empty">No state events yet.</div>' : `
+      <table>
+        <tr><th>State</th><th>Count</th><th></th></tr>
+        ${stateCounts.map(s => {
+          const pct = totalLogs > 0 ? (s.count / totalLogs * 100).toFixed(0) : 0;
+          return `<tr>
+            <td><code>${s._id}</code></td>
+            <td>${s.count}</td>
+            <td><div class="bar-bg"><div class="bar" style="width:${pct}%"></div></div></td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+    </div>
+
+    <div class="card">
+      <h2>🚦 Enforcer activity</h2>
+      ${enforcerCounts.length === 0 ? '<div class="empty">No enforcer events.</div>' : `
+      <table>
+        <tr><th>Action</th><th>Count</th></tr>
+        ${enforcerCounts.map(e => `<tr>
+          <td><span class="pill pill-${e._id}">${e._id}</span></td>
+          <td>${e.count}</td>
+        </tr>`).join('')}
+      </table>`}
+    </div>
+
+    <div class="card">
+      <h2>⚠️ Top violations caught</h2>
+      ${violationCounts.length === 0 ? '<div class="empty">No violations — bot is behaving well!</div>' : `
+      <table>
+        <tr><th>Violation</th><th>Times caught</th></tr>
+        ${violationCounts.map(v => `<tr>
+          <td><code>${v._id}</code></td>
+          <td>${v.count}</td>
+        </tr>`).join('')}
+      </table>`}
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>👥 Recent conversations</h2>
+      ${recentPhones.length === 0 ? '<div class="empty">No active conversations in window.</div>' : `
+      <table>
+        <tr>
+          <th>Phone</th>
+          <th>Current state</th>
+          <th>Turns</th>
+          <th>Overrides</th>
+          <th>Last seen</th>
+        </tr>
+        ${recentPhones.map(p => {
+          const ago = Math.round((Date.now() - new Date(p.lastSeen).getTime()) / 60000);
+          return `<tr>
+            <td>+${p._id}</td>
+            <td><code>${p.currentState}</code></td>
+            <td>${p.turnCount}</td>
+            <td>${p.overrideCount > 0 ? '<span class="pill pill-override">' + p.overrideCount + '</span>' : '0'}</td>
+            <td>${ago}m ago</td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+    </div>
+  </div>
+</body>
+</html>`;
+    res.set('Content-Type', 'text/html').send(html);
+  } catch (err) {
+    console.error('State dashboard HTML error:', err);
+    res.status(500).send('Dashboard error: ' + err.message);
+  }
 });
 
 // Start server FIRST (so Render sees it's alive immediately)
