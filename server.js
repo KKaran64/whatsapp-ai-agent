@@ -16,6 +16,8 @@ const { computeQuote, formatQuoteForCustomer } = require('./pricing/quote-engine
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
 // v61 Phase B.1 — conversation state machine (read-only guard layer)
 const { deriveState: deriveConversationState } = require('./pricing/conversation-state');
+// v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
+const { enforce: enforceState } = require('./pricing/state-enforcer');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // v60 — voice message transcription via Groq Whisper
@@ -2775,17 +2777,18 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       const intent = extractPricingIntent(sanitizedMessage, context);
 
       // v61 Phase B.1: derive conversation state and inject the state guard
-      // into the LLM context. This is READ-ONLY — the LLM still drives the
-      // reply, but it sees explicit guidance for the current state. Phase B.2
-      // will add hard enforcement (block disallowed actions).
+      // into the LLM context. Read-only guidance — Phase B.2 enforces below.
+      // We capture stateResult here so Phase B.2 (post-LLM enforcement) can
+      // re-use the same derivation. State doesn't change between pre- and
+      // post-LLM; it's derived from facts known before the LLM call.
+      let derivedState = null;
       try {
         const fullContext = [...context, { role: 'customer', content: sanitizedMessage }];
-        const stateResult = deriveConversationState(fullContext, intent);
-        if (stateResult && stateResult.code !== 'GREETING' && stateResult.code !== 'POST_SALE') {
-          // Only inject for non-trivial states (greeting/post-sale don't need guidance)
-          const stateBlock = `[CONVERSATION STATE: ${stateResult.code}]\nGuidance: ${stateResult.guard}`;
+        derivedState = deriveConversationState(fullContext, intent);
+        if (derivedState && derivedState.code !== 'GREETING' && derivedState.code !== 'POST_SALE') {
+          const stateBlock = `[CONVERSATION STATE: ${derivedState.code}]\nGuidance: ${derivedState.guard}`;
           augmentedMessage = `${augmentedMessage}\n\n${stateBlock}`;
-          console.log(`🎯 State: ${stateResult.code} — ${stateResult.reason}`);
+          console.log(`🎯 State: ${derivedState.code} — ${derivedState.reason}`);
         }
       } catch (stateErr) {
         console.warn('⚠️ State derivation failed (continuing without):', stateErr.message);
@@ -2864,7 +2867,27 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
 
     // v59 — sanitize the LLM output before BOTH cache + return so customer
     // never sees paise and stored context can never re-train the bot on decimals
-    const cleaned = sanitizeBotReply(result.response);
+    const sanitized = sanitizeBotReply(result.response);
+
+    // v61 Phase B.2 — state enforcer: validate the LLM's reply against the
+    // current conversation state. If the LLM tried to do something disallowed
+    // (quote during AWAITING_CUSTOMER_TYPE, ask for invoice during GREETING,
+    // expose discount %, list products with prices during disambiguation, etc.),
+    // the enforcer either strips the offending phrase or substitutes a
+    // state-appropriate canned reply.
+    let cleaned = sanitized;
+    if (derivedState) {
+      const enforcement = enforceState(derivedState, sanitized);
+      if (!enforcement.allowed) {
+        console.warn(`🚦 State enforcer OVERRIDE [${derivedState.code}]: ${enforcement.reason}`);
+        console.warn(`   Original: "${enforcement.originalReply?.substring(0, 100)}"`);
+        console.warn(`   Replaced: "${enforcement.reply.substring(0, 100)}"`);
+        cleaned = enforcement.reply;
+      } else if (enforcement.stripped) {
+        console.warn(`🚦 State enforcer STRIPPED [${derivedState.code}]: ${enforcement.reason}`);
+        cleaned = enforcement.reply;
+      }
+    }
 
     console.log(`✅ Response from ${result.provider.toUpperCase()}: ${cleaned.substring(0, 100)}...`);
 

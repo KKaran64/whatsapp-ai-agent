@@ -16,12 +16,13 @@
 // ─────────────────────────────────────────────────────────────────────
 const PRICING_INTENT_PATTERNS = [
   /\b(price|cost|quote|rate|how much|kya rate|kitne ka)\b/i,
-  /\b\d+\s+(pcs|piece|pieces|nos|qty|quantity|mats|diaries|coasters|pens|bags|frames|trays|holders|planters|trophies|caddy|caddies|pouches|wallets|tablemats|trivets|bottles|clocks|sleeves|organizers|boxes|bricks|balls|rollers)\b/i,
+  // <number> + optional adjective + product noun (e.g. "100 cork diaries", "30 bar caddy", "200 round coasters")
+  /\b\d+\s+(?:\w+\s+){0,3}(pcs|piece|pieces|nos|qty|quantity|mat|mats|diary|diaries|coaster|coasters|pen|pens|bag|bags|frame|frames|tray|trays|holder|holders|planter|planters|trophy|trophies|caddy|caddies|pouch|pouches|wallet|wallets|tablemat|tablemats|trivet|trivets|bottle|bottles|clock|clocks|sleeve|sleeves|organizer|organizers|box|boxes|brick|bricks|ball|balls|roller|rollers|mirror|mirrors|panel|panels|cup|cups|plate|plates|board|boards|stool|stools|lamp|lamps|tag|tags)\b/i,
   /\bsend (the )?(invoice|pi|quote|bill|proforma)\b/i,
-  /\b(?:i\s+)?(?:need|want|require)\b/i,    // "I need" OR bare "need"
-  /\b(?:i'?m\s+)?looking for\b/i,            // "I'm looking for" OR "looking for"
+  /\b(?:i\s+)?(?:need|want|require)\b/i,
+  /\b(?:i'?m\s+)?looking for\b/i,
   /\binterested in\b/i,
-  /^\s*\d+\s*$/i                              // bare number "100" as a reply
+  /^\s*\d+\s*$/i
 ];
 
 function hasPricingIntent(message) {
