@@ -1,24 +1,29 @@
 // Generates the catalog section of the system prompt from data/pricing.json.
-// Falls back to a minimal hardcoded note if pricing.json is missing or stale.
 //
-// Cached in-memory to avoid disk I/O on every message. Cache TTL: 60 seconds
-// (so cron-refreshed prices propagate without server restart).
+// v61 (Single-Brain): catalog injected into prompt shows ONLY product names +
+// categories, NO MRP/prices. The deterministic pricing engine
+// (pricing/quote-engine.js) is the sole source for prices.
+//
+// Why: when prices appeared in the prompt, the LLM treated them as fair game
+// to quote/compare/calculate from — leading to MRP exposure, discount-math
+// hallucinations, and contradictions with the engine. Removing prices from
+// the prompt makes the LLM physically incapable of those leaks.
+//
+// Cache: 6h, invalidated explicitly by the daily pricing sync cron.
 
 const fs = require('fs');
 const path = require('path');
 
 const PRICING_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
-// v58: TTL bumped to 6h — the pricing cron only refreshes daily anyway, so 60s
-// was wasting disk I/O on every message. The cron explicitly invalidates the cache.
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+let cachedData = null;
+let cachedAt = 0;
 
 function invalidateCache() {
   cachedData = null;
   cachedAt = 0;
 }
-
-let cachedData = null;
-let cachedAt = 0;
 
 function loadPricing() {
   if (cachedData && Date.now() - cachedAt < CACHE_TTL_MS) {
@@ -36,67 +41,24 @@ function loadPricing() {
   }
 }
 
-// Group HORECA products by category, return a compact table-ish string.
-//
-// IMPORTANT: We deliberately do NOT show bulkPrice in the catalog. The discount
-// slabs already encode the reseller 40%-off-MRP cap, which lands at bulkPrice
-// mathematically. Showing "(bulk floor: ₹X)" misled the LLM into reading "bulk"
-// as "the price for bulk orders" — causing it to use bulkPrice as the discount
-// base instead of mrpPrice. Discount math always starts from MRP per Scenario B.
-function formatHoreca(products) {
+// Group products by category and return a compact name-only list.
+// Cap names per category so the prompt stays small.
+function formatNamesByCategory(products, getName, getCategory, header, maxPerCat = 8) {
   if (!products || products.length === 0) return '';
   const byCategory = {};
   for (const p of products) {
-    if (!p.name || !p.mrpPrice) continue;
-    const cat = p.category || 'OTHER';
+    const name = getName(p);
+    const cat = getCategory(p);
+    if (!name || !cat) continue;
     if (!byCategory[cat]) byCategory[cat] = [];
-    byCategory[cat].push(p);
+    byCategory[cat].push(name);
   }
-  const lines = ['🍽️ **HORECA CATALOG (MRP — apply discount slabs from rules above):**'];
-  for (const [cat, items] of Object.entries(byCategory)) {
-    const top = items.slice(0, 8).map(p => `${p.name} MRP ₹${p.mrpPrice}`).join('; ');
-    lines.push(`  • **${cat}**: ${top}`);
-  }
-  return lines.join('\n');
-}
-
-// Format gifting catalogue grouped by category (parsed from sheet section headers)
-function formatCatalogue(products) {
-  if (!products || products.length === 0) return '';
-  const byCategory = {};
-  for (const p of products) {
-    if (!p.name || !p.price) continue;
-    const cat = p.category || 'OTHER';
-    if (!byCategory[cat]) byCategory[cat] = [];
-    byCategory[cat].push(p);
-  }
-  const lines = ['🟤 **GIFTING CATALOG (MRP — apply discount slabs from rules above):**'];
-  for (const [cat, items] of Object.entries(byCategory)) {
-    if (!cat || cat === 'OTHER') continue;
-    const top = items.slice(0, 10).map(p => `${p.name} ₹${p.price}`).join('; ');
-    lines.push(`  • **${cat}**: ${top}`);
-  }
-  return lines.join('\n');
-}
-
-function formatTrophies(products) {
-  if (!products || products.length === 0) return '';
-  const lines = ['🏆 **TROPHY CATALOG (MRP — discount slabs apply):**'];
-  for (const p of products.slice(0, 20)) {
-    if (!p.name) continue;
-    const code = p.productCode ? ` [${p.productCode}]` : '';
-    lines.push(`  • ${p.name}${code} — ₹${p.price}`);
-  }
-  return lines.join('\n');
-}
-
-function formatCombos(combos) {
-  if (!combos || combos.length === 0) return '';
-  const lines = ['🎁 **GIFTING COMBOS (bundled — combo price already includes bundle savings):**'];
-  for (const c of combos.slice(0, 30)) {
-    if (!c.name) continue;
-    const itemList = c.items.slice(0, 6).map(i => i.name).join(' + ');
-    lines.push(`  • **${c.name}** ₹${c.comboPrice}: ${itemList}`);
+  if (Object.keys(byCategory).length === 0) return '';
+  const lines = [header];
+  for (const [cat, names] of Object.entries(byCategory)) {
+    if (cat === 'OTHER') continue;
+    const sample = names.slice(0, maxPerCat).join('; ');
+    lines.push(`  • ${cat}: ${sample}${names.length > maxPerCat ? '; …' : ''}`);
   }
   return lines.join('\n');
 }
@@ -104,34 +66,47 @@ function formatCombos(combos) {
 function buildCatalogSection() {
   const data = loadPricing();
   if (!data) {
-    return `═══════════════════════════════════════
-📋 PRODUCT CATALOG
-═══════════════════════════════════════
-
-⚠️ Live pricing data unavailable. When asked for specific prices, say:
-"Let me confirm exact pricing — what's the product, quantity, and end-consumer or reseller?"`;
+    return `Product catalog data is not loaded right now. If a customer asks about specific products, qualify their needs and the engine will surface the correct SKU when available.`;
   }
 
-  const parts = [
-    '═══════════════════════════════════════',
-    `📋 LIVE PRODUCT CATALOG (synced ${data.syncedAt?.split('T')[0] || 'unknown'})`,
-    '═══════════════════════════════════════',
-    '',
-    '⚠️ ALL prices are MRP per piece (excl. GST and shipping).',
-    'Apply discount slabs from the rules section based on customer type (end consumer vs reseller).',
-    '',
-    formatCatalogue(data.catalogue),
-    '',
-    formatHoreca(data.horeca),
-    '',
-    formatTrophies(data.trophies),
-    '',
-    formatCombos(data.combos),
-    '',
-    '🔴 GST: 18% on Diaries / Metal Pen / Glass Bottle / branding service. 5% on all other cork products.'
-  ];
+  const horeca = formatNamesByCategory(
+    data.horeca,
+    p => p.name,
+    p => p.category,
+    '🍽️ HORECA & wholesale catalog products:'
+  );
 
-  return parts.filter(Boolean).join('\n');
+  const catalogue = formatNamesByCategory(
+    data.catalogue,
+    p => p.name,
+    p => p.category,
+    '🟤 Gifting catalogue products:'
+  );
+
+  const trophies = (data.trophies || []).length > 0
+    ? `🏆 Trophy catalogue: ${data.trophies.length} trophy designs available (sent as PDF on request).`
+    : '';
+
+  const combos = (data.combos || []).length > 0
+    ? `🎁 Gifting combos: ${data.combos.length} bundled combos available (sent as PDF on request).`
+    : '';
+
+  const parts = [
+    `Live catalog (synced ${data.syncedAt?.split('T')[0] || 'unknown'}).`,
+    'These are the product names we sell. The pricing engine handles all prices —',
+    'you never need to look up or recall prices yourself. If a customer asks',
+    'about a specific product, the engine will inject a [VERIFIED QUOTE] block',
+    'when ready. If the engine indicates the product is not in catalog, escalate via RULE G.',
+    '',
+    catalogue,
+    '',
+    horeca,
+    '',
+    trophies,
+    combos
+  ].filter(Boolean);
+
+  return parts.join('\n');
 }
 
 module.exports = { buildCatalogSection, loadPricing, invalidateCache };

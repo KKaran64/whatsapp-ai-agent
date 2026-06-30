@@ -164,6 +164,14 @@ function detectProductQuery(text) {
   const skuMatch = text.match(/\b(9C[-\d][A-Z0-9-]{2,10})\b/i);
   if (skuMatch) return skuMatch[1];
 
+  // Product + numeric modifier MUST be checked BEFORE named-products list,
+  // because "caddy 17" must beat "caddy" or "bar caddy" — the customer is
+  // naming a specific variant.
+  const modifierMatchEarly = lower.match(/\b(caddy|caddies|diary|diaries|trophy|trophies)\b\s+(?:no\.?\s*)?([a-z]?\d{1,4})\b/i);
+  if (modifierMatchEarly) {
+    return `${modifierMatchEarly[1]} ${modifierMatchEarly[2]}`;
+  }
+
   // v60.2: Specific catalog SKU names that customers commonly say in full.
   // These multi-word names must be preserved entirely so the quote engine
   // can find an exact catalog match — not stripped down to just "organizer"
