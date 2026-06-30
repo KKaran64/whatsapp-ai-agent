@@ -2985,7 +2985,15 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     return cleaned;
 
   } catch (error) {
-    console.error('❌ Error in AI processing:', error.message);
+    // Log the full error with stack so we can diagnose root causes from Render logs.
+    // Previously this only logged `error.message` which made it impossible to know
+    // which line/function threw — hiding the root cause behind the friendly message.
+    console.error('❌ Error in AI processing:');
+    console.error('   message:', error?.message);
+    console.error('   name:', error?.name);
+    console.error('   stack:', error?.stack);
+    console.error('   customerPhone:', customerPhone);
+    console.error('   message snippet:', (message || '').substring(0, 200));
     if (CONFIG.SENTRY_DSN) Sentry.captureException(error);
 
     // Ultimate fallback (should rarely happen since aiManager has its own fallbacks)
