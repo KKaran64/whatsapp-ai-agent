@@ -336,16 +336,25 @@ function _stateOf(code, meta = {}) {
 // Call signature matches deriveState() so callers can swap one for the other.
 // Additional param `phone` enables per-conversation classification caching.
 async function deriveStateAsync(conversation, currentIntent = null, phone = null) {
-  // Fast path: run the sync derivation first. If it produces a useful state
-  // (i.e. NOT AWAITING_CUSTOMER_TYPE), return immediately — no LLM call needed.
-  const syncResult = deriveState(conversation, currentIntent);
-  if (syncResult.code !== 'AWAITING_CUSTOMER_TYPE') {
-    return syncResult;
-  }
+  // Run the sync derivation first.
+  let syncResult = deriveState(conversation, currentIntent);
 
-  // Sync derivation thinks customer type is unknown. Before accepting that
-  // verdict, ask the LLM classifier — it handles typos, paraphrases, and
-  // code-switched language that regex misses.
+  // Skip LLM classifier when:
+  //   1. State is already terminal (no more progress possible)
+  //   2. Intent already has a customer type (regex got it)
+  //   3. No product has been mentioned yet (nothing to classify against)
+  const terminalStates = ['POST_SALE', 'AWAITING_PAYMENT', 'COLLECTING_INVOICE_INFO',
+                          'QUOTE_PRESENTED', 'READY_TO_QUOTE', 'ESCALATED'];
+  const productKnown = !!(currentIntent && currentIntent.productQuery);
+
+  if (terminalStates.includes(syncResult.code)) return syncResult;
+  if (currentIntent && currentIntent.customerType) return syncResult;
+  if (!productKnown && syncResult.code === 'GREETING') return syncResult;
+
+  // Customer has mentioned a product, no customer type known. Run the LLM
+  // classifier — handles typos, paraphrases, code-switched language that
+  // the regex layer misses. Cached per phone for 30 min so we don't
+  // re-classify every turn.
   try {
     const { classifyAndCache, classifyCustomerType } = require('./llm-classifier');
     const { customerText } = joinRecentMessages(conversation);
@@ -358,8 +367,6 @@ async function deriveStateAsync(conversation, currentIntent = null, phone = null
       ? await classifyAndCache(phone, customerText)
       : await classifyCustomerType(customerText);
 
-    // Confident classification of end_consumer or reseller? → re-derive state
-    // with the inferred customer type so we can move past AWAITING_CUSTOMER_TYPE.
     if (classification && classification.confidence >= 0.7 &&
         classification.customerType !== 'unknown') {
       // Patch the intent with the LLM's verdict and re-derive
@@ -375,7 +382,7 @@ async function deriveStateAsync(conversation, currentIntent = null, phone = null
       return newResult;
     }
 
-    // LLM said unknown / low confidence too → genuinely need to ask
+    // LLM said unknown / low confidence → keep the sync verdict
     return syncResult;
   } catch (err) {
     console.warn('⚠️ LLM classifier fallback failed:', err.message);
