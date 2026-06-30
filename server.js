@@ -12,7 +12,7 @@ const Sentry = require('@sentry/node');
 const Customer = require('./models/Customer');
 const Conversation = require('./models/Conversation');
 // v60 — Path B deterministic pricing
-const { computeQuote } = require('./pricing/quote-engine');
+const { computeQuote, formatQuoteForCustomer } = require('./pricing/quote-engine');
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
@@ -191,63 +191,39 @@ const CONTROL_TOKEN_PATTERNS = [
 function sanitizeBotReply(text) {
   if (!text || typeof text !== 'string') return text;
 
-  // Detect: did the LLM leak a control token in this response?
+  // v61 (Single-Brain): the sanitizer now does only what it must — strip LLM
+  // control-token leaks (a real Groq/Llama bug) and round any stray decimals
+  // to whole rupees. The 9-pattern disclosure-phrase stripper is GONE — the
+  // prompt no longer trains the LLM on MRPs or discount math, so there's
+  // nothing to leak. As a belt-and-suspenders defense we still strip one
+  // pattern: a literal "(MRP ₹X)" parenthetical, in case the LLM ever picks
+  // that format up from elsewhere.
+
+  // Detect LLM control-token leak (Llama on Groq sometimes does this)
   const hadControlToken = CONTROL_TOKEN_PATTERNS.some(re => re.test(text));
 
-  // Pass 1: strip control tokens. Truncate AT the marker (not just remove it)
-  // because anything after a leaked marker is unreliable garbage.
+  // Pass 1: strip control tokens — truncate AT the marker since anything
+  // after a leaked marker is unreliable garbage.
   let cleaned = text;
   for (const re of CONTROL_TOKEN_PATTERNS) {
     cleaned = cleaned.replace(re, '');
   }
   cleaned = cleaned.trim();
 
-  // Fallback rule: if the LLM leaked a control token AND the remaining text
-  // is short (< 50 chars), the message was almost certainly cut off mid-sentence
-  // (e.g. "Sure, happy to help!" with no follow-up). Replace with a recoverable
-  // message so the customer can re-prompt rather than receive a dead-end.
+  // Recovery: if control-token stripping left us with a useless short fragment,
+  // replace with a recoverable message so the customer can re-prompt.
   if (hadControlToken && cleaned.length < 50) {
-    console.warn(`⚠️ Bot reply truncated by control-token leak (${cleaned.length} chars). Falling back to recoverable message.`);
+    console.warn(`⚠️ Bot reply truncated by control-token leak (${cleaned.length} chars). Falling back.`);
     cleaned = "Sorry, I got cut off there — could you repeat your last message?";
   }
 
-  // Pass 2: strip pricing-strategy disclosure phrases. These are forbidden
-  // by v59 RULE C but the LLM sometimes leaks them anyway when justifying
-  // a price change (e.g. "since you're a reseller, I'll apply the slab").
-  // Surgical regex-based stripping so the surrounding text stays intact.
-  const disclosurePatterns = [
-    // Parenthetical "(MRP ₹717)" — strip entirely to hide MRP from customer
-    /\s*\(\s*MRP\s+₹\s*[\d,]+(?:\.\d+)?\s*\)/gi,
-    // Inline " MRP ₹717" (no parens) — strip just the MRP phrase
-    /\s+MRP\s+₹\s*[\d,]+(?:\.\d+)?/gi,
-    // Parenthetical "(30% off MRP ₹X)" / "(12.5% off)" / "(off MRP)"
-    /\s*\(\s*\d+(?:\.\d+)?\s*%\s*off(?:\s*MRP)?(?:\s*₹\s*[\d,]+(?:\.\d+)?)?\s*\)/gi,
-    // "I'll apply the reseller/end consumer discount slab" (full sentence variant)
-    /\s*(?:Since you'?re a (?:reseller|end consumer|business)[,.]?\s*)?I'?ll apply the (?:reseller|end consumer|customer)?\s*discount(?:\s*slab)?\.?/gi,
-    // "Since you're a reseller/business, ..." — strip the conditional opener
-    /\s*Since you'?re a (?:reseller|end consumer|business)[,.]?\s*/gi,
-    // "I'll apply the" then nothing meaningful (LLM cut itself off mid-sentence)
-    /\s*I'?ll apply the\s+(?=The MRP|For \d+)/gi,
-    // "The MRP for X is ₹Y" / "MRP is ₹X" / "MRP for this product is ₹X" — entire sentence
-    /\s*(?:The\s+)?MRP\s+(?:for\s+[\w\s\-.,#]+\s+)?is\s+₹\s*[\d,]+(?:\.\d+)?\.?/gi,
-    // "For 30-49 pieces, the discount is X%" — slab tier exposure, entire sentence
-    /\s*For\s+\d+[-–]\d+\s+pieces?[,.]?\s+the\s+discount\s+is\s+\d+(?:\.\d+)?\s*%\.?/gi,
-    // Standalone "discount slab" / "reseller slab"
-    /\s*(?:reseller|end consumer)\s+(?:discount\s+)?slab\b\.?/gi,
-    // "the X% discount" inline mentions
-    /\s*(?:the|a)\s+\d+(?:\.\d+)?\s*%\s*(?:reseller|end consumer|customer)?\s*discount(?:\s+on\s+MRP)?\.?/gi,
-    // "after applying our discount" / "as per our discount slab"
-    /\s*(?:after applying|as per) our discount(?:\s+slab|\s+tier|\s+structure)?\.?/gi,
-    // "So, the price per piece would be ₹X" — keep the price but drop the "So, ... would be" opener
-    // (the actual ₹ number stays via normal flow)
-  ];
-  for (const re of disclosurePatterns) {
-    cleaned = cleaned.replace(re, '');
-  }
-  // Collapse any double-spaces or orphan punctuation left behind
+  // Pass 2: belt-and-suspenders — strip "(MRP ₹X)" parenthetical only.
+  // The new prompt doesn't teach this format, but if it appears we drop it.
+  cleaned = cleaned.replace(/\s*\(\s*MRP\s+₹\s*[\d,]+(?:\.\d+)?\s*\)/gi, '');
   cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1').trim();
 
-  // Pass 3: round all ₹ decimal amounts to whole rupees
+  // Pass 3: round all ₹ decimal amounts to whole rupees.
+  // (Engine already returns whole rupees, this is final defense.)
   cleaned = cleaned.replace(/₹\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?/g, (match) => {
     const numStr = match.replace(/[₹,\s]/g, '');
     const num = parseFloat(numStr);
@@ -2805,24 +2781,25 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
         if (intent.productQuery && intent.quantity && intent.customerType) {
           const quote = computeQuote(intent);
           if (quote.found) {
+            // v61 Single-Brain: inject the PREBUILT customer-facing sentence,
+            // not structured data the LLM has to assemble. LLM's only job is
+            // to wrap it in a warm conversational tone, never recalculate.
+            const customerLine = formatQuoteForCustomer(quote);
             const block = [
-              '[VERIFIED QUOTE — use these EXACT numbers in your reply, do NOT recalculate]:',
-              `Product: ${quote.product.name}`,
-              `Quantity: ${quote.quantity}`,
-              `Per-piece: ₹${quote.perPiece}`,
-              quote.branding ? `Branding: ${quote.branding.label}, ${quote.branding.quantityRule === 'per_piece' ? '₹' + quote.branding.ratePerPc + '/pc' : '₹' + quote.branding.setupFee + ' setup'}` : 'Branding: none mentioned',
-              `Subtotal (ex-GST): ₹${quote.subtotalEx}`,
-              `Total GST: ₹${quote.totalGst}`,
-              `GRAND TOTAL: ₹${quote.grandTotal}`,
-              'Wrap these numbers in a natural conversational reply. Do NOT mention MRP, discount %, slab tier, or recompute any number.'
+              '[VERIFIED QUOTE — present THIS EXACT SENTENCE to the customer, in your own warm tone]:',
+              customerLine,
+              '',
+              'You may rephrase slightly for warmth but the numbers (₹ amounts) and the product name must be EXACTLY as written above.',
+              'Do NOT mention MRP, discount %, slab tier, or any internal math.'
             ].join('\n');
             augmentedMessage = `${contextAwareMessage}\n\n${block}`;
             console.log(`💰 Verified quote injected: ${quote.product.name} × ${quote.quantity} = ₹${quote.grandTotal}`);
           } else if (quote.error === 'multiple_matches' && quote.matches?.length) {
+            // v61: names only — engine knows MRPs, LLM doesn't need to.
             const block = [
-              '[PRODUCT AMBIGUOUS — ask the customer which specific SKU they want]:',
+              '[PRODUCT AMBIGUOUS — ask the customer which specific product they want]:',
               'Catalog matches for their query:',
-              ...quote.matches.slice(0, 6).map(m => `- ${m.name} (MRP ₹${m.mrp})`),
+              ...quote.matches.slice(0, 6).map(m => `- ${m.name}`),
               'Do NOT quote a price yet. Ask the customer to choose one of the above options.'
             ].join('\n');
             augmentedMessage = `${contextAwareMessage}\n\n${block}`;
