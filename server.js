@@ -1908,16 +1908,10 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                     response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;
                     console.log(`📸 → asking for clarification (low confidence: ${(identification.confidence * 100).toFixed(0)}%)`);
                   } else {
-                    // Gemini Vision unavailable — fall back to legacy Smart Matcher
-                    console.log(`📸 → fallback to legacy Smart Image Matcher`);
-                    const result = await visionHandler.handleImageMessage(
-                      batchMediaId,
-                      combinedMessageBody || 'What is this?',
-                      from,
-                      context,
-                      SYSTEM_PROMPT
-                    );
-                    response = sanitizeBotReply(result.response);
+                    // Gemini Vision unavailable (network/API issue). No legacy
+                    // matcher to fall back to — ask the customer to describe.
+                    console.log(`📸 → Gemini Vision unavailable, asking customer to describe`);
+                    response = `Thanks for the photo! I'm having trouble loading the image right now — could you tell me which product you're interested in? (e.g. coasters, diaries, planters, frames, etc.)`;
                   }
 
                   const logTag = identification
