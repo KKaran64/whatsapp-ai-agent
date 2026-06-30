@@ -56,6 +56,13 @@ When you see [BRANDING RESTRICTION]:
 When you see [PRICING — MISSING INFO]:
   ✅ Ask only for the missing field(s), nothing else
 
+When you see [CONVERSATION STATE: X]:
+  ✅ Read the "Guidance:" line that follows — it tells you what's allowed
+     in the current state (e.g. AWAITING_CUSTOMER_TYPE → ask only that question;
+     READY_TO_QUOTE → present the verified quote; COLLECTING_INVOICE_INFO →
+     ask the next missing invoice field, never re-ask given ones).
+  ✅ The state is derived from the whole conversation, not just this message.
+
 When there's NO [VERIFIED QUOTE] block in the message:
   ✅ This is a qualifying / non-pricing turn — reply normally, do not invent any price
 
