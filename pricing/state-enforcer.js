@@ -163,7 +163,6 @@ function enforce(stateResult, llmReply) {
       if (botQuotedPrice(llmReply)) violations.push('quoted_before_customer_type');
       if (botAskedInvoiceField(llmReply)) violations.push('skipped_to_invoice');
       if (botSharedPaymentBlock(llmReply)) violations.push('skipped_to_payment');
-      // If the LLM didn't even ask the type question, that's a violation
       if (!botAskedCustomerType(llmReply)) violations.push('did_not_ask_customer_type');
       break;
 

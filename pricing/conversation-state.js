@@ -159,8 +159,12 @@ function joinRecentMessages(conversation, lookbackTurns = 30) {
   return { customerText, botText, combined: `${customerText}\n${botText}` };
 }
 
+// v61.1 — Hybrid customer-type detection: fast regex first (handles 80% of
+// clear cases instantly), LLM classifier fallback for ambiguous/typo cases.
+// The LLM call is async — sync callers get the regex result; async callers
+// (state derivation) get the LLM verdict if regex returned null.
 function hasCustomerType(customerText) {
-  const reseller = /\b(reseller|i sell|for re-?sale|for re-?sell|wholesale|gifting business|i'?m a distributor|b2b distribution|i supply to corporates|i run a gifting)\b/i;
+  const reseller = /\b(reseller|i sell|for re-?sale|for re-?sell|wholesale|gifting business|i'?m a distributor|b2b distribution|i supply to corporates|i run a gifting|to resell)\b/i;
   const endConsumer = /\bfor (my|our) (hotel|restaurant|cafe|office|company|studio|shop|business)|personal use|for myself|corporate gift(ing)?|for (our|my) (employees|company event|team|store opening|launch)|opening (a|an|my|our) (yoga )?(studio|restaurant|hotel|cafe|shop|store)\b/i;
   if (reseller.test(customerText)) return 'reseller';
   if (endConsumer.test(customerText)) return 'end_consumer';
@@ -212,9 +216,13 @@ function customerPaymentConfirmed(customerText) {
 // State derivation — the core public API
 // ─────────────────────────────────────────────────────────────────────
 //
-// Returns: { state: STATES.X, facts: {...}, reason: '...' }
-// `state` is the canonical State object; callers can read .code, .canBotQuote,
-// .allowedActions, .guard from it.
+// Two variants:
+//   - deriveState()        — synchronous (uses regex only; null on miss)
+//   - deriveStateAsync()   — async (falls back to LLM classifier on regex miss,
+//                                   resilient to typos and paraphrasing)
+//
+// Callers in server.js use the async variant. Tests / internal helpers
+// can use the sync variant when an LLM call is too expensive to await.
 
 function deriveState(conversation, currentIntent = null) {
   const { customerText, botText } = joinRecentMessages(conversation);
@@ -322,9 +330,63 @@ function _stateOf(code, meta = {}) {
 // Public helpers for tests + Phase B.2 integration
 // ─────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────
+// Async state derivation — uses LLM classifier as fallback when regex misses
+// ─────────────────────────────────────────────────────────────────────
+// Call signature matches deriveState() so callers can swap one for the other.
+// Additional param `phone` enables per-conversation classification caching.
+async function deriveStateAsync(conversation, currentIntent = null, phone = null) {
+  // Fast path: run the sync derivation first. If it produces a useful state
+  // (i.e. NOT AWAITING_CUSTOMER_TYPE), return immediately — no LLM call needed.
+  const syncResult = deriveState(conversation, currentIntent);
+  if (syncResult.code !== 'AWAITING_CUSTOMER_TYPE') {
+    return syncResult;
+  }
+
+  // Sync derivation thinks customer type is unknown. Before accepting that
+  // verdict, ask the LLM classifier — it handles typos, paraphrases, and
+  // code-switched language that regex misses.
+  try {
+    const { classifyAndCache, classifyCustomerType } = require('./llm-classifier');
+    const { customerText } = joinRecentMessages(conversation);
+
+    if (!customerText || customerText.trim().length === 0) {
+      return syncResult;
+    }
+
+    const classification = phone
+      ? await classifyAndCache(phone, customerText)
+      : await classifyCustomerType(customerText);
+
+    // Confident classification of end_consumer or reseller? → re-derive state
+    // with the inferred customer type so we can move past AWAITING_CUSTOMER_TYPE.
+    if (classification && classification.confidence >= 0.7 &&
+        classification.customerType !== 'unknown') {
+      // Patch the intent with the LLM's verdict and re-derive
+      const patchedIntent = {
+        ...(currentIntent || {}),
+        customerType: classification.customerType,
+        _customerTypeFromLLM: true,
+        _llmReasoning: classification.reasoning
+      };
+      const newResult = deriveState(conversation, patchedIntent);
+      newResult.llmClassification = classification;
+      newResult.reason = `${newResult.reason} (LLM: ${classification.reasoning})`;
+      return newResult;
+    }
+
+    // LLM said unknown / low confidence too → genuinely need to ask
+    return syncResult;
+  } catch (err) {
+    console.warn('⚠️ LLM classifier fallback failed:', err.message);
+    return syncResult;
+  }
+}
+
 module.exports = {
   STATES,
   deriveState,
+  deriveStateAsync,
   // exports used by tests
   hasCustomerType,
   hasQuantity,

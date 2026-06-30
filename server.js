@@ -16,7 +16,8 @@ const StateLog = require('./models/StateLog');
 const { computeQuote, formatQuoteForCustomer } = require('./pricing/quote-engine');
 const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
 // v61 Phase B.1 — conversation state machine (read-only guard layer)
-const { deriveState: deriveConversationState } = require('./pricing/conversation-state');
+// v61.1 — use async derivation so LLM classifier kicks in for typos/paraphrases
+const { deriveState: deriveConversationState, deriveStateAsync } = require('./pricing/conversation-state');
 // v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
 const { enforce: enforceState } = require('./pricing/state-enforcer');
 // v60 — comprehensive image-category routing
@@ -2792,14 +2793,26 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     try {
       intent = extractPricingIntent(sanitizedMessage, context);
 
-      // v61 Phase B.1: derive conversation state and inject the state guard
-      // into the LLM context. Read-only guidance — Phase B.2 enforces below.
-      // We capture stateResult here so Phase B.2 (post-LLM enforcement) can
-      // re-use the same derivation. State doesn't change between pre- and
-      // post-LLM; it's derived from facts known before the LLM call.
+      // v61 Phase B.1 + v61.1 LLM classifier fallback: derive conversation
+      // state and inject the state guard. The async derivation calls a tiny
+      // Groq LLM classifier when the regex layer misses customer type
+      // (e.g. due to typos like "comany" or paraphrases like "for my offc").
+      // Cached per-phone for 30 min so we don't re-classify each turn.
       try {
         const fullContext = [...context, { role: 'customer', content: sanitizedMessage }];
-        derivedState = deriveConversationState(fullContext, intent);
+        derivedState = await deriveStateAsync(fullContext, intent, sanitizedPhone);
+
+        // If the LLM classifier resolved customer type that the regex missed,
+        // patch the intent object so the engine routing (a few lines below)
+        // also sees it. This is what lets us actually fire the verified quote
+        // when the regex would have left us stuck at AWAITING_CUSTOMER_TYPE.
+        if (intent && derivedState?.llmClassification &&
+            derivedState.llmClassification.customerType !== 'unknown' &&
+            !intent.customerType) {
+          intent.customerType = derivedState.llmClassification.customerType;
+          console.log(`🧠 LLM classifier resolved customerType=${intent.customerType} (${derivedState.llmClassification.reasoning})`);
+        }
+
         if (derivedState && derivedState.code !== 'GREETING' && derivedState.code !== 'POST_SALE') {
           const stateBlock = `[CONVERSATION STATE: ${derivedState.code}]\nGuidance: ${derivedState.guard}`;
           augmentedMessage = `${augmentedMessage}\n\n${stateBlock}`;
