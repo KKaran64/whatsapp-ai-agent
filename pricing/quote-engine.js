@@ -133,8 +133,71 @@ function scoreMatch(productName, query) {
   return Math.floor(50 + ratio * 50);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Refinement application (LLM-first intent, 2026-07-05 spec)
+// ─────────────────────────────────────────────────────────────────────
+// A positive refinement ('desktop', 'a5') is a statement of what the
+// customer wants: when it matches at least one candidate's name (stemmed),
+// candidates that DON'T match are ruled out — not merely down-ranked.
+// Matching candidates also get a +25 ordering boost, capped at 99 so a
+// boost can never fake an exact-match score of 100. A refinement matching
+// NO candidate (e.g. a use-case word like 'office') is ignored entirely.
+// Negative refinements ('!yoga') always exclude. Empty refinements →
+// candidates unchanged.
+const REFINEMENT_BOOST = 25;
+
+function productNameTokens(productName) {
+  return new Set(
+    productName.toLowerCase().split(/[\s/&\-,.]+/)
+      .filter(t => t.length >= 2)
+      .map(stem)
+  );
+}
+
+function applyRefinements(candidates, refinements) {
+  if (!Array.isArray(refinements) || refinements.length === 0) return candidates;
+
+  const positive = [];
+  const negative = [];
+  for (const r of refinements) {
+    if (typeof r !== 'string') continue;
+    const t = r.trim().toLowerCase();
+    if (!t) continue;
+    if (t.startsWith('!')) {
+      const tok = t.slice(1).trim();
+      if (tok) negative.push(stem(tok));
+    } else {
+      positive.push(...t.split(/\s+/).filter(x => x.length >= 2).map(stem));
+    }
+  }
+
+  // Negative refinements always exclude.
+  let result = candidates.filter(c => {
+    const tokens = productNameTokens(c.name);
+    return !negative.some(n => tokens.has(n));
+  });
+
+  // Positive refinements narrow: annotate each candidate with its hit count,
+  // and if ANY candidate matches, drop the ones that don't. A refinement
+  // matching no candidate at all is ignored (use-case words like 'office').
+  const withHits = result.map(c => {
+    const tokens = productNameTokens(c.name);
+    return { candidate: c, hits: positive.filter(p => tokens.has(p)).length };
+  });
+  const anyHit = withHits.some(w => w.hits > 0);
+
+  return withHits
+    .filter(w => !anyHit || w.hits > 0)
+    .map(w => {
+      if (w.hits === 0 || w.candidate.score >= 100) return w.candidate;
+      return { ...w.candidate, score: Math.min(w.candidate.score + w.hits * REFINEMENT_BOOST, 99) };
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
 // Find products matching the query, sorted by score desc.
-function findProducts(query) {
+// refinements: optional narrowing terms from the intent resolver.
+function findProducts(query, refinements = []) {
   const data = loadCatalog();
   const candidates = [];
 
@@ -154,7 +217,7 @@ function findProducts(query) {
     if (score > 0) candidates.push({ source: 'trophies', name: p.name, mrp: p.price, productCode: p.productCode, score });
   }
   candidates.sort((a, b) => b.score - a.score);
-  return candidates;
+  return applyRefinements(candidates, refinements);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -169,7 +232,7 @@ function getSlabDiscount(quantity, customerType) {
 // ─────────────────────────────────────────────────────────────────────
 // Main quote computation
 // ─────────────────────────────────────────────────────────────────────
-function computeQuote({ productQuery, quantity, customerType, branding }) {
+function computeQuote({ productQuery, quantity, customerType, branding, refinements }) {
   // Validate inputs
   if (!productQuery || typeof productQuery !== 'string') {
     return { found: false, error: 'missing_product' };
@@ -182,7 +245,7 @@ function computeQuote({ productQuery, quantity, customerType, branding }) {
   }
 
   // Find matching products
-  const matches = findProducts(productQuery);
+  const matches = findProducts(productQuery, refinements);
   if (matches.length === 0) {
     return { found: false, error: 'product_not_found', productQuery };
   }
