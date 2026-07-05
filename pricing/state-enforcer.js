@@ -127,13 +127,64 @@ function stripPricingStrategy(text) {
   return out;
 }
 
-function enforce(stateResult, llmReply) {
+// ─────────────────────────────────────────────────────────────────────
+// Outbound numeric guard (2026-07-06 incident)
+// ─────────────────────────────────────────────────────────────────────
+// The Single-Brain invariant — numbers reaching the customer come ONLY from
+// the engine — was enforced inbound (prompt instruction) but never outbound.
+// Under negotiation pressure the LLM recomputed 300×423 = ₹1,26,900 and
+// mislabeled it "incl. GST". This guard closes the invariant by construction:
+// when an engine quote is active for the turn, every ₹ amount in the reply
+// must be one of the quote's customer-facing figures.
+function extractRupeeAmounts(text) {
+  const out = [];
+  const re = /₹\s*([\d,]+(?:\.\d+)?)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const n = Number(m[1].replace(/,/g, ''));
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+function allowedQuoteAmounts(quote) {
+  const allowed = new Set([quote.perPiece, quote.grandTotal]);
+  if (quote.branding) {
+    allowed.add(quote.branding.ratePerPc);
+    allowed.add(quote.branding.setupFee);
+  }
+  return allowed;
+}
+
+function findFabricatedAmounts(text, quote) {
+  const allowed = allowedQuoteAmounts(quote);
+  return extractRupeeAmounts(text).filter(n => !allowed.has(n));
+}
+
+function enforce(stateResult, llmReply, options = {}) {
   if (!stateResult || !llmReply) {
     return { allowed: true, reply: llmReply };
   }
 
   const stateCode = stateResult.code;
   const violations = [];
+
+  // ── Universal violation: fabricated ₹ amount ──
+  // Checked first and repaired deterministically from the engine quote —
+  // a wrong number must never reach the customer, whatever the state.
+  const quote = options.quote;
+  if (quote && quote.found) {
+    const fabricated = findFabricatedAmounts(llmReply, quote);
+    if (fabricated.length > 0) {
+      const { formatQuoteForCustomer } = require('./quote-engine');
+      return {
+        allowed: false,
+        reply: `Apologies, let me restate the exact figures. ${formatQuoteForCustomer(quote)}`,
+        reason: `fabricated_amount: ₹${fabricated.join(', ₹')} not in engine quote`,
+        originalReply: llmReply
+      };
+    }
+  }
 
   // ── Universal violation: pricing strategy exposure ──
   // For this one we don't replace the whole reply — we strip the offending
@@ -276,5 +327,7 @@ module.exports = {
   botAskedInvoiceField,
   botSharedPaymentBlock,
   botAskedCustomerType,
-  botExposedPricingStrategy
+  botExposedPricingStrategy,
+  extractRupeeAmounts,
+  findFabricatedAmounts
 };
