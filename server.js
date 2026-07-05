@@ -20,7 +20,7 @@ const { resolveIntent, getResolverStats } = require('./pricing/intent-resolver')
 // v61 Phase B.1 — conversation state machine (read-only guard layer)
 const { deriveState: deriveConversationState, deriveStateAsync } = require('./pricing/conversation-state');
 // v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
-const { enforce: enforceState } = require('./pricing/state-enforcer');
+const { enforce: enforceState, extractRupeeAmounts } = require('./pricing/state-enforcer');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // v60 — voice message transcription via Groq Whisper
@@ -2791,6 +2791,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     // try-block scope ended.
     let intent = null;
     let derivedState = null;
+    // Hoisted so the post-LLM outbound numeric guard can validate reply ₹
+    // amounts against this turn's engine quote (2026-07-06 incident).
+    let verifiedQuote = null;
     try {
       // ONE LLM pass per turn extracts the full intent (product, refinements,
       // quantity, customer type, branding). Regex fallback + telemetry flag
@@ -2823,24 +2826,55 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
             'The customer may want a quote but their request is unclear.',
             'Ask ONE friendly clarifying question about what they need. Do NOT quote any price yet.'
           ].join('\n');
-          augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+          // Append (don't rebuild from contextAwareMessage) so the
+          // [CONVERSATION STATE] guidance block appended above survives.
+          augmentedMessage = `${augmentedMessage}\n\n${block}`;
           console.log(`💰 Low-confidence intent (${intent.confidence}) — asking instead of quoting`);
         } else if (intent.productQuery && intent.quantity && intent.customerType) {
           const quote = computeQuote(intent);
           if (quote.found) {
-            // v61 Single-Brain: inject the PREBUILT customer-facing sentence,
-            // not structured data the LLM has to assemble. LLM's only job is
-            // to wrap it in a warm conversational tone, never recalculate.
+            verifiedQuote = quote;
             const customerLine = formatQuoteForCustomer(quote);
-            const block = [
-              '[VERIFIED QUOTE — present THIS EXACT SENTENCE to the customer, in your own warm tone]:',
-              customerLine,
-              '',
-              'You may rephrase slightly for warmth but the numbers (₹ amounts) and the product name must be EXACTLY as written above.',
-              'Do NOT mention MRP, discount %, slab tier, or any internal math.'
-            ].join('\n');
-            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
-            console.log(`💰 Verified quote injected: ${quote.product.name} × ${quote.quantity} = ₹${quote.grandTotal}`);
+
+            // State-aware injection (2026-07-06 incident): if this exact quote
+            // was already presented (state QUOTE_PRESENTED and the grand total
+            // appears in the bot's last quoted message), the customer is now
+            // deciding or objecting — commanding "present THIS EXACT SENTENCE"
+            // again makes the bot parrot the quote at an objecting customer.
+            // A CHANGED quote (new qty/product → different total) still
+            // presents fresh.
+            const lastBotQuoteMsg = [...context].reverse().find(
+              m => m.role !== 'user' && m.role !== 'customer' && /₹\s*[\d,]+/.test(m.content || '')
+            );
+            const alreadyPresented = derivedState?.code === 'QUOTE_PRESENTED'
+              && lastBotQuoteMsg
+              && extractRupeeAmounts(lastBotQuoteMsg.content).includes(quote.grandTotal);
+
+            if (alreadyPresented) {
+              const block = [
+                '[QUOTE ALREADY PRESENTED — the customer is deciding or objecting]:',
+                `Active verified quote (for reference): ${customerLine}`,
+                '',
+                'Do NOT re-pitch the full quote unprompted. Respond to what the customer actually said.',
+                'If they object to the price: empathize, hold the price, and offer to check with the team for large orders — NEVER invent a discount or alter any number.',
+                'Any number you mention must come EXACTLY from the verified quote above.'
+              ].join('\n');
+              augmentedMessage = `${augmentedMessage}\n\n${block}`;
+              console.log(`💰 Quote already presented (₹${quote.grandTotal}) — objection/decision guidance injected`);
+            } else {
+              // v61 Single-Brain: inject the PREBUILT customer-facing sentence,
+              // not structured data the LLM has to assemble. LLM's only job is
+              // to wrap it in a warm conversational tone, never recalculate.
+              const block = [
+                '[VERIFIED QUOTE — present THIS EXACT SENTENCE to the customer, in your own warm tone]:',
+                customerLine,
+                '',
+                'You may rephrase slightly for warmth but the numbers (₹ amounts) and the product name must be EXACTLY as written above.',
+                'Do NOT mention MRP, discount %, slab tier, or any internal math.'
+              ].join('\n');
+              augmentedMessage = `${augmentedMessage}\n\n${block}`;
+              console.log(`💰 Verified quote injected: ${quote.product.name} × ${quote.quantity} = ₹${quote.grandTotal}`);
+            }
           } else if (quote.error === 'multiple_matches' && quote.matches?.length) {
             // Refinements were already applied inside the engine; whatever is
             // still ambiguous needs a human choice. Names only — engine knows
@@ -2851,7 +2885,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
               ...quote.matches.slice(0, 6).map(m => `- ${m.name}`),
               'Do NOT quote a price yet. Ask the customer to choose one of the above options.'
             ].join('\n');
-            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            // Append (don't rebuild from contextAwareMessage) so the
+          // [CONVERSATION STATE] guidance block appended above survives.
+          augmentedMessage = `${augmentedMessage}\n\n${block}`;
             console.log(`💰 Product ambiguous for "${intent.productQuery}" — ${quote.matches.length} matches after refinements`);
           } else if (quote.error === 'product_not_found') {
             const block = [
@@ -2859,7 +2895,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
               `Customer mentioned "${intent.productQuery}" but no matching product exists in the catalog.`,
               'Either ask a clarifying question OR escalate per RULE G — never fabricate a price.'
             ].join('\n');
-            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            // Append (don't rebuild from contextAwareMessage) so the
+          // [CONVERSATION STATE] guidance block appended above survives.
+          augmentedMessage = `${augmentedMessage}\n\n${block}`;
             console.log(`💰 No catalog match for "${intent.productQuery}"`);
           } else if (quote.error === 'branding_not_allowed_for_product') {
             const block = [
@@ -2868,7 +2906,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
               `Allowed branding techniques for this product: ${quote.allowedBranding.join(', ')}.`,
               'Politely redirect to an allowed technique.'
             ].join('\n');
-            augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+            // Append (don't rebuild from contextAwareMessage) so the
+          // [CONVERSATION STATE] guidance block appended above survives.
+          augmentedMessage = `${augmentedMessage}\n\n${block}`;
             console.log(`💰 Branding restriction: ${quote.requestedBranding} not allowed for ${quote.product}`);
           }
         } else if (intent.productQuery || intent.quantity) {
@@ -2878,7 +2918,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
           if (!intent.quantity) missing.push('how many pieces');
           if (!intent.customerType) missing.push('end-consumer or reseller (RULE F)');
           const block = `[PRICING — MISSING INFO]: Ask the customer for: ${missing.join(', ')}. Do not quote a price yet.`;
-          augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+          // Append (don't rebuild from contextAwareMessage) so the
+          // [CONVERSATION STATE] guidance block appended above survives.
+          augmentedMessage = `${augmentedMessage}\n\n${block}`;
         }
       }
     } catch (engineErr) {
@@ -2912,7 +2954,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     let enforcerReason = null;
     let enforcerViolations = [];
     if (derivedState) {
-      const enforcement = enforceState(derivedState, sanitized);
+      // Outbound numeric guard rides along: reply ₹ amounts are validated
+      // against this turn's engine quote (fabricated numbers get repaired).
+      const enforcement = enforceState(derivedState, sanitized, { quote: verifiedQuote });
       if (!enforcement.allowed) {
         console.warn(`🚦 State enforcer OVERRIDE [${derivedState.code}]: ${enforcement.reason}`);
         console.warn(`   Original: "${enforcement.originalReply?.substring(0, 100)}"`);
