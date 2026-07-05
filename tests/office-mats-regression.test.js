@@ -23,6 +23,18 @@ afterAll(() => {
   jest.restoreAllMocks();
 });
 
+let savedResolverMode;
+beforeEach(() => {
+  // This test pins LLM-path behavior — make it deterministic even when the
+  // ambient environment has the INTENT_RESOLVER=regex kill-switch set.
+  savedResolverMode = process.env.INTENT_RESOLVER;
+  delete process.env.INTENT_RESOLVER;
+});
+afterEach(() => {
+  if (savedResolverMode === undefined) delete process.env.INTENT_RESOLVER;
+  else process.env.INTENT_RESOLVER = savedResolverMode;
+});
+
 const CONVERSATION = [
   { role: 'user', content: 'i need 200 mats for office, for my own use' },
   { role: 'assistant', content: 'We have Coffee Mat, Rubberized Desktop Mat, Yoga Mat — which one?' },
