@@ -53,6 +53,14 @@ const BRANDING_OPTIONS = {
   'laser':          { rate: 8,  setup: 0,   label: 'laser engraving' }
 };
 
+// ─────────────────────────────────────────────────────────────────────
+// Individual-box packaging (2026-07-06 spec): corrugated brown pizza box,
+// ₹10/pc + 5% GST — only for catalogue-section products under ₹500/pc
+// (post-discount), and only when the customer requests individual boxes.
+// HORECA / trophies / combos: no charge (box included / standard packing).
+// ─────────────────────────────────────────────────────────────────────
+const PACKAGING_BOX = { ratePerPc: 10, gstRate: 0.05, thresholdPerPiece: 500 };
+
 // Pen-specific restriction: only laser allowed
 const PEN_PATTERNS = [/\bpen\b/i];
 function isProductPen(productName) {
@@ -232,7 +240,7 @@ function getSlabDiscount(quantity, customerType) {
 // ─────────────────────────────────────────────────────────────────────
 // Main quote computation
 // ─────────────────────────────────────────────────────────────────────
-function computeQuote({ productQuery, quantity, customerType, branding, refinements }) {
+function computeQuote({ productQuery, quantity, customerType, branding, refinements, packaging }) {
   // Validate inputs
   if (!productQuery || typeof productQuery !== 'string') {
     return { found: false, error: 'missing_product' };
@@ -295,8 +303,30 @@ function computeQuote({ productQuery, quantity, customerType, branding, refineme
     };
   }
 
-  const subtotalEx = productSubtotalEx + brandingSubtotalEx;
-  const totalGst = productGst + brandingGst;
+  // Optional individual-box packaging
+  let packagingDetail = null;
+  let packagingSubtotalEx = 0;
+  let packagingGst = 0;
+  if (packaging === 'individual_boxes') {
+    const eligible = top.source === 'catalogue' && perPiece < PACKAGING_BOX.thresholdPerPiece;
+    if (eligible) {
+      packagingSubtotalEx = PACKAGING_BOX.ratePerPc * quantity;
+      packagingGst = Math.round(packagingSubtotalEx * PACKAGING_BOX.gstRate);
+      packagingDetail = {
+        key: 'individual_boxes',
+        ratePerPc: PACKAGING_BOX.ratePerPc,
+        subtotalEx: packagingSubtotalEx,
+        gst: packagingGst,
+        applied: true
+      };
+    } else {
+      // Requested but not chargeable — box included / standard packing.
+      packagingDetail = { key: 'individual_boxes', applied: false };
+    }
+  }
+
+  const subtotalEx = productSubtotalEx + brandingSubtotalEx + packagingSubtotalEx;
+  const totalGst = productGst + brandingGst + packagingGst;
   const grandTotal = subtotalEx + totalGst;
 
   return {
@@ -315,6 +345,7 @@ function computeQuote({ productQuery, quantity, customerType, branding, refineme
     productGst,
     branding: brandingDetail,
     brandingGst,
+    packaging: packagingDetail,
     subtotalEx,
     totalGst,
     grandTotal
@@ -336,6 +367,9 @@ function formatQuoteForCustomer(quote) {
       lines.push(`Branding setup: ₹${quote.branding.setupFee} flat.`);
     }
   }
+  if (quote.packaging && quote.packaging.applied) {
+    lines.push(`Individual boxes: ₹${quote.packaging.ratePerPc} per piece.`);
+  }
   lines.push(`Total ₹${quote.grandTotal.toLocaleString('en-IN')} incl. GST.`);
   lines.push(`Would you like to proceed?`);
   return lines.join(' ');
@@ -353,5 +387,6 @@ module.exports = {
   isBrandingAllowedForProduct,
   END_CONSUMER_SLABS,
   RESELLER_SLABS,
-  BRANDING_OPTIONS
+  BRANDING_OPTIONS,
+  PACKAGING_BOX
 };
