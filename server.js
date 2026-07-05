@@ -14,9 +14,10 @@ const Conversation = require('./models/Conversation');
 const StateLog = require('./models/StateLog');
 // v60 — Path B deterministic pricing
 const { computeQuote, formatQuoteForCustomer } = require('./pricing/quote-engine');
-const { extractIntent: extractPricingIntent } = require('./pricing/intent-extractor');
+// LLM-first intent resolution (2026-07-05 spec). Regex extractor is now the
+// resolver's internal fallback — server.js no longer calls it directly.
+const { resolveIntent, getResolverStats } = require('./pricing/intent-resolver');
 // v61 Phase B.1 — conversation state machine (read-only guard layer)
-// v61.1 — use async derivation so LLM classifier kicks in for typos/paraphrases
 const { deriveState: deriveConversationState, deriveStateAsync } = require('./pricing/conversation-state');
 // v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
 const { enforce: enforceState } = require('./pricing/state-enforcer');
@@ -2791,27 +2792,16 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
     let intent = null;
     let derivedState = null;
     try {
-      intent = extractPricingIntent(sanitizedMessage, context);
+      // ONE LLM pass per turn extracts the full intent (product, refinements,
+      // quantity, customer type, branding). Regex fallback + telemetry flag
+      // live inside the resolver. 3s wall-clock budget on the interactive path.
+      intent = await resolveIntent(sanitizedMessage, context, { budgetMs: 3000 });
 
-      // v61 Phase B.1 + v61.1 LLM classifier fallback: derive conversation
-      // state and inject the state guard. The async derivation calls a tiny
-      // Groq LLM classifier when the regex layer misses customer type
-      // (e.g. due to typos like "comany" or paraphrases like "for my offc").
-      // Cached per-phone for 30 min so we don't re-classify each turn.
+      // v61 Phase B.1: derive conversation state and inject the state guard.
+      // Customer type arrives on the intent from the LLM-first resolver above.
       try {
         const fullContext = [...context, { role: 'customer', content: sanitizedMessage }];
         derivedState = await deriveStateAsync(fullContext, intent, sanitizedPhone);
-
-        // If the LLM classifier resolved customer type that the regex missed,
-        // patch the intent object so the engine routing (a few lines below)
-        // also sees it. This is what lets us actually fire the verified quote
-        // when the regex would have left us stuck at AWAITING_CUSTOMER_TYPE.
-        if (intent && derivedState?.llmClassification &&
-            derivedState.llmClassification.customerType !== 'unknown' &&
-            !intent.customerType) {
-          intent.customerType = derivedState.llmClassification.customerType;
-          console.log(`🧠 LLM classifier resolved customerType=${intent.customerType} (${derivedState.llmClassification.reasoning})`);
-        }
 
         if (derivedState && derivedState.code !== 'GREETING' && derivedState.code !== 'POST_SALE') {
           const stateBlock = `[CONVERSATION STATE: ${derivedState.code}]\nGuidance: ${derivedState.guard}`;
@@ -2823,7 +2813,19 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       }
 
       if (intent) {
-        if (intent.productQuery && intent.quantity && intent.customerType) {
+        // Confidence gate (llm source only): below 0.6 the extraction is too
+        // uncertain to quote from — ask a clarifying question instead. The
+        // extraction still flowed into state derivation above, so the next
+        // turn benefits. Regex fallback carries confidence 1.0 by design.
+        if (intent.source === 'llm' && intent.confidence < 0.6) {
+          const block = [
+            '[PRICING — UNCERTAIN INTENT]:',
+            'The customer may want a quote but their request is unclear.',
+            'Ask ONE friendly clarifying question about what they need. Do NOT quote any price yet.'
+          ].join('\n');
+          augmentedMessage = `${contextAwareMessage}\n\n${block}`;
+          console.log(`💰 Low-confidence intent (${intent.confidence}) — asking instead of quoting`);
+        } else if (intent.productQuery && intent.quantity && intent.customerType) {
           const quote = computeQuote(intent);
           if (quote.found) {
             // v61 Single-Brain: inject the PREBUILT customer-facing sentence,
@@ -2840,7 +2842,9 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
             augmentedMessage = `${contextAwareMessage}\n\n${block}`;
             console.log(`💰 Verified quote injected: ${quote.product.name} × ${quote.quantity} = ₹${quote.grandTotal}`);
           } else if (quote.error === 'multiple_matches' && quote.matches?.length) {
-            // v61: names only — engine knows MRPs, LLM doesn't need to.
+            // Refinements were already applied inside the engine; whatever is
+            // still ambiguous needs a human choice. Names only — engine knows
+            // MRPs, the LLM doesn't need to.
             const block = [
               '[PRODUCT AMBIGUOUS — ask the customer which specific product they want]:',
               'Catalog matches for their query:',
@@ -2848,7 +2852,7 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
               'Do NOT quote a price yet. Ask the customer to choose one of the above options.'
             ].join('\n');
             augmentedMessage = `${contextAwareMessage}\n\n${block}`;
-            console.log(`💰 Product ambiguous for "${intent.productQuery}" — ${quote.matches.length} matches`);
+            console.log(`💰 Product ambiguous for "${intent.productQuery}" — ${quote.matches.length} matches after refinements`);
           } else if (quote.error === 'product_not_found') {
             const block = [
               '[NO CATALOG MATCH — do NOT invent a price]:',
@@ -3248,7 +3252,10 @@ app.get('/stats', monitoringLimiter, async (req, res) => {
       customers: totalCustomers,
       activeConversations,
       queue: queueStats,
-      queueAvailable: !!messageQueue
+      queueAvailable: !!messageQueue,
+      // LLM-first intent extraction telemetry: a rising regexFallback:llm
+      // ratio means Groq trouble (see 2026-07-05 spec, rollout section).
+      intentResolver: getResolverStats()
     });
   } catch (error) {
     console.error('Error getting stats:', error);

@@ -38,3 +38,5 @@ services:
         sync: false
       - key: ADMIN_SECRET
         sync: false
+      - key: INTENT_RESOLVER
+        value: llm  # set to "regex" to instantly revert to pre-LLM extraction
