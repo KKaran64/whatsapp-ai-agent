@@ -23,6 +23,9 @@ const { deriveState: deriveConversationState, deriveStateAsync } = require('./pr
 const { enforce: enforceState, extractRupeeAmounts } = require('./pricing/state-enforcer');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
+// 2026-07-06 — intent-driven image selection: images narrow by the resolver's
+// refinements, same understanding layer as pricing.
+const { filterByRefinements, selectImageSearch } = require('./pricing/refinement-filter');
 // v60 — voice message transcription via Groq Whisper
 const { handleVoiceMessage } = require('./audio-handler');
 // v60 — catalog-aware vision identification via Gemini multimodal
@@ -965,70 +968,52 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         await sentImagesTracker.clear(from); // Clear sent history for this customer
       }
 
-      // v53.15 NEW: Extract size modifiers from message or conversation context
-      let sizeFilter = null;
-      const sizePattern = /\b(a5|a6|small|large|medium|mini|compact|jumbo|big)\b/i;
-
-      // Check current message first
-      const sizeMatch = userMessage.match(sizePattern);
-      if (sizeMatch) {
-        sizeFilter = sizeMatch[0].toLowerCase();
-        console.log(`🔍 Size filter detected in message: "${sizeFilter}"`);
-      } else {
-        // Check recent conversation for size context
-        const recentMessages = conversationContext.slice(-10);
-        for (let i = recentMessages.length - 1; i >= 0; i--) {
-          const msg = recentMessages[i];
-          const content = msg.content || '';
-          const contextSizeMatch = content.match(sizePattern);
-          if (contextSizeMatch) {
-            sizeFilter = contextSizeMatch[0].toLowerCase();
-            console.log(`🔍 Size filter detected from conversation context: "${sizeFilter}"`);
-            break;
-          }
-        }
+      // Intent-driven image selection (2026-07-06 spec): the same LLM-first
+      // resolver that feeds pricing supplies the customer's product phrase +
+      // refinements ("magnetic", "a5", "!yoga"). The old hardcoded size-only
+      // filter (v53.15) is gone — sizes now arrive as refinements. Null intent
+      // (LLM outage / no product mentioned) falls back to the category bucket,
+      // which is the legacy behavior.
+      let imageIntent = null;
+      try {
+        imageIntent = await resolveIntent(userMessage, conversationContext, { budgetMs: 3000 });
+      } catch (e) {
+        console.warn('⚠️ Image-path intent resolution failed (category fallback):', e.message);
+      }
+      const imageSearch = selectImageSearch(imageIntent, resolvedCategory);
+      if (imageSearch) {
+        console.log(`🖼️ Image search: term="${imageSearch.term}" refinements=[${imageSearch.refinements.join(', ')}] (${imageSearch.source})`);
       }
 
       // sentImagesTracker is managed per-URL via add/has/clear — no initialization needed
 
-      // v60: use the routing module's mongoSearch term for MongoDB query.
       // For 'all' category, pass 'all' string (triggers the variety code path
-      // in findProductsByCategory). Otherwise use the specific search term.
+      // in findProductsByCategory). Otherwise the intent term (customer's own
+      // phrase) beats the category bucket; bucket is the fallback.
       const mongoQueryTerm = (resolvedCategory && resolvedCategory.code === 'all')
         ? 'all'
-        : (resolvedCategory ? resolvedCategory.mongoSearch : catalogCategory);
+        : (imageSearch ? imageSearch.term : (resolvedCategory ? resolvedCategory.mongoSearch : catalogCategory));
 
       // First try: Get new products excluding already sent
       let products = await findProductsByCategory(mongoQueryTerm, 10, from, true);
 
-      // v53.15 NEW: Apply size filter if specified
-      if (sizeFilter && products.length > 0) {
+      // Narrow by refinements (same semantics as quote-engine narrowing:
+      // a refinement matching nothing is ignored, so this can never produce
+      // a false-empty result on its own).
+      if (imageSearch && imageSearch.refinements.length > 0 && products.length > 0) {
         const originalCount = products.length;
-        products = products.filter(p => {
-          const nameLower = p.name.toLowerCase();
-          const tagsLower = (p.tags || '').toLowerCase();
+        products = filterByRefinements(products, imageSearch.refinements);
+        console.log(`🔍 Refinements [${imageSearch.refinements.join(', ')}] applied: ${originalCount} → ${products.length} products`);
+      }
 
-          // Check if product matches the size filter
-          const matchesSize = nameLower.includes(sizeFilter) || tagsLower.includes(sizeFilter);
-
-          if (matchesSize) {
-            console.log(`   ✅ "${p.name}" matches size "${sizeFilter}"`);
-          }
-          return matchesSize;
-        });
-
-        console.log(`🔍 Size filter "${sizeFilter}" applied: ${originalCount} → ${products.length} products`);
-
-        // If size filter eliminated all products, try without excludeSent flag
-        if (products.length === 0) {
-          console.log(`⚠️ No products match size "${sizeFilter}" in unsent products, checking all products...`);
-          const allProducts = await findProductsByCategory(mongoQueryTerm, 10, from, false);
-          products = allProducts.filter(p => {
-            const nameLower = p.name.toLowerCase();
-            const tagsLower = (p.tags || '').toLowerCase();
-            return nameLower.includes(sizeFilter) || tagsLower.includes(sizeFilter);
-          });
-          console.log(`🔍 Found ${products.length} products matching size "${sizeFilter}" (including previously sent)`);
+      // Intent term found nothing at all → retry once with the category
+      // bucket, keeping refinements. Strictly no worse than the legacy path.
+      if (products.length === 0 && imageSearch && imageSearch.source === 'intent'
+          && resolvedCategory && resolvedCategory.mongoSearch && resolvedCategory.code !== 'all') {
+        console.log(`🔍 Intent term "${imageSearch.term}" found nothing — falling back to category "${resolvedCategory.mongoSearch}"`);
+        products = await findProductsByCategory(resolvedCategory.mongoSearch, 10, from, true);
+        if (imageSearch.refinements.length > 0 && products.length > 0) {
+          products = filterByRefinements(products, imageSearch.refinements);
         }
       }
 
