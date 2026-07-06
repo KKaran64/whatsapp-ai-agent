@@ -48,6 +48,7 @@ describe('resolveIntent — LLM path', () => {
       quantity: 200,
       customerType: 'end_consumer',
       branding: null,
+      packaging: null,
       confidence: 0.9,
       source: 'llm',
       reasoning: 'customer wants desktop mats for own office use'
@@ -149,5 +150,44 @@ describe('getResolverStats', () => {
     const after = getResolverStats();
     expect(after.llm).toBe(before.llm + 1);
     expect(after.regexFallback).toBe(before.regexFallback + 1);
+  });
+});
+
+describe('packaging extraction', () => {
+  test('LLM-extracted individual_boxes passes validation', async () => {
+    callGroqJson.mockResolvedValue({
+      productQuery: 'planter', refinements: ['magnetic'], quantity: 400,
+      customerType: 'reseller', branding: null, packaging: 'individual_boxes',
+      confidence: 0.9, reasoning: 'reseller wants each planter boxed'
+    });
+    const intent = await resolveIntent('can you pack each one in its own box?', []);
+    expect(intent.packaging).toBe('individual_boxes');
+  });
+
+  test('unknown packaging value is nulled', async () => {
+    callGroqJson.mockResolvedValue({
+      productQuery: 'planter', refinements: [], quantity: 400,
+      customerType: 'reseller', branding: null, packaging: 'bubble-wrap',
+      confidence: 0.9, reasoning: 'ok'
+    });
+    const intent = await resolveIntent('bubble wrap please', []);
+    expect(intent.packaging).toBeNull();
+  });
+
+  test('shipping-method question does NOT set packaging', async () => {
+    callGroqJson.mockResolvedValue({
+      productQuery: 'planter', refinements: [], quantity: 400,
+      customerType: 'reseller', branding: null, packaging: null,
+      confidence: 0.9, reasoning: 'asking how goods ship, not requesting boxes'
+    });
+    const intent = await resolveIntent('how do you send the goods?', []);
+    expect(intent.packaging).toBeNull();
+  });
+
+  test('regex fallback catches an explicit individual-boxes request', async () => {
+    callGroqJson.mockResolvedValue(null);
+    const intent = await resolveIntent('i need 100 cork diaries in individual boxes', []);
+    expect(intent.source).toBe('regex_fallback');
+    expect(intent.packaging).toBe('individual_boxes');
   });
 });

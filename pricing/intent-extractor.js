@@ -125,6 +125,17 @@ function detectBranding(texts) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Packaging detection (2026-07-06 spec) — explicit individual-box requests
+// ─────────────────────────────────────────────────────────────────────
+function detectPackaging(texts) {
+  const joined = texts.filter(Boolean).join(' \n ');
+  if (/\b(individual|separate|each in a|each one in|per piece)\s+(box|boxes|packing|packaging)\b|\bbox packing\b|\bpack(?:ed)? (?:them |each )?(individually|separately)\b/i.test(joined)) {
+    return 'individual_boxes';
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Product query extraction
 // ─────────────────────────────────────────────────────────────────────
 // Strategy: find the longest substring of the message that looks like a product name.
@@ -289,7 +300,8 @@ function extractIntent(currentMessage, contextMessages = []) {
     productQuery,
     quantity: detectQuantity(currentMessage) || detectQuantity(recentCustomerOnly.slice(-3).join(' ')),
     customerType: detectCustomerType(recentCustomerOnly),
-    branding: detectBranding(recentCustomerOnly)
+    branding: detectBranding(recentCustomerOnly),
+    packaging: detectPackaging(recentCustomerOnly)
   };
 }
 
@@ -299,5 +311,6 @@ module.exports = {
   detectQuantity,
   detectCustomerType,
   detectBranding,
+  detectPackaging,
   detectProductQuery
 };
