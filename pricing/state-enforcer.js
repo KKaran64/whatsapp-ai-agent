@@ -153,6 +153,10 @@ function allowedQuoteAmounts(quote) {
     allowed.add(quote.branding.ratePerPc);
     allowed.add(quote.branding.setupFee);
   }
+  if (quote.packaging && quote.packaging.applied) {
+    allowed.add(quote.packaging.ratePerPc);
+    allowed.add(quote.packaging.subtotalEx);
+  }
   return allowed;
 }
 

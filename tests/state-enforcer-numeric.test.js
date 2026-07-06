@@ -108,3 +108,27 @@ describe('branding figures', () => {
     expect(result.allowed).toBe(true);
   });
 });
+
+describe('packaging figures', () => {
+  const boxedQuote = computeQuote({
+    productQuery: 'small magnetic planter',
+    quantity: 400,
+    customerType: 'reseller',
+    packaging: 'individual_boxes'
+  });
+
+  test('box rate and box subtotal are allowed amounts', () => {
+    expect(boxedQuote.found).toBe(true);
+    expect(boxedQuote.packaging.applied).toBe(true);
+    const reply = `For ${boxedQuote.quantity} ${boxedQuote.product.name}: ₹${boxedQuote.perPiece} per piece. Individual boxes: ₹${boxedQuote.packaging.ratePerPc} per piece (₹${boxedQuote.packaging.subtotalEx.toLocaleString('en-IN')} for boxes). Total ₹${boxedQuote.grandTotal.toLocaleString('en-IN')} incl. GST.`;
+    const result = enforce(QUOTE_PRESENTED_STATE, reply, { quote: boxedQuote });
+    expect(result.allowed).toBe(true);
+  });
+
+  test('a fabricated box rate is blocked', () => {
+    const reply = `Individual boxes are just ₹15 per piece extra!`;
+    const result = enforce(QUOTE_PRESENTED_STATE, reply, { quote: boxedQuote });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('fabricated_amount');
+  });
+});
