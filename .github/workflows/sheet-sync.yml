@@ -35,7 +35,7 @@ jobs:
               1) LABELS="combos,combos-prices" ;;
               2) LABELS="catalogue,catalogue-prices" ;;
               3) LABELS="trophies,trophies-prices" ;;
-              4) LABELS="planters" ;;
+              4) LABELS="planters,planters-prices" ;;
               5) LABELS="horeca,horeca-prices" ;;
               6) LABELS="yoga,yoga-prices" ;;
               *) echo "No sheet group for day $DAY — nothing to do"; exit 0 ;;

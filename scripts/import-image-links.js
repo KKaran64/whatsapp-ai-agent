@@ -53,6 +53,7 @@ const SHEETS = [
   { label: 'horeca-prices',    docId: '19mA0s2VYAyiDCJ0M-7VgvXXnSQbUk31HQa4U3sMw6HY', gid: '308270010',  kind: 'pricelist' },
   { label: 'trophies-prices',  docId: '14pafWDZsAxPqA5gQHprfH7pvQCuP0EVjEF0_U4XvnjQ',  gid: '1661831986', kind: 'pricelist' },
   // Combo-pricing sheet has "PRODUCTS NAME" (plural) header — handled separately.
+  { label: 'planters-prices',  docId: '1gGOTQjWbV60xgE-Px8PD87s0YcRxDQ9iTvSbEESghhE',  gid: '0',          kind: 'pricelist' },
   { label: 'combos-prices',    docId: '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  gid: '0',          kind: 'combopricelist' },
   { label: 'catalogue-prices', docId: '1THVTSBXIzdoY-kC12JKAIRcM7vKzU-rsDNV31ctQ_Dc',  gid: '1028285259', kind: 'pricelist' },
 ];
