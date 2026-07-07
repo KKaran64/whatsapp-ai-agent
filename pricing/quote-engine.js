@@ -17,7 +17,9 @@ const PRICING_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
 // ─────────────────────────────────────────────────────────────────────
 const END_CONSUMER_SLABS = [
   { min: 1,    max: 19,       discount: 0      },
-  { min: 20,   max: 99,       discount: 0.025  }, // 2.5% midpoint of 0-5%
+  { min: 20,   max: 29,       discount: 0.07   }, // 7%
+  { min: 30,   max: 49,       discount: 0.15   }, // 15%
+  { min: 50,   max: 99,       discount: 0.20   }, // 20%
   { min: 100,  max: 499,      discount: 0.30   }, // 30% — capped at ≤18% premium over reseller (2026-07-07)
   { min: 500,  max: 2000,     discount: 0.30   }, // 30% — same cap as 100-499 slab (2026-07-07)
   { min: 2001, max: Infinity, discount: 0.40   }
