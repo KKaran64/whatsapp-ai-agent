@@ -687,7 +687,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
     // CRITICAL FIX v53: Exclude "photo frames" and "picture frames" (product names, not photo requests)
     // v53.32 FIX: Exclude "check the image", "see the image" - these are NOT requests to send images
-    const TRIGGER_WORDS = /\b(show|send|share|reshare|resend|re-share|re-send)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send|share|reshare|resend|re-share|re-send)\b/i;
+    const TRIGGER_WORDS = /\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send)\b/i;
     // v54.3: Option-sharing patterns - catches "share options", "show all", "send varieties"
     const OPTION_TRIGGERS = /\b(share|show|send|reshare|resend)\b.*\b(options?|varieties?|range|collection|types?|all)\b/i;
     // v54.3: Resend detection - clears sent tracker when customer didn't receive images
