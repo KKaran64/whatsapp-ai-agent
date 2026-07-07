@@ -217,7 +217,7 @@ const CATEGORY_DEFINITIONS = {
   },
   'menu_scanners': {
     patterns: [/\b(menu scanner|menu scanners|qr scanner|qr stand|qr holder|payment scanner)\b/i],
-    mongoSearch: 'QR SCANNER',
+    mongoSearch: 'SCANNER',
     hasImages: true,
     pdfCatalog: 'HORECA',
     pdfCaption: "Here's our HORECA catalog — QR menu scanners included! 📱"
