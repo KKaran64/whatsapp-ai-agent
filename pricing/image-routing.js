@@ -216,9 +216,9 @@ const CATEGORY_DEFINITIONS = {
     pdfCaption: "Here's our HORECA catalog — room tags (do-not-disturb / housekeeping / etc.) included! 🛎️"
   },
   'menu_scanners': {
-    patterns: [/\b(menu scanner|menu scanners|qr scanner|qr stand|qr holder)\b/i],
-    mongoSearch: null,
-    hasImages: false,
+    patterns: [/\b(menu scanner|menu scanners|qr scanner|qr stand|qr holder|payment scanner)\b/i],
+    mongoSearch: 'QR SCANNER',
+    hasImages: true,
     pdfCatalog: 'HORECA',
     pdfCaption: "Here's our HORECA catalog — QR menu scanners included! 📱"
   },
