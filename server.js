@@ -730,8 +730,10 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // v53.4 FIX: Enhanced context-aware image detection
     // When user says generic image request OR pronouns, look at conversation history
     const pronounReferences = /\b(the same|them|it|those|these|that|above|earlier|mentioned|suggestions?)\b/i;
+    // Resend with no product keyword (e.g. "try again sending the image", typos) → use context
+    const isImageResend = isResendRequest && /\b(picture|pictures|photo|photos|image|images)\b/i.test(userMessage);
     // v53.7 FIX: Added typo variants (calender, organiser, etc.) to prevent wrong context matching
-    const genericImageRequest = hasTrigger && !/\b(coasters?|diar(y|ies)|bags?|wallets?|planters?|desk|organiz(er|ers)|organis(er|ers)|frames?|calend[ae]rs?|pens?|notebooks?|mats?|tables?|candles?|holders?|bottles?|trays?|test.?tubes?|mousepads?)\b/i.test(userMessage);
+    const genericImageRequest = (hasTrigger || isImageResend) && !/\b(coasters?|diar(y|ies)|bags?|wallets?|planters?|desk|organiz(er|ers)|organis(er|ers)|frames?|calend[ae]rs?|pens?|notebooks?|mats?|tables?|candles?|holders?|bottles?|trays?|test.?tubes?|mousepads?)\b/i.test(userMessage);
 
     // v53.24 FIX: Detect generic image requests like "please share image", "share image options"
     // CRITICAL: Only extract products from USER messages, not bot responses!
