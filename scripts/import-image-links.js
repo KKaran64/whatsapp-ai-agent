@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Import product image links from the 6 Google Sheets (2026-07-06).
+// Import product image links from Google Sheets (2026-07-06; pricing sheets added 2026-07-07).
 //
 // DRY-RUN BY DEFAULT — prints a full match report and writes nothing.
 // Pass --apply to actually upsert MongoDB Product docs and write
@@ -30,6 +30,14 @@ const Product = require('../models/Product');
 
 const APPLY = process.argv.includes('--apply');
 
+// --sheet combos,catalogue-prices   → run only those labels (comma-separated).
+// Omit to run all sheets.
+const SHEET_FILTER = new Set(
+  process.argv.includes('--sheet')
+    ? process.argv[process.argv.indexOf('--sheet') + 1].split(',')
+    : (process.argv.find(a => a.startsWith('--sheet='))?.slice(8) ?? '').split(',').filter(Boolean)
+);
+
 const SHEETS = [
   { label: 'combos',    docId: '1GW3OhlA30ga71D5SPj2iDtWNwN-OxFPL', gid: '1382734033', kind: 'combos' },
   { label: 'catalogue', docId: '1xow9hvPnmG39fO3-kAWlIpp1hhJfNpE0', gid: '1747788995', kind: 'products' },
@@ -37,11 +45,16 @@ const SHEETS = [
   { label: 'planters',  docId: '1S6b4sajZ2uyes3eTMm0jpLpLnI0GcwHr', gid: '1470534021', kind: 'horeca',  altKind: 'products' },
   { label: 'horeca',    docId: '13yTYNhK56bXIgAqDbaofb117arRSwHnV', gid: '1338387833', kind: 'products' },
   { label: 'yoga',      docId: '1BbW7imZ-spoK9LSNovcTBFr96Yj349Hg', gid: '1944483244', kind: 'coded' },
-  // Yoga price list — supplemental prices for Mongo product creation ONLY.
-  // Column is "PRICE FOR 100-500 pcs" (banded), NOT an MRP — deliberately
-  // NOT fed into data/pricing.json (the quote engine discounts MRPs; a
-  // banded price would double-discount).
-  { label: 'yoga-prices', docId: '1uabe1TwYZaItnDHjfx_tDatl1sF_eUFNlkdtNBuq1jo', gid: '0', kind: 'pricelist' }
+  // Pricing sheets — supplemental prices for Mongo product creation ONLY.
+  // All columns are banded trade prices, NOT MRPs — deliberately NOT fed into
+  // data/pricing.json (the quote engine discounts MRPs; banded prices would
+  // double-discount). Supplemental prices fill priceIdx gaps only.
+  { label: 'yoga-prices',      docId: '1uabe1TwYZaItnDHjfx_tDatl1sF_eUFNlkdtNBuq1jo', gid: '0',          kind: 'pricelist' },
+  { label: 'horeca-prices',    docId: '19mA0s2VYAyiDCJ0M-7VgvXXnSQbUk31HQa4U3sMw6HY', gid: '308270010',  kind: 'pricelist' },
+  { label: 'trophies-prices',  docId: '14pafWDZsAxPqA5gQHprfH7pvQCuP0EVjEF0_U4XvnjQ',  gid: '1661831986', kind: 'pricelist' },
+  // Combo-pricing sheet has "PRODUCTS NAME" (plural) header — handled separately.
+  { label: 'combos-prices',    docId: '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  gid: '0',          kind: 'combopricelist' },
+  { label: 'catalogue-prices', docId: '1THVTSBXIzdoY-kC12JKAIRcM7vKzU-rsDNV31ctQ_Dc',  gid: '1028285259', kind: 'pricelist' },
 ];
 
 // ── tiny CSV parser (handles quoted fields with commas) ──
@@ -220,13 +233,15 @@ function slugId(name) {
 }
 
 async function main() {
-  console.log(`Mode: ${APPLY ? 'APPLY (writing)' : 'DRY RUN (no writes; pass --apply to write)'}\n`);
+  const sheetsList = SHEET_FILTER.size > 0 ? `  Sheets: ${[...SHEET_FILTER].join(', ')}` : '  (all sheets)';
+  console.log(`Mode: ${APPLY ? 'APPLY (writing)' : 'DRY RUN (no writes; pass --apply to write)'}${sheetsList}\n`);
 
   // 1. Fetch + parse all sheets
   const products = new Map(); // norm name → merged record
   const supplementalPrices = new Map(); // norm name → { price, id }
   let comboData = {};
   for (const s of SHEETS) {
+    if (SHEET_FILTER.size > 0 && !SHEET_FILTER.has(s.label)) continue;
     const csv = await fetchCsv(s.docId, s.gid);
     const rows = parseCsv(csv);
     if (s.kind === 'combos') {
@@ -234,11 +249,33 @@ async function main() {
       console.log(`sheet ${s.label}: ${Object.keys(comboData).length} combos`);
       continue;
     }
+    if (s.kind === 'combopricelist') {
+      // Combo-pricing sheet uses "PRODUCTS NAME" (plural) — extract per-component
+      // MRP prices as supplemental prices for individual product creation.
+      const headerIdx = rows.findIndex(r => r.some(c => /PRODUCTS? NAME/i.test(c)));
+      if (headerIdx === -1) { console.log(`sheet ${s.label}: header not found, skipped`); continue; }
+      const header = rows[headerIdx].map(c => c.trim().toUpperCase());
+      const nameCol = header.findIndex(h => /^PRODUCTS? NAME$/.test(h));
+      const priceCol = header.findIndex(h => /PRICE/.test(h));
+      if (nameCol === -1 || priceCol === -1) { console.log(`sheet ${s.label}: name/price columns not found, skipped`); continue; }
+      let count = 0;
+      for (const r of rows.slice(headerIdx + 1)) {
+        const name = norm(r[nameCol] || '');
+        const price = Number(String(r[priceCol] || '').replace(/[^\d.]/g, ''));
+        if (name && Number.isFinite(price) && price > 0 && !supplementalPrices.has(name)) {
+          supplementalPrices.set(name, { price, id: null });
+          count++;
+        }
+      }
+      console.log(`sheet ${s.label}: ${count} supplemental prices from combo components`);
+      continue;
+    }
     if (s.kind === 'pricelist') {
       const headerIdx = rows.findIndex(r => r.some(c => /PRODUCT NAME/i.test(c)));
       const header = rows[headerIdx].map(c => c.trim().toUpperCase());
       const nameCol = header.findIndex(h => h === 'PRODUCT NAME');
-      const idCol = header.findIndex(h => /PRODUCT ?ID/.test(h));
+      // trophies sheet uses "Product code" column name
+      const idCol = header.findIndex(h => /PRODUCT ?(ID|CODE)/.test(h));
       const priceCol = header.findIndex(h => /PRICE/.test(h));
       let count = 0;
       for (const r of rows.slice(headerIdx + 1)) {

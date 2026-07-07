@@ -1,0 +1,51 @@
+name: Monthly sheet sync
+
+on:
+  schedule:
+    # Runs at 02:00 UTC on days 1-6 of every month.
+    # Each day maps to one image sheet paired with its pricing sheet.
+    - cron: '0 2 1-6 * *'
+  workflow_dispatch:
+    inputs:
+      sheet:
+        description: 'Comma-separated sheet labels to sync (blank = auto from day of month)'
+        required: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Resolve sheet group
+        id: sheets
+        run: |
+          if [ -n "${{ github.event.inputs.sheet }}" ]; then
+            echo "labels=${{ github.event.inputs.sheet }}" >> "$GITHUB_OUTPUT"
+          else
+            DAY=$(date +%-d)
+            case $DAY in
+              1) LABELS="combos,combos-prices" ;;
+              2) LABELS="catalogue,catalogue-prices" ;;
+              3) LABELS="trophies,trophies-prices" ;;
+              4) LABELS="planters" ;;
+              5) LABELS="horeca,horeca-prices" ;;
+              6) LABELS="yoga,yoga-prices" ;;
+              *) echo "No sheet group for day $DAY — nothing to do"; exit 0 ;;
+            esac
+            echo "labels=$LABELS" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import sheets
+        if: steps.sheets.outputs.labels != ''
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          SHEET_LABELS: ${{ steps.sheets.outputs.labels }}
+        run: node scripts/import-image-links.js --sheet "$SHEET_LABELS" --apply
