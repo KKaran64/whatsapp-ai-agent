@@ -18,7 +18,8 @@ const sharp = require('sharp');
 
 // Security Configuration
 const MAX_CACHE_SIZE = 1000; // Prevent unbounded memory growth
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB limit (WhatsApp's actual limit for images is 5,242,880 bytes)
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB — WhatsApp's upload limit (images must be under this before sending)
+const MAX_DOWNLOAD_SIZE = 30 * 1024 * 1024; // 30MB download budget — source images can be large; compression reduces them before upload
 const TARGET_IMAGE_SIZE = 4.8 * 1024 * 1024; // Target 4.8MB (just under WhatsApp's 5MB limit with safety margin)
 
 // Allowed image MIME types (prevents malicious file uploads)
@@ -412,8 +413,8 @@ async function uploadImageToWhatsApp(imageUrl) {
     const imageResponse = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 30000, // 30 seconds
-      maxContentLength: MAX_FILE_SIZE,
-      maxBodyLength: MAX_FILE_SIZE,
+      maxContentLength: MAX_DOWNLOAD_SIZE,
+      maxBodyLength: MAX_DOWNLOAD_SIZE,
       maxRedirects: isGoogleDrive ? 5 : 0, // Allow redirects for Google Drive, block for others
       validateStatus: (status) => status === 200, // Only accept 200 OK
       headers: {
