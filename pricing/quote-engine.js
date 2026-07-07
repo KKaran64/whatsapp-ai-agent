@@ -19,7 +19,7 @@ const END_CONSUMER_SLABS = [
   { min: 1,    max: 19,       discount: 0      },
   { min: 20,   max: 99,       discount: 0.025  }, // 2.5% midpoint of 0-5%
   { min: 100,  max: 499,      discount: 0.30   }, // 30% — capped at ≤18% premium over reseller (2026-07-07)
-  { min: 500,  max: 2000,     discount: 0.325  }, // 32.5% midpoint of 30-35%
+  { min: 500,  max: 2000,     discount: 0.30   }, // 30% — same cap as 100-499 slab (2026-07-07)
   { min: 2001, max: Infinity, discount: 0.40   }
 ];
 
