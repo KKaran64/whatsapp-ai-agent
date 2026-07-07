@@ -687,11 +687,11 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
     // CRITICAL FIX v53: Exclude "photo frames" and "picture frames" (product names, not photo requests)
     // v53.32 FIX: Exclude "check the image", "see the image" - these are NOT requests to send images
-    const TRIGGER_WORDS = /\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send)\b/i;
+    const TRIGGER_WORDS = /\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send)\b|\bwhich\b.{0,30}\b(picture|pictures|photo|photos|image|images)\b/i;
     // v54.3: Option-sharing patterns - catches "share options", "show all", "send varieties"
     const OPTION_TRIGGERS = /\b(share|show|send|reshare|resend)\b.*\b(options?|varieties?|range|collection|types?|all)\b/i;
     // v54.3: Resend detection - clears sent tracker when customer didn't receive images
-    const RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received)\b/i;
+    const RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received|one more time|try again|another time)\b/i;
     // v60 — keyword regex aligned with the live catalog. Added: mirror, yoga,
     // caddy, bar, stool, lamp, scanner, tag, napkin, tissue, ring, brick,
     // ball, roller, clock, trophy, hot plate, soil, hanging light, menu folder,
@@ -752,7 +752,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         }
 
         // Extract product keywords from recent USER conversation only (expanded list)
-        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|tealight|holder|test tube|testtube|bottle|tray|mousepad|mouse pad)\b/i);
+        const productMatch = content.match(/\b(coaster|diary|bag|wallet|planter|desk|organizer|frame|calendar|pen|notebook|mat|table|candle|tea light|tealight|holder|test tube|testtube|bottle|tray|mousepad|mouse pad|scanner|qr scanner|payment scanner|menu scanner|menu folder|bill folder|caddy|trivet|stool|trophy|trophies)\b/i);
         if (productMatch) {
           const productContext = productMatch[0];
           console.log(`✅ Found product context from USER message: "${productContext}"`);
@@ -965,7 +965,7 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     if (catalogCategory) {
       // v53.24 FIX: When customer explicitly asks for images, clear sent tracker
       // This allows re-sending images when customer says "share images", "send pictures", etc.
-      if (hasTrigger && /\b(share|send|show|give)\b/i.test(messageBody)) {
+      if (hasTrigger && /\b(share|send(?:ing)?|show|give)\b/i.test(messageBody)) {
         console.log('🔄 Explicit image request detected, clearing sent tracker for fresh images');
         await sentImagesTracker.clear(from); // Clear sent history for this customer
       }
