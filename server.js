@@ -680,18 +680,21 @@ async function connectQueue() {
   }
 }
 
+// ─── Module-level image-trigger regexes ──────────────────────────────────────
+// Shared by handleImageDetectionAndSending AND the pre-LLM willSendImages check
+// so both paths stay in sync without duplication.
+const IMAGE_TRIGGER_WORDS = /\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send|give|get)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send|give|get)\b|\bwhich\b.{0,30}\b(picture|pictures|photo|photos|image|images)\b|\bpictures?\b.{0,20}\bof\b|\bphotos?\b.{0,20}\bof\b/i;
+const IMAGE_OPTION_TRIGGERS = /\b(share|show|send|reshare|resend)\b.*\b(options?|varieties?|range|collection|types?|all)\b/i;
+const IMAGE_RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received|one more time|try again|another time)\b/i;
+// ─────────────────────────────────────────────────────────────────────────────
+
 // SHARED: Image detection and sending logic (used by BOTH queue and direct paths)
 async function handleImageDetectionAndSending(from, agentResponse, messageBody, conversationContext = []) {
   try {
-    // Pattern constants (defined once, used multiple times)
-    // STRICT: Only words that explicitly REQUEST images, not conversational words like "have"
-    // CRITICAL FIX v53: Exclude "photo frames" and "picture frames" (product names, not photo requests)
-    // v53.32 FIX: Exclude "check the image", "see the image" - these are NOT requests to send images
-    const TRIGGER_WORDS = /\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send|give|get)\b.*\b(picture|pictures|photo|photos|image|images)\b|\b(picture|pictures|photo|photos|image|images)\b.*\b(show|send(?:ing)?|share|reshare|resend|re-share|re-send|give|get)\b|\bwhich\b.{0,30}\b(picture|pictures|photo|photos|image|images)\b|\bpictures?\b.{0,20}\bof\b|\bphotos?\b.{0,20}\bof\b/i;
-    // v54.3: Option-sharing patterns - catches "share options", "show all", "send varieties"
-    const OPTION_TRIGGERS = /\b(share|show|send|reshare|resend)\b.*\b(options?|varieties?|range|collection|types?|all)\b/i;
-    // v54.3: Resend detection - clears sent tracker when customer didn't receive images
-    const RESEND_PATTERN = /\b(reshare|resend|again|re-share|re-send|pls share|please share|didn'?t get|not received|haven'?t received|one more time|try again|another time)\b/i;
+    // Pattern constants (aliases of module-level so nothing else in this function changes)
+    const TRIGGER_WORDS = IMAGE_TRIGGER_WORDS;
+    const OPTION_TRIGGERS = IMAGE_OPTION_TRIGGERS;
+    const RESEND_PATTERN = IMAGE_RESEND_PATTERN;
     // v60 — keyword regex aligned with the live catalog. Added: mirror, yoga,
     // caddy, bar, stool, lamp, scanner, tag, napkin, tissue, ring, brick,
     // ball, roller, clock, trophy, hot plate, soil, hanging light, menu folder,
@@ -1334,7 +1337,11 @@ function setupMessageProcessor() {
         await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
       } else {
         // Handle TEXT messages normally
-        agentResponse = await processWithClaudeAgent(messageBody, from, context);
+        // Pre-detect image intent so LLM knows images are coming before it speaks
+        const willSendImages = IMAGE_TRIGGER_WORDS.test(messageBody) ||
+          IMAGE_OPTION_TRIGGERS.test(messageBody) ||
+          (IMAGE_RESEND_PATTERN.test(messageBody) && /\b(picture|pictures|photo|photos|image|images)\b/i.test(messageBody));
+        agentResponse = await processWithClaudeAgent(messageBody, from, context, { willSendImages });
         await storeCustomerMessage(from, messageBody, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
 
         // v35: Auto-send HORECA catalog when HORECA-only products mentioned
@@ -2690,7 +2697,7 @@ async function syncBiginFromConversation(phone, customerMsg, botResponse, contex
   }
 }
 
-async function processWithClaudeAgent(message, customerPhone, context = []) {
+async function processWithClaudeAgent(message, customerPhone, context = [], options = {}) {
   try {
     console.log('🤖 Processing with Multi-Provider AI (Groq → Gemini → Rules)...');
     console.log(`📊 Context size: ${context.length} messages`);
@@ -2912,6 +2919,12 @@ async function processWithClaudeAgent(message, customerPhone, context = []) {
       }
     } catch (engineErr) {
       console.warn('⚠️ Quote engine error (continuing without verified quote):', engineErr.message);
+    }
+
+    // Image signal: injected BEFORE the LLM call so it knows images are coming
+    // and won't hallucinate claims about sending/not-sending.
+    if (options.willSendImages) {
+      augmentedMessage = `${augmentedMessage}\n\n[IMAGES: SYSTEM IS SENDING product photos now — your ONLY response is a single brief acknowledgment ("Sure!" / "Of course!"). No other text, no questions, no claims about what was sent.]`;
     }
 
     // Use multi-provider AI manager with automatic failover
