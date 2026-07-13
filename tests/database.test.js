@@ -46,6 +46,10 @@ function createMockCustomerModel(overrides = {}) {
       phoneNumber: '9876543210',
       metadata: { firstSeen: new Date(), lastSeen: new Date(), totalMessages: 0, source: 'whatsapp', status: 'active' }
     }),
+    // Blind-index lookup helper. The real impl returns a $or filter; here it
+    // returns { phoneNumber } so existing "queried by phone" assertions still
+    // hold. The real phoneFilter shape is covered in phone-blind-index.test.js.
+    phoneFilter: (p) => ({ phoneNumber: p }),
     ...overrides
   };
 }

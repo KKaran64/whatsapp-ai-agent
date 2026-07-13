@@ -37,7 +37,9 @@ const RESELLER_SLABS = [
 // ─────────────────────────────────────────────────────────────────────
 const HIGH_GST_PATTERNS = [
   /\bdiary\b/i, /\bdiaries\b/i,
-  /\bpen\b/i,
+  // "pen" the writing instrument only — NOT pen holders/stations/stands,
+  // which are desk accessories (5% GST)
+  /\bpens?\b(?!\s*(?:holders?|stations?|stands?|&|and\b))/i,
   /\bglass bottle\b/i,
   /\borganizer cum diary\b/i  // diaries-class
 ];
@@ -63,8 +65,9 @@ const BRANDING_OPTIONS = {
 // ─────────────────────────────────────────────────────────────────────
 const PACKAGING_BOX = { ratePerPc: 10, gstRate: 0.05, thresholdPerPiece: 500 };
 
-// Pen-specific restriction: only laser allowed
-const PEN_PATTERNS = [/\bpen\b/i];
+// Pen-specific restriction: only laser allowed. Same holder/station guard as
+// the GST pattern — a PEN HOLDER is flat cork, all branding techniques work.
+const PEN_PATTERNS = [/\bpens?\b(?!\s*(?:holders?|stations?|stands?|&|and\b))/i];
 function isProductPen(productName) {
   return PEN_PATTERNS.some(re => re.test(productName));
 }

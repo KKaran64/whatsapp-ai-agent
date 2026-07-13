@@ -75,14 +75,18 @@ jest.mock('dotenv', () => ({ config: jest.fn() }));
 const mockCustomerModel = {
   findOne: jest.fn(),
   countDocuments: jest.fn().mockResolvedValue(42),
-  find: jest.fn()
+  find: jest.fn(),
+  // blind-index lookup helper (real impl returns a $or filter; mock findOne
+  // ignores its arg, so any spreadable object works here)
+  phoneFilter: (phone) => ({ phoneHash: `hash:${phone}` })
 };
 
 const mockConversationModel = {
   findOne: jest.fn(),
   countDocuments: jest.fn().mockResolvedValue(10),
   updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
-  updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 })
+  updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+  phoneFilter: (phone) => ({ phoneHash: `hash:${phone}` })
 };
 
 const mockProductModel = {
@@ -438,7 +442,7 @@ describe('Server - Pure Utility Functions', () => {
       const prompt = server.buildSystemPrompt();
       expect(prompt).toContain('You are Sita');
       expect(prompt).toContain('9 Cork');
-      expect(prompt).not.toContain('PREVIOUS CONVERSATION');
+      expect(prompt).not.toContain('Earlier conversation summary');
     });
 
     test('includes previous conversation context when metadata provided', () => {
@@ -448,7 +452,7 @@ describe('Server - Pure Utility Functions', () => {
         quantity: 100
       };
       const prompt = server.buildSystemPrompt(metadata);
-      expect(prompt).toContain('PREVIOUS CONVERSATION');
+      expect(prompt).toContain('Earlier conversation summary');
       expect(prompt).toContain('coasters, diaries');
     });
 
@@ -1980,7 +1984,7 @@ describe('Server - processWithClaudeAgent deeper paths', () => {
     // System prompt should have been built with metadata
     const callArgs = mockAiManager.getResponse.mock.calls[0];
     const systemPrompt = callArgs[0];
-    expect(systemPrompt).toContain('PREVIOUS CONVERSATION');
+    expect(systemPrompt).toContain('Earlier conversation summary');
     expect(systemPrompt).toContain('coasters, diaries');
   });
 
@@ -2004,7 +2008,7 @@ describe('Server - processWithClaudeAgent deeper paths', () => {
     // System prompt should NOT have previous conversation metadata
     const callArgs = mockAiManager.getResponse.mock.calls[0];
     const systemPrompt = callArgs[0];
-    expect(systemPrompt).not.toContain('PREVIOUS CONVERSATION');
+    expect(systemPrompt).not.toContain('Earlier conversation summary');
   });
 
   test('skips metadata for mid-conversation messages', async () => {

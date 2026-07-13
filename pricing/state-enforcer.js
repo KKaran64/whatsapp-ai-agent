@@ -214,11 +214,14 @@ function enforce(stateResult, llmReply, options = {}) {
       break;
 
     case 'AWAITING_CUSTOMER_TYPE':
-      // The bot must ask the customer-type question, period
+      // Block forbidden actions (quoting/invoice/payment) — but do NOT force
+      // the canned RULE-F question onto every reply: the customer may have
+      // asked a side question ("what's your website?") that deserves a real
+      // answer. The [CONVERSATION STATE] guard already instructs the LLM to
+      // ask for customer type; enforcement here is for violations only.
       if (botQuotedPrice(llmReply)) violations.push('quoted_before_customer_type');
       if (botAskedInvoiceField(llmReply)) violations.push('skipped_to_invoice');
       if (botSharedPaymentBlock(llmReply)) violations.push('skipped_to_payment');
-      if (!botAskedCustomerType(llmReply)) violations.push('did_not_ask_customer_type');
       break;
 
     case 'AWAITING_QUANTITY':

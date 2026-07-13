@@ -254,32 +254,22 @@ describe('AIProviderManager - Cache Behavior', () => {
     expect(manager.checkCache('show me cork coasters')).toBeNull();
   });
 
-  test('caches and retrieves user-specific responses', () => {
+  // The generic per-message response cache was removed (it ignored
+  // conversation context, so repeated short messages like "yes" replayed
+  // stale replies). checkCache must now ONLY serve exact greetings.
+  test('does NOT serve previously stored responses (context-blind cache removed)', () => {
     manager.cacheResponse('test query', 'test response', 'user123');
-    const cached = manager.checkCache('test query', 'user123');
-    expect(cached).toBe('test response');
+    expect(manager.checkCache('test query', 'user123')).toBeNull();
   });
 
-  test('expires cached responses after 3 hours', () => {
+  test('ignores entries planted in responseCache (generic lookup removed)', () => {
     const cacheKey = manager.getCacheKey('test msg', null);
     manager.responseCache.set(cacheKey, {
       response: 'old response',
-      timestamp: Date.now() - (4 * 60 * 60 * 1000) // 4 hours ago
-    });
-
-    expect(manager.checkCache('test msg')).toBeNull();
-    expect(manager.responseCache.has(cacheKey)).toBe(false); // cleaned up
-  });
-
-  test('removes suspicious cached responses', () => {
-    const cacheKey = manager.getCacheKey('test msg', null);
-    manager.responseCache.set(cacheKey, {
-      response: '<script>alert(1)</script>',
       timestamp: Date.now()
     });
 
     expect(manager.checkCache('test msg')).toBeNull();
-    expect(manager.responseCache.has(cacheKey)).toBe(false); // cleaned up
   });
 });
 
@@ -559,7 +549,7 @@ describe('AIProviderManager - Statistics', () => {
 // ─── cache userId isolation through getResponse call chain ─────────────────
 
 describe('cache userId isolation through getResponse call chain', () => {
-  it('passes userId to cacheResponse in tryGroq', async () => {
+  it('does NOT cache provider responses (context-blind cache removed)', async () => {
     const manager = new AIProviderManager({ GROQ_API_KEY: 'test-key' });
     const cacheSpy = jest.spyOn(manager, 'cacheResponse');
 
@@ -570,7 +560,7 @@ describe('cache userId isolation through getResponse call chain', () => {
 
     await manager.tryGroq('sys', [], 'hello world', 'userPhone123');
 
-    expect(cacheSpy).toHaveBeenCalledWith('hello world', 'mocked groq response', 'userPhone123');
+    expect(cacheSpy).not.toHaveBeenCalled();
     cacheSpy.mockRestore();
     groqSpy.mockRestore();
   });

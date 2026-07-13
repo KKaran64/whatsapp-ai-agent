@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { encryptionPlugin, encrypt, decrypt } = require('../mongodb-encryption');
+const { encrypt, decrypt, isEncrypted, encryptionPlugin, blindIndexPlugin, phoneBlindIndex } = require('../mongodb-encryption');
 
 const messageSchema = new mongoose.Schema({
   role: {
@@ -24,9 +24,15 @@ const messageSchema = new mongoose.Schema({
 });
 
 const conversationSchema = new mongoose.Schema({
+  // Encrypted at rest — query via phoneHash / Conversation.phoneFilter(), never
+  // by this field's plaintext.
   customerPhone: {
     type: String,
-    required: true,
+    required: true
+  },
+  // Deterministic blind index of customerPhone — the lookup key.
+  phoneHash: {
+    type: String,
     index: true
   },
   messages: [messageSchema],
@@ -78,8 +84,10 @@ conversationSchema.pre('save', function(next) {
   // Encrypt message content for all modified messages
   if (this.isModified('messages')) {
     this.messages.forEach((msg) => {
-      // Only encrypt if not already encrypted (check for encryption format)
-      if (msg.content && !msg.content.includes(':')) {
+      // Only encrypt if not already encrypted (strict iv:tag:ciphertext check —
+      // the old `includes(':')` check silently skipped any message containing
+      // a colon, leaving most bot replies stored in plaintext)
+      if (msg.content && !isEncrypted(msg.content)) {
         try {
           msg.content = encrypt(msg.content);
         } catch (err) {
@@ -150,10 +158,20 @@ conversationSchema.post('findOne', function(doc) {
   }
 });
 
-// Apply field-level encryption to PII (GDPR/CCPA compliance)
-// Encrypts customer phone number AND message content (both encrypted for GDPR)
-conversationSchema.plugin(encryptionPlugin, {
-  fields: ['customerPhone']
-});
+// Look up a conversation by phone without querying the encrypted field.
+// Spread into any query; combine with other filters, e.g.
+//   Conversation.findOne({ ...Conversation.phoneFilter(phone), status: 'active' })
+// $or covers the migration window (phoneHash for new docs, plaintext for
+// un-backfilled legacy docs). See Customer.phoneFilter for details.
+conversationSchema.statics.phoneFilter = function (phone) {
+  return { $or: [{ phoneHash: phoneBlindIndex(phone) }, { customerPhone: phone }] };
+};
+
+// Blind index BEFORE encryption so it hashes the plaintext customerPhone.
+conversationSchema.plugin(blindIndexPlugin, { sourceField: 'customerPhone', hashField: 'phoneHash' });
+
+// Encrypt customerPhone at rest (message content is encrypted via the explicit
+// pre/post hooks above; phoneHash provides deterministic lookup).
+conversationSchema.plugin(encryptionPlugin, { fields: ['customerPhone'] });
 
 module.exports = mongoose.model('Conversation', conversationSchema);

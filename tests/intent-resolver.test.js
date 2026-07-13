@@ -49,6 +49,8 @@ describe('resolveIntent — LLM path', () => {
       customerType: 'end_consumer',
       branding: null,
       packaging: null,
+      wantsImages: false,
+      imageQuery: [],
       confidence: 0.9,
       source: 'llm',
       reasoning: 'customer wants desktop mats for own office use'

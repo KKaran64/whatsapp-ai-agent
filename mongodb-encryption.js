@@ -44,6 +44,63 @@ function getEncryptionKey() {
 
 const ENCRYPTION_KEY = getEncryptionKey();
 
+// ─────────────────────────────────────────────────────────────────────
+// Blind index (deterministic keyed hash) — lets an encrypted field still be
+// looked up by equality. AES-GCM here uses a random IV per encryption, so an
+// encrypted phone can never be matched by a query; the blind index is the
+// deterministic companion you actually query on.
+// ─────────────────────────────────────────────────────────────────────
+function getBlindIndexKey() {
+  const envKey = process.env.PHONE_HASH_KEY;
+  if (envKey && /^[0-9a-fA-F]{64}$/.test(envKey)) {
+    return Buffer.from(envKey, 'hex');
+  }
+  // No dedicated key set → derive a STABLE sub-key from the encryption key.
+  // (Domain-separated so it isn't literally the cipher key.) This means the
+  // blind index survives as long as MONGODB_ENCRYPTION_KEY is stable — which
+  // it must be anyway, or nothing decrypts. Setting PHONE_HASH_KEY later
+  // changes every hash, so only do that alongside a re-run of the backfill.
+  return crypto.createHash('sha256').update(ENCRYPTION_KEY).update('phone-blind-index-v1').digest();
+}
+
+const BLIND_INDEX_KEY = getBlindIndexKey();
+
+/**
+ * Deterministic, keyed blind index for a phone number.
+ * Normalizes to digits only so "+91 98765 43210" and "919876543210" collide,
+ * then HMAC-SHA256 with the server-side key. Same phone → same hash (queryable);
+ * a DB dump without the key can't be reversed (keyed, unlike a plain hash).
+ * @param {string} phone
+ * @returns {string} 64-char hex, or '' for empty input
+ */
+function phoneBlindIndex(phone) {
+  if (!phone) return '';
+  const normalized = String(phone).replace(/\D/g, '');
+  if (!normalized) return '';
+  return crypto.createHmac('sha256', BLIND_INDEX_KEY).update(normalized).digest('hex');
+}
+
+/**
+ * Mongoose plugin: keeps a blind-index field in sync with a plaintext source
+ * field on save. MUST be applied BEFORE the encryptionPlugin so the hash is
+ * computed from the plaintext value (not the ciphertext).
+ * Usage: schema.plugin(blindIndexPlugin, { sourceField: 'phoneNumber', hashField: 'phoneHash' });
+ */
+function blindIndexPlugin(schema, options) {
+  const sourceField = options.sourceField;
+  const hashField = options.hashField || `${sourceField}Hash`;
+
+  schema.pre('save', function (next) {
+    const value = this[sourceField];
+    // Only hash when the source is present AND still plaintext. Guard against
+    // ciphertext (would produce a garbage, unqueryable hash).
+    if (value && this.isModified(sourceField) && !isEncrypted(value)) {
+      this[hashField] = phoneBlindIndex(value);
+    }
+    next();
+  });
+}
+
 /**
  * Encrypt a string value
  * @param {string} text - Text to encrypt
@@ -137,6 +194,18 @@ function decrypt(encryptedText) {
     // Return encrypted text if decryption fails (better than crashing)
     return encryptedText;
   }
+}
+
+/**
+ * Check whether a string is in this module's encrypted format
+ * (iv:authTag:ciphertext — 32 hex chars, 32 hex chars, hex).
+ * Strict on purpose: a customer message containing a colon ("10:30",
+ * "Note: ...") must NOT be mistaken for ciphertext, and plaintext must
+ * never be skipped by the encryption hooks just because it has a colon.
+ */
+const ENCRYPTED_FORMAT = /^[0-9a-fA-F]{32}:[0-9a-fA-F]{32}:[0-9a-fA-F]+$/;
+function isEncrypted(text) {
+  return typeof text === 'string' && ENCRYPTED_FORMAT.test(text);
 }
 
 /**
@@ -236,8 +305,9 @@ function encryptionPlugin(schema, options) {
   schema.pre('save', function (next) {
     for (const field of fieldsToEncrypt) {
       if (this[field] && this.isModified(field)) {
-        // Only encrypt if not already encrypted
-        if (!this[field].includes(':')) {
+        // Only encrypt if not already encrypted (strict format check —
+        // plaintext containing ':' must still be encrypted)
+        if (!isEncrypted(this[field])) {
           this[field] = encrypt(this[field]);
         }
       }
@@ -280,6 +350,9 @@ function generateEncryptionKey() {
 module.exports = {
   encrypt,
   decrypt,
+  isEncrypted,
+  phoneBlindIndex,
+  blindIndexPlugin,
   hash,
   hashPassword,
   verifyPassword,

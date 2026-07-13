@@ -17,7 +17,10 @@ class AIProviderManager {
     if (config.GROQ_API_KEY_3) this.groqKeys.push(config.GROQ_API_KEY_3);
     if (config.GROQ_API_KEY_4) this.groqKeys.push(config.GROQ_API_KEY_4);
 
-    this.groqClients = this.groqKeys.map(key => new Groq({ apiKey: key }));
+    // 30s timeout: a hung provider call holds the per-phone processing lock
+    // and stalls that customer's entire message queue. maxRetries 0 because
+    // key rotation in tryGroq() is our retry strategy.
+    this.groqClients = this.groqKeys.map(key => new Groq({ apiKey: key, timeout: 30000, maxRetries: 0 }));
     this.currentGroqIndex = 0;
 
     // Initialize other providers
@@ -112,27 +115,11 @@ class AIProviderManager {
     // REMOVED: Old cached responses that asked for email
     // Catalog requests now go to AI which sends the catalog automatically
 
-    // Check cache with user-specific key
-    const cacheKey = this.getCacheKey(message, userId);
-    if (this.responseCache.has(cacheKey)) {
-      const cached = this.responseCache.get(cacheKey);
-
-      // Check expiry
-      if (Date.now() - cached.timestamp < 10800000) { // 3 hour cache
-        // Validate cached response is still safe
-        if (this.isValidResponse(cached.response)) {
-          console.log('⚡ Cache hit - validated response');
-          return cached.response;
-        } else {
-          console.warn('[CACHE SECURITY] Removing suspicious cached response');
-          this.responseCache.delete(cacheKey);
-        }
-      } else {
-        // Expired - remove from cache
-        this.responseCache.delete(cacheKey);
-      }
-    }
-
+    // REMOVED (correctness): generic per-message response cache. It keyed on
+    // (userId + message text) alone and ignored conversation context, so a
+    // repeated "yes" / "how much?" replayed a 3-hour-old reply from a totally
+    // different point in the conversation. Only context-free exact greetings
+    // above are safe to cache.
     return null;
   }
 
@@ -168,9 +155,6 @@ class AIProviderManager {
 
         const response = completion.choices[0]?.message?.content || "I'm here to help!";
         this.stats.groq.success++;
-
-        // Cache the response
-        this.cacheResponse(userMessage, response, userId);
 
         return { provider: 'groq', response };
       } catch (error) {
@@ -243,14 +227,12 @@ class AIProviderManager {
             contents: [{
               parts: [{ text: fullPrompt }]
             }]
-          }
+          },
+          { timeout: 30000 } // hung call would stall the per-phone lock
         );
 
         const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm here to help!";
         this.stats.gemini.success++;
-
-        // Cache the response
-        this.cacheResponse(userMessage, aiResponse, userId);
 
         return { provider: 'gemini', response: aiResponse };
       } catch (error) {
@@ -302,9 +284,6 @@ class AIProviderManager {
 
       const aiResponse = response.content[0].text || "I'm here to help!";
       this.stats.claude.success++;
-
-      // Cache the response
-      this.cacheResponse(userMessage, aiResponse, userId);
 
       return { provider: 'claude', response: aiResponse };
     } catch (error) {

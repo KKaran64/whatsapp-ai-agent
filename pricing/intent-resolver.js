@@ -37,6 +37,8 @@ Read the conversation (most recent message last) and fill this JSON form. Output
   "customerType": "end_consumer" | "reseller" | null,
   "branding": "single-color" | "pad-printing" | "multi-color" | "laser" | null,
   "packaging": "individual_boxes" | null,
+  "wantsImages": <true if the customer is asking to SEE product photos/pictures/images THIS turn — including retry/resend requests ("didn't get it", "send again", typos like "sednign"); false otherwise>,
+  "imageQuery": ["<each product the customer wants pictures of, their own words; one entry per product; [] if wantsImages is false. Use conversation context: if they say 'send it again' the product is whatever was being discussed>"],
   "confidence": <0.0-1.0 how sure you are about the OVERALL extraction>,
   "reasoning": "<one sentence>"
 }
@@ -90,6 +92,8 @@ function validateIntent(raw) {
     customerType: null,
     branding: null,
     packaging: null,
+    wantsImages: false,
+    imageQuery: [],
     confidence: 0.5,
     reasoning: ''
   };
@@ -111,6 +115,15 @@ function validateIntent(raw) {
   if (CUSTOMER_TYPES.has(raw.customerType)) out.customerType = raw.customerType;
   if (BRANDING_KEYS.has(raw.branding)) out.branding = raw.branding;
   if (PACKAGING_KEYS.has(raw.packaging)) out.packaging = raw.packaging;
+  // Image-request extraction (2026-07 image spec): previously the prompt asked
+  // for these fields but validation dropped them, so they never reached callers.
+  out.wantsImages = raw.wantsImages === true;
+  if (out.wantsImages && Array.isArray(raw.imageQuery)) {
+    out.imageQuery = raw.imageQuery
+      .filter(q => typeof q === 'string' && q.trim())
+      .map(q => q.trim().toLowerCase())
+      .slice(0, 4);
+  }
   const conf = Number(raw.confidence);
   if (Number.isFinite(conf) && conf >= 0 && conf <= 1) out.confidence = conf;
   out.reasoning = String(raw.reasoning || '').substring(0, 200);
@@ -132,6 +145,8 @@ function regexFallback(currentMessage, contextMessages, why) {
     customerType: regexIntent.customerType || null,
     branding: regexIntent.branding || null,
     packaging: regexIntent.packaging || null,
+    wantsImages: false,   // regex extractor has no image detection — keep shape consistent
+    imageQuery: [],
     confidence: 1.0,
     source: 'regex_fallback',
     reasoning: `regex fallback (${why})`
@@ -166,8 +181,10 @@ async function resolveIntent(currentMessage, contextMessages = [], options = {})
 
   const intent = validateIntent(raw);
 
-  // All business fields empty → this turn carries no pricing intent.
-  if (!intent.productQuery && !intent.quantity && !intent.customerType && !intent.branding && !intent.packaging) {
+  // All business fields empty AND no image request → this turn carries no intent.
+  // (A pure "send me pictures" turn has no pricing fields but must still
+  // surface wantsImages/imageQuery to the image path.)
+  if (!intent.productQuery && !intent.quantity && !intent.customerType && !intent.branding && !intent.packaging && !intent.wantsImages) {
     stats.noIntent++;
     return null;
   }

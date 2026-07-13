@@ -635,11 +635,12 @@ async function connectQueue() {
       }
     });
 
-    // Add error handlers BEFORE testing connection
+    // Add error handlers BEFORE testing connection.
+    // NOTE: do NOT null the queue here — Bull/ioredis emit transient error
+    // events (network blips) and reconnect on their own. Nulling the queue on
+    // the first blip permanently switched the process to direct processing.
     messageQueue.on('error', (error) => {
-      console.error('❌ Queue error:', error.message);
-      // On error, disable queue to prevent crashes
-      messageQueue = null;
+      console.error('❌ Queue error (Bull will retry/reconnect):', error.message);
     });
 
     messageQueue.on('failed', (job, err) => {
@@ -1609,6 +1610,35 @@ function checkPhoneRateLimit(phoneNumber, messageContent = '') {
   return true;
 }
 
+// Timing-safe string comparison for admin secrets (prevents timing attacks;
+// plain !== leaks match length/prefix through response timing)
+function timingSafeEqualStr(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length === 0 || b.length === 0) {
+    return false;
+  }
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Admin auth middleware — requires ADMIN_SECRET via Authorization: Bearer
+// header, or ?key= query param (for the HTML dashboard opened in a browser).
+function requireAdmin(req, res, next) {
+  if (!CONFIG.ADMIN_SECRET) {
+    console.error('❌ ADMIN_SECRET not configured — admin endpoint is locked');
+    return res.status(503).json({ error: 'Admin endpoint not configured' });
+  }
+  const headerToken = req.headers['authorization']?.replace('Bearer ', '');
+  const queryToken = typeof req.query.key === 'string' ? req.query.key : null;
+  if (timingSafeEqualStr(headerToken, CONFIG.ADMIN_SECRET) ||
+      timingSafeEqualStr(queryToken, CONFIG.ADMIN_SECRET)) {
+    return next();
+  }
+  console.warn('❌ Unauthorized admin access attempt:', req.originalUrl.split('?')[0]);
+  return res.status(401).json({ error: 'Unauthorized' });
+}
+
 // Webhook signature validation middleware (SECURE - timing attack protected)
 function validateWebhookSignature(req, res, next) {
   // SECURITY FIX: Fail-fast in production if app secret not configured
@@ -1707,7 +1737,8 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  console.log('🔍 Webhook verification attempt:', { mode, receivedToken: token, expectedToken: CONFIG.VERIFY_TOKEN, match: token === CONFIG.VERIFY_TOKEN });
+  // SECURITY: never log the expected token — it's a secret
+  console.log('🔍 Webhook verification attempt:', { mode, match: token === CONFIG.VERIFY_TOKEN });
 
   if (mode && token) {
     if (mode === 'subscribe' && token === CONFIG.VERIFY_TOKEN) {
@@ -1725,7 +1756,9 @@ app.get('/webhook', (req, res) => {
 
 // Receive WhatsApp messages
 app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) => {
-  console.log('📨 Incoming webhook:', JSON.stringify(req.body, null, 2));
+  // PRIVACY: don't dump the full payload (message text + phone) into logs;
+  // the per-message log lines below carry what's needed for debugging.
+  console.log(`📨 Incoming webhook (${req.rawBody ? req.rawBody.length : 0} bytes)`);
 
   // Acknowledge immediately to Meta
   res.sendStatus(200);
@@ -2221,7 +2254,7 @@ app.post('/webhook-optimized', webhookLimiter, validateWebhookSignature, async (
 });
 
 // Stats endpoint for optimized bot
-app.get('/optimized-stats', async (req, res) => {
+app.get('/optimized-stats', monitoringLimiter, async (req, res) => {
   try {
     const bot = await getOrInitOptimizedBot();
     const stats = bot.getStats();
@@ -2246,7 +2279,7 @@ async function extractAndSaveMetadata(phoneNumber, customerMessage, agentRespons
 
     // Find active conversation
     const conversation = await Conversation.findOne({
-      customerPhone: { $eq: sanitizedPhone },
+      ...Conversation.phoneFilter(sanitizedPhone),
       status: 'active'
     });
 
@@ -2319,7 +2352,7 @@ async function storeCustomerMessage(phoneNumber, message, messageId) {
     const sanitizedMessage = sanitizeMessageContent(message);
 
     // Find or create customer
-    let customer = await Customer.findOne({ phoneNumber: { $eq: sanitizedPhone } });
+    let customer = await Customer.findOne(Customer.phoneFilter(sanitizedPhone));
     if (!customer) {
       customer = new Customer({
         phoneNumber: sanitizedPhone,
@@ -2333,7 +2366,7 @@ async function storeCustomerMessage(phoneNumber, message, messageId) {
 
     // Find or create conversation
     let conversation = await Conversation.findOne({
-      customerPhone: { $eq: sanitizedPhone },
+      ...Conversation.phoneFilter(sanitizedPhone),
       status: 'active'
     });
 
@@ -2361,7 +2394,7 @@ async function storeAgentMessage(phoneNumber, message) {
     const sanitizedMessage = sanitizeMessageContent(message);
 
     const conversation = await Conversation.findOne({
-      customerPhone: { $eq: sanitizedPhone },
+      ...Conversation.phoneFilter(sanitizedPhone),
       status: 'active'
     });
 
@@ -2400,7 +2433,7 @@ async function getConversationContext(phoneNumber) {
     // Step 2: Try MongoDB (persistent storage)
     try {
       const conversation = await Conversation.findOne({
-        customerPhone: { $eq: sanitizedPhone },
+        ...Conversation.phoneFilter(sanitizedPhone),
         status: 'active'
       });
 
@@ -2481,7 +2514,7 @@ async function clearConversationHistory(phoneNumber) {
     // Mark MongoDB conversation as completed (preserve for analytics)
     try {
       await Conversation.updateOne(
-        { customerPhone: sanitizedPhone, status: 'active' },
+        { ...Conversation.phoneFilter(sanitizedPhone), status: 'active' },
         { $set: { status: 'completed', completedAt: new Date() } }
       );
       console.log(`🗑️ Marked MongoDB conversation as completed for ${sanitizedPhone}`);
@@ -2730,7 +2763,7 @@ async function processWithClaudeAgent(message, customerPhone, context = [], opti
     let conversationMetadata = null;
     try {
       const conversation = await Conversation.findOne({
-        customerPhone: { $eq: sanitizedPhone },
+        ...Conversation.phoneFilter(sanitizedPhone),
         status: 'active'
       });
 
@@ -3010,7 +3043,7 @@ async function processWithClaudeAgent(message, customerPhone, context = [], opti
       setImmediate(async () => {
         try {
           await Conversation.findOneAndUpdate(
-            { customerPhone: sanitizedPhone, status: 'active' },
+            { ...Conversation.phoneFilter(sanitizedPhone), status: 'active' },
             {
               $set: { 'metadata.needsHumanFollowup': true },
               $push: {
@@ -3318,7 +3351,7 @@ app.post('/admin/clear-products', adminLimiter, async (req, res) => {
       console.error('❌ ADMIN_SECRET not configured — admin endpoint is locked');
       return res.status(503).json({ error: 'Admin endpoint not configured' });
     }
-    if (token !== CONFIG.ADMIN_SECRET) {
+    if (!timingSafeEqualStr(token, CONFIG.ADMIN_SECRET)) {
       console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -3355,7 +3388,7 @@ app.post('/admin/import-products', adminLimiter, async (req, res) => {
       console.error('❌ ADMIN_SECRET not configured — admin endpoint is locked');
       return res.status(503).json({ error: 'Admin endpoint not configured' });
     }
-    if (token !== CONFIG.ADMIN_SECRET) {
+    if (!timingSafeEqualStr(token, CONFIG.ADMIN_SECRET)) {
       console.log('❌ Unauthorized access attempt');
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -3422,7 +3455,7 @@ process.on('SIGTERM', async () => {
 // v61 Phase B.3 — State Dashboard
 // JSON: GET /admin/state-dashboard.json  (consumed by HTML page or scripts)
 // HTML: GET /admin/state-dashboard       (human-friendly view)
-app.get('/admin/state-dashboard.json', monitoringLimiter, async (req, res) => {
+app.get('/admin/state-dashboard.json', monitoringLimiter, requireAdmin, async (req, res) => {
   try {
     const sinceHours = parseInt(req.query.hours, 10) || 24;
     const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
@@ -3479,7 +3512,7 @@ app.get('/admin/state-dashboard.json', monitoringLimiter, async (req, res) => {
   }
 });
 
-app.get('/admin/state-dashboard', monitoringLimiter, async (req, res) => {
+app.get('/admin/state-dashboard', monitoringLimiter, requireAdmin, async (req, res) => {
   try {
     const sinceHours = parseInt(req.query.hours, 10) || 24;
     const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
@@ -3631,6 +3664,16 @@ app.get('/admin/state-dashboard', monitoringLimiter, async (req, res) => {
   }
 });
 
+// 404 for unknown routes, then the global error handler — MUST be registered
+// after every route above (these were imported but never installed).
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// Process-level safety nets: log + report to Sentry on unhandled rejections /
+// uncaught exceptions instead of dying silently.
+handleUnhandledRejection();
+handleUncaughtException();
+
 // Start server FIRST (so Render sees it's alive immediately)
 app.listen(CONFIG.PORT, () => {
   console.log(`\n🚀 WhatsApp-Claude Production Server`);
@@ -3768,10 +3811,12 @@ if (process.env.OWNER_WHATSAPP_NUMBER) {
       const sinceMidnight = new Date();
       sinceMidnight.setHours(0, 0, 0, 0);
 
+      // No .lean(): we read c.customerPhone below and need the post-find decrypt
+      // hooks to run so it's plaintext (for the owner-facing display).
       const convos = await Conversation.find({
         'metadata.needsHumanFollowup': true,
         'metadata.escalations.timestamp': { $gte: sinceMidnight }
-      }).lean();
+      });
 
       // Filter to escalations from today that haven't been notified yet
       const items = [];
@@ -3808,11 +3853,13 @@ if (process.env.OWNER_WHATSAPP_NUMBER) {
       await sendWhatsAppMessage(process.env.OWNER_WHATSAPP_NUMBER, summary);
       console.log(`✅ Daily summary sent to owner (${items.length} escalations)`);
 
-      // Mark these escalations as notified so they don't appear again tomorrow
-      const phones = [...new Set(items.map(i => i.phone))];
-      for (const phone of phones) {
+      // Mark these escalations as notified so they don't appear again tomorrow.
+      // Update by conversation _id (precise, and avoids querying the encrypted
+      // customerPhone field).
+      const convoIds = [...new Set(items.map(i => String(i.conversationId)))];
+      for (const convoId of convoIds) {
         await Conversation.updateOne(
-          { customerPhone: phone, status: 'active' },
+          { _id: convoId },
           { $set: { 'metadata.escalations.$[elem].notifiedAt': new Date() } },
           { arrayFilters: [{ 'elem.notifiedAt': { $exists: false }, 'elem.resolved': false }] }
         );

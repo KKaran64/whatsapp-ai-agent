@@ -31,7 +31,9 @@ async function maybeCompress(buffer) {
 
 class VisionHandler {
   constructor(config = {}) {
-    this.whatsappToken = config.whatsappToken;
+    // server.js passes UPPER_SNAKE config keys (WHATSAPP_TOKEN) like every
+    // other module; accept the legacy camelCase form too.
+    this.whatsappToken = config.WHATSAPP_TOKEN || config.whatsappToken;
     this.stats = { totalImages: 0, downloadFailures: 0, startedAt: new Date().toISOString() };
   }
 

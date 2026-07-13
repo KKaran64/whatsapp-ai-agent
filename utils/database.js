@@ -20,7 +20,7 @@ async function updateConversationHistory(Customer, phoneNumber, userMessage, aiM
     const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
 
     const result = await Customer.updateOne(
-      { phoneNumber: sanitizedPhone },
+      Customer.phoneFilter(sanitizedPhone),
       {
         $push: {
           conversationHistory: {
@@ -69,7 +69,7 @@ async function updateLeadQualification(Customer, phoneNumber, qualificationData)
     });
 
     const result = await Customer.updateOne(
-      { phoneNumber: sanitizedPhone },
+      Customer.phoneFilter(sanitizedPhone),
       {
         $set: updateFields
       },
@@ -101,7 +101,7 @@ async function getConversationHistory(Customer, phoneNumber, limit = DATABASE.CO
     const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
 
     const customer = await Customer.findOne(
-      { phoneNumber: sanitizedPhone },
+      Customer.phoneFilter(sanitizedPhone),
       {
         conversationHistory: { $slice: -limit },  // Get last N messages
         _id: 0  // Don't need ID
@@ -126,7 +126,7 @@ async function getOrCreateCustomer(Customer, phoneNumber) {
   try {
     const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
 
-    let customer = await Customer.findOne({ phoneNumber: sanitizedPhone });
+    let customer = await Customer.findOne(Customer.phoneFilter(sanitizedPhone));
 
     if (!customer) {
       customer = await Customer.create({
@@ -170,7 +170,7 @@ async function updateCustomerMetadata(Customer, phoneNumber, metadata) {
     });
 
     const result = await Customer.updateOne(
-      { phoneNumber: sanitizedPhone },
+      Customer.phoneFilter(sanitizedPhone),
       { $set: updateFields },
       { runValidators: true }
     );

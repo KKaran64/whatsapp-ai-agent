@@ -30,3 +30,8 @@ Thumbs.db
 
 # RAG past chats (raw WhatsApp exports — sensitive customer data)
 data/past-chats/*.txt
+
+# Secrets & runtime-generated artifacts (NEVER COMMIT)
+CREDENTIALS.txt
+product-hash-index.json
+vision-stats.json

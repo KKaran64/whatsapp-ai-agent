@@ -178,8 +178,10 @@ function hasQuantity(customerText) {
 function hasInvoiceField(customerText, field) {
   switch (field) {
     case 'company':
-      return /\b(pvt|private|llp|ltd|limited|company|enterprises|industries|sustainable|products|inc|gmbh)\b/i.test(customerText)
-        || /\b[A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+\b/.test(customerText); // crude two-cap-words
+      // Keyword-only detection. The old two-capitalized-words fallback matched
+      // phrases like "Good Morning" / "Ember Planter" and yanked the state
+      // machine into COLLECTING_INVOICE_INFO right after any quote.
+      return /\b(pvt|private|llp|ltd|limited|company|enterprises|industries|sustainable|products|inc|gmbh)\b/i.test(customerText);
     case 'gstin':
       return /\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}\d{1}[Z]{1}[A-Z\d]{1}\b/i.test(customerText);
     case 'address':
