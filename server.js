@@ -3512,6 +3512,29 @@ app.get('/admin/state-dashboard.json', monitoringLimiter, requireAdmin, async (r
   }
 });
 
+// ─── TEMPORARY one-time migration endpoint ───────────────────────────────────
+// Backfills phoneHash (blind index) on legacy Customer/Conversation docs. Runs
+// INSIDE the deployed process, so it reuses the live mongoose connection and the
+// exact production encryption keys — the hashes it writes are guaranteed to match
+// what the running server computes for live lookups.
+//   Trigger (dry run first):
+//     curl -X POST "https://<host>/admin/backfill-phone-hash?dry_run=true&key=<ADMIN_SECRET>"
+//   Then for real (omit dry_run):
+//     curl -X POST "https://<host>/admin/backfill-phone-hash?key=<ADMIN_SECRET>"
+// REMOVE THIS ROUTE once the migration has run in production.
+app.post('/admin/backfill-phone-hash', monitoringLimiter, requireAdmin, async (req, res) => {
+  const dryRun = req.query.dry_run === 'true';
+  try {
+    const { runBackfill } = require('./scripts/backfill-phone-hash');
+    const result = await runBackfill({ dryRun });
+    console.log('🔧 phoneHash backfill via endpoint:', JSON.stringify(result));
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('❌ backfill endpoint failed:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/admin/state-dashboard', monitoringLimiter, requireAdmin, async (req, res) => {
   try {
     const sinceHours = parseInt(req.query.hours, 10) || 24;

@@ -15,9 +15,15 @@
  * Conversation.phoneHash is NOT unique, so conversation duplicates are left
  * intact (that's a separate, pre-existing concern).
  *
- * Usage:
- *   node scripts/backfill-phone-hash.js            # apply
- *   node scripts/backfill-phone-hash.js --dry-run  # report only, no writes
+ * Two ways to run:
+ *   1. CLI (connects itself):
+ *        node scripts/backfill-phone-hash.js            # apply
+ *        node scripts/backfill-phone-hash.js --dry-run  # report only, no writes
+ *   2. In-process (mongoose already connected — e.g. from server.js):
+ *        const { runBackfill } = require('./scripts/backfill-phone-hash');
+ *        await runBackfill({ dryRun });                 // returns a summary object
+ *      This path reuses the caller's connection and encryption keys, so it runs
+ *      correctly inside the deployed process (where the prod keys already live).
  */
 
 require('dotenv').config();
@@ -26,13 +32,9 @@ const { phoneBlindIndex } = require('../mongodb-encryption');
 const Customer = require('../models/Customer');
 const Conversation = require('../models/Conversation');
 
-const DRY_RUN = process.argv.includes('--dry-run');
-const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
-
-async function backfillCustomers() {
+async function backfillCustomers(dryRun) {
   const docs = await Customer.find({ phoneHash: { $exists: false } });
-  console.log(`\n👤 Customers missing phoneHash: ${docs.length}`);
-  let migrated = 0, dupsDeleted = 0, errors = 0;
+  let migrated = 0, duplicatesDeleted = 0, errors = 0;
 
   for (const c of docs) {
     // c.phoneNumber is plaintext here — post-find decrypt hook already ran
@@ -40,11 +42,7 @@ async function backfillCustomers() {
     const plain = c.phoneNumber;
     if (!plain) { continue; }
 
-    if (DRY_RUN) {
-      console.log(`  would set phoneHash for ${String(plain).slice(-4)} (${c._id})`);
-      migrated++;
-      continue;
-    }
+    if (dryRun) { migrated++; continue; }
 
     c.phoneHash = phoneBlindIndex(plain);
     c.markModified('phoneNumber'); // force the encryption hook to run on legacy plaintext
@@ -55,30 +53,28 @@ async function backfillCustomers() {
       if (e.code === 11000) {
         // Duplicate phoneHash → this is a surplus Customer doc from the bug era.
         await Customer.deleteOne({ _id: c._id });
-        dupsDeleted++;
+        duplicatesDeleted++;
       } else {
         errors++;
         console.error(`  ❌ Customer ${c._id}:`, e.message);
       }
     }
   }
-  console.log(`   migrated=${migrated} duplicatesDeleted=${dupsDeleted} errors=${errors}`);
+
+  const summary = { missing: docs.length, migrated, duplicatesDeleted, errors };
+  console.log(`👤 Customers:`, JSON.stringify(summary));
+  return summary;
 }
 
-async function backfillConversations() {
+async function backfillConversations(dryRun) {
   const docs = await Conversation.find({ phoneHash: { $exists: false } });
-  console.log(`\n💬 Conversations missing phoneHash: ${docs.length}`);
   let migrated = 0, errors = 0;
 
   for (const conv of docs) {
     const plain = conv.customerPhone;
     if (!plain) { continue; }
 
-    if (DRY_RUN) {
-      console.log(`  would set phoneHash for ${String(plain).slice(-4)} (${conv._id})`);
-      migrated++;
-      continue;
-    }
+    if (dryRun) { migrated++; continue; }
 
     conv.phoneHash = phoneBlindIndex(plain);
     conv.markModified('customerPhone'); // force encryption of legacy plaintext
@@ -90,27 +86,47 @@ async function backfillConversations() {
       console.error(`  ❌ Conversation ${conv._id}:`, e.message);
     }
   }
-  console.log(`   migrated=${migrated} errors=${errors}`);
+
+  const summary = { missing: docs.length, migrated, errors };
+  console.log(`💬 Conversations:`, JSON.stringify(summary));
+  return summary;
 }
 
+/**
+ * Core migration. Assumes an active mongoose connection. Never calls
+ * process.exit() or closes the connection, so it is safe to invoke from within
+ * the running server. Returns a structured summary.
+ */
+async function runBackfill({ dryRun = false } = {}) {
+  const customers = await backfillCustomers(dryRun);
+  const conversations = await backfillConversations(dryRun);
+  return { dryRun, customers, conversations };
+}
+
+// CLI entry point — connects, runs, disconnects. Only when invoked directly.
 async function main() {
+  const dryRun = process.argv.includes('--dry-run');
+  const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
   if (!MONGODB_URI) {
     console.error('❌ MONGODB_URI not set. Aborting.');
     process.exit(1);
   }
-  console.log(`🔗 Connecting to MongoDB${DRY_RUN ? ' (DRY RUN — no writes)' : ''}...`);
+  console.log(`🔗 Connecting to MongoDB${dryRun ? ' (DRY RUN — no writes)' : ''}...`);
   await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
   console.log('✅ Connected');
 
-  await backfillCustomers();
-  await backfillConversations();
+  await runBackfill({ dryRun });
 
   await mongoose.connection.close();
   console.log('\n✅ Backfill complete.');
   process.exit(0);
 }
 
-main().catch(err => {
-  console.error('❌ Backfill failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('❌ Backfill failed:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { runBackfill, backfillCustomers, backfillConversations };
