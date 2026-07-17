@@ -69,6 +69,7 @@ async function backfillCustomers(dryRun) {
 async function backfillConversations(dryRun) {
   const docs = await Conversation.find({ phoneHash: { $exists: false } });
   let migrated = 0, errors = 0;
+  const failures = [];
 
   for (const conv of docs) {
     const plain = conv.customerPhone;
@@ -83,11 +84,13 @@ async function backfillConversations(dryRun) {
       migrated++;
     } catch (e) {
       errors++;
+      failures.push({ id: String(conv._id), error: e.message });
       console.error(`  ❌ Conversation ${conv._id}:`, e.message);
     }
   }
 
   const summary = { missing: docs.length, migrated, errors };
+  if (failures.length) summary.failures = failures;
   console.log(`💬 Conversations:`, JSON.stringify(summary));
   return summary;
 }
