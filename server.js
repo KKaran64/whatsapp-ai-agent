@@ -1925,7 +1925,20 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                   }
 
                   // ─── Decide what to do based on identification ───
-                  if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
+                  // FIRST: if image is a screenshot/text/list/table, skip cork classification
+                  // entirely and route through text pipeline — the image isn't a product photo
+                  const isTextImage = identification &&
+                    /\b(screenshot|list|table|text|menu|document|spreadsheet|catalog|catalogue|names|typed|handwritten)\b/i.test(
+                      (identification.visibleObject || '') + ' ' + (identification.reasoning || '')
+                    );
+                  if (isTextImage) {
+                    const extractedInfo = identification.reasoning || identification.visibleObject || '';
+                    const virtualText = customerCaption
+                      ? `${customerCaption} (Customer sent a screenshot/list. Gemini read: ${extractedInfo}. Extract the product names and help the customer.)`
+                      : `Customer sent a screenshot/list of products. Gemini read: ${extractedInfo}. Extract the product names mentioned and help the customer with pricing/photos.`;
+                    console.log(`📸 → text/list image detected, routing to text pipeline (${identification.visibleObject})`);
+                    response = await processWithClaudeAgent(virtualText, from, context);
+                  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
                     // HIGH confidence cork product — route through text pipeline
                     const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
                     const virtualText = customerCaption
