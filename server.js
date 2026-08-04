@@ -1933,11 +1933,23 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                     );
                   if (isTextImage) {
                     const extractedInfo = identification.reasoning || identification.visibleObject || '';
+                    const wantsPhotos = /\b(photo|picture|image|pic|pics|show|send|share)\b/i.test(customerCaption || '');
                     const virtualText = customerCaption
-                      ? `${customerCaption} (Customer sent a screenshot/list. Gemini read: ${extractedInfo}. Extract the product names and help the customer.)`
-                      : `Customer sent a screenshot/list of products. Gemini read: ${extractedInfo}. Extract the product names mentioned and help the customer with pricing/photos.`;
+                      ? `${customerCaption}\n\n(Customer sent a screenshot/list of product names. Gemini read: ${extractedInfo}.\nIMPORTANT: List ALL the products mentioned, not just one or two. The customer wants help with the ENTIRE list. Do NOT enter the pricing flow — acknowledge all products and ask how you can help.)`
+                      : `Customer sent a screenshot/list of products. Gemini read: ${extractedInfo}.\nIMPORTANT: Extract ALL product names mentioned and help the customer with the ENTIRE list. Do NOT focus on just one category.`;
                     console.log(`📸 → text/list image detected, routing to text pipeline (${identification.visibleObject})`);
                     response = await processWithClaudeAgent(virtualText, from, context);
+
+                    // If customer asked for photos and list has multiple products, send full catalog
+                    if (wantsPhotos && CONFIG.PDF_CATALOG_PRODUCTS) {
+                      try {
+                        console.log('📄 Multi-product photo request from screenshot — sending full catalog');
+                        await sendWhatsAppDocument(from, CONFIG.PDF_CATALOG_PRODUCTS, '9Cork-Products-Catalog.pdf',
+                          'Here is our complete products catalog with photos of all items! 🌿');
+                      } catch (err) {
+                        console.warn('⚠️ Failed to send products catalog:', err.message);
+                      }
+                    }
                   } else if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
                     // HIGH confidence cork product — route through text pipeline
                     const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
