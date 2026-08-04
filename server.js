@@ -1940,14 +1940,44 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                     console.log(`📸 → text/list image detected, routing to text pipeline (${identification.visibleObject})`);
                     response = await processWithClaudeAgent(virtualText, from, context);
 
-                    // If customer asked for photos and list has multiple products, send full catalog
-                    if (wantsPhotos && CONFIG.PDF_CATALOG_PRODUCTS) {
-                      try {
-                        console.log('📄 Multi-product photo request from screenshot — sending full catalog');
-                        await sendWhatsAppDocument(from, CONFIG.PDF_CATALOG_PRODUCTS, '9Cork-Products-Catalog.pdf',
-                          'Here is our complete products catalog with photos of all items! 🌿');
-                      } catch (err) {
-                        console.warn('⚠️ Failed to send products catalog:', err.message);
+                    // If customer asked for photos, send the best-matching catalog PDF
+                    if (wantsPhotos) {
+                      const infoLower = extractedInfo.toLowerCase();
+                      let catalogUrl = '', catalogName = '', catalogCaption = '';
+
+                      if (/\b(horeca|hotel|restaurant|cafe|bar|caddy|bill folder|menu folder|room tag|qr scanner|payment scanner|menu scanner)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_HORECA) {
+                        catalogUrl = CONFIG.PDF_CATALOG_HORECA;
+                        catalogName = '9Cork-HORECA-Catalog.pdf';
+                        catalogCaption = 'Here is our HORECA catalog with photos! 🌿';
+                      } else if (/\b(trophy|trophies|award|memento)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_TROPHY) {
+                        catalogUrl = CONFIG.PDF_CATALOG_TROPHY;
+                        catalogName = '9Cork-Trophy-Catalog.pdf';
+                        catalogCaption = 'Here is our trophy catalog with photos! 🏆';
+                      } else if (/\byoga\b/i.test(infoLower) && CONFIG.PDF_CATALOG_YOGA) {
+                        catalogUrl = CONFIG.PDF_CATALOG_YOGA;
+                        catalogName = '9Cork-Yoga-Catalog.pdf';
+                        catalogCaption = 'Here is our yoga essentials catalog! 🧘';
+                      } else if (/\b(planter|planters|test tube|pot|pots)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_PLANTERS) {
+                        catalogUrl = CONFIG.PDF_CATALOG_PLANTERS;
+                        catalogName = '9Cork-Planters-Catalog.pdf';
+                        catalogCaption = 'Here is our planters catalog with photos! 🌱';
+                      } else if (/\b(combo|gifting combo)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_COMBOS) {
+                        catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
+                        catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
+                        catalogCaption = 'Here is our gifting combos catalog! 🎁';
+                      } else if (CONFIG.PDF_CATALOG_PRODUCTS) {
+                        catalogUrl = CONFIG.PDF_CATALOG_PRODUCTS;
+                        catalogName = '9Cork-Products-Catalog.pdf';
+                        catalogCaption = 'Here is our complete products catalog with photos! 🌿';
+                      }
+
+                      if (catalogUrl) {
+                        try {
+                          console.log(`📄 Screenshot photo request — sending ${catalogName}`);
+                          await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
+                        } catch (err) {
+                          console.warn('⚠️ Failed to send catalog:', err.message);
+                        }
                       }
                     }
                   } else if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
