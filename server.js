@@ -1941,9 +1941,17 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                       : `Thanks for the photo! This looks like it could be a ${productLabel}. Could you confirm and let me know how many pieces you need?`;
                     console.log(`📸 → asking customer to confirm (borderline cork match)`);
                   } else if (identification && identification.isCorkProduct === false) {
-                    // Confidently NOT a cork product (e.g. keychain, leather wallet)
-                    response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
-                    console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
+                    // Check if customer caption signals a product request despite vision saying non-cork
+                    const captionLower = (customerCaption || '').toLowerCase();
+                    const captionSignalsProductRequest = /\b(photo|image|picture|price|rate|cost|quote|send|show|provide|product|catalog|list)\b/i.test(captionLower);
+                    if (captionSignalsProductRequest) {
+                      console.log(`📸 → vision said non-cork but caption signals product request, routing to text pipeline`);
+                      const virtualText = customerCaption + ` (Customer sent an image that appears to be: ${identification.visibleObject}. The customer's message suggests they want product info — treat this as a product inquiry and extract any product names from the image description or caption.)`;
+                      response = await processWithClaudeAgent(virtualText, from, context);
+                    } else {
+                      response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
+                      console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
+                    }
                   } else if (identification && identification.confidence < 0.5) {
                     // Unclear image — ask for clarification
                     response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;

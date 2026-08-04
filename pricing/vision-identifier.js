@@ -90,6 +90,15 @@ Confidence guide:
 - 0.4-0.7 : Could be a cork product but not sure, or category ambiguous
 - <0.4 : Doesn't look like a cork product, or photo too unclear
 
+SPECIAL CASE — screenshots / text lists / tables:
+If the image is a SCREENSHOT, TABLE, or TEXT LIST containing product names (not a photo of a physical item):
+- Set is_cork_product: true if ANY of the listed products match our catalog categories
+- Set matched_category to the FIRST matching category you find
+- Set visible_object to "screenshot listing product names" (or similar)
+- Set confidence to 0.8
+- In "reasoning", list the product names you can read from the image
+- Do NOT treat screenshots of our own product names as "outside our cork range"
+
 CRITICAL — be honest about uncertainty:
 - If image shows a keychain, return is_cork_product: false (we don't sell keychains)
 - If image is blurry or partial, lower confidence
