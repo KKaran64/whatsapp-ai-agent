@@ -1829,17 +1829,24 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
       // v60: audio added — transcribed via Groq Whisper inside processBatch.
       if ((messageType === 'text' && messageBody) || messageType === 'image' || messageType === 'audio') {
         // Add to queue for processing (if queue is available)
+        let queued = false;
         if (messageQueue) {
-          await messageQueue.add('process-message', {
-            from,
-            messageBody: messageBody || 'What is this?',
-            messageId,
-            messageType,
-            mediaId,
-            timestamp: new Date()
-          });
-          console.log('✅ Message added to queue');
-        } else {
+          try {
+            await messageQueue.add('process-message', {
+              from,
+              messageBody: messageBody || 'What is this?',
+              messageId,
+              messageType,
+              mediaId,
+              timestamp: new Date()
+            });
+            console.log('✅ Message added to queue');
+            queued = true;
+          } catch (queueErr) {
+            console.warn('⚠️  Queue add failed, falling back to direct processing:', queueErr.message);
+          }
+        }
+        if (!queued) {
           console.log('⚠️  Queue unavailable - processing directly');
 
           // v52 FIX: Check if already sent
