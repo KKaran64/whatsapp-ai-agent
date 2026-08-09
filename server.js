@@ -26,6 +26,10 @@ const { resolveCategory: resolveImageCategory } = require('./pricing/image-routi
 // 2026-07-06 — intent-driven image selection: images narrow by the resolver's
 // refinements, same understanding layer as pricing.
 const { filterByRefinements, selectImageSearch } = require('./pricing/refinement-filter');
+// Curated combo → component → exact-image-URL data (kept in sync by
+// scripts/import-image-links.js). Keys are "COMBO 01".."COMBO 49", matching
+// the combo numbers system-prompt.js quotes to customers (e.g. "Combo #12").
+const COMBO_IMAGES = require('./data/combo-images.json');
 // v60 — voice message transcription via Groq Whisper
 const { handleVoiceMessage } = require('./audio-handler');
 // v60 — catalog-aware vision identification via Gemini multimodal
@@ -887,6 +891,40 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     if (comboMatch && hasTrigger) {
       const comboNumber = parseInt(comboMatch[1]);
       console.log(`🎯 Combo-specific image request detected: Combo/Option #${comboNumber}`);
+
+      // v62 — exact match first: combo-images.json has the curated
+      // component list + image for every catalog combo (same numbering
+      // system-prompt.js quotes to customers, e.g. "Combo #12"). Only fall
+      // through to category-keyword guessing below for numbers outside the
+      // catalog (typos, custom combos the bot improvised).
+      const comboKey = `COMBO ${String(comboNumber).padStart(2, '0')}`;
+      const exactCombo = COMBO_IMAGES[comboKey];
+
+      if (exactCombo && exactCombo.components && exactCombo.components.length > 0) {
+        console.log(`📦 Sending ${exactCombo.components.length} exact images for ${comboKey} (${exactCombo.section})`);
+        await sentImagesTracker.clear(from);
+
+        let totalSent = 0;
+        for (const component of exactCombo.components) {
+          try {
+            const imageUrl = convertGoogleDriveUrl(component.image);
+            if (isValidImageUrl(imageUrl)) {
+              await sendWhatsAppImage(from, imageUrl, `${component.name} 🌿`);
+              await sentImagesTracker.add(from, component.image);
+              totalSent++;
+              console.log(`   ✅ Sent: ${component.name}`);
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          } catch (err) {
+            console.error(`   ❌ Failed to send ${component.name}:`, err.message);
+          }
+        }
+
+        console.log(`📦 Sent ${totalSent} exact images for ${comboKey}`);
+        return; // Exit early — exact combo images sent
+      }
+
+      console.log(`   ${comboKey} not in combo-images.json, falling back to category-keyword matching`);
 
       // Look for bot's previous message containing combo suggestions
       const recentMessages = conversationContext.slice(-10);
