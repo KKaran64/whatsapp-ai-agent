@@ -523,6 +523,14 @@ let messageQueue;
 // Structure: Map<phoneNumber, Array<{role, content, timestamp}>>
 const conversationMemory = new Map();
 
+// v62 — this turn's resolveIntent result, handed from processWithClaudeAgent
+// to the handleImageDetectionAndSending call that immediately follows it, so
+// the same incoming message doesn't cost two Groq LLM calls. Consumed (read
+// + deleted) by the first matching read; a phone's entry is overwritten each
+// turn, so this never grows past one entry per active phone.
+// Structure: Map<phoneNumber, {rawMessage, intent}>
+const pendingIntentByPhone = new Map();
+
 // Initialize MongoDB connection (non-blocking)
 async function connectDatabase() {
   try {
@@ -1019,10 +1027,24 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // (LLM outage / no product mentioned) falls back to the category bucket,
       // which is the legacy behavior.
       let imageIntent = null;
-      try {
-        imageIntent = await resolveIntent(userMessage, conversationContext, { budgetMs: 3000 });
-      } catch (e) {
-        console.warn('⚠️ Image-path intent resolution failed (category fallback):', e.message);
+      // v62 — this same message was already run through resolveIntent once
+      // by processWithClaudeAgent just before this function was called. Reuse
+      // that result instead of paying for a second Groq call, but only when
+      // userMessage is still exactly what the customer sent — the
+      // pronoun/context enrichment above (the genericImageRequest block) can
+      // rewrite userMessage with extra product context the pricing call
+      // never saw, and a fresh call is required to reflect that.
+      const pending = pendingIntentByPhone.get(from);
+      if (pending && pending.rawMessage === messageBody && userMessage === messageBody) {
+        imageIntent = pending.intent;
+        pendingIntentByPhone.delete(from);
+        console.log('♻️  Reusing this turn\'s resolved intent for image selection (no duplicate LLM call)');
+      } else {
+        try {
+          imageIntent = await resolveIntent(userMessage, conversationContext, { budgetMs: 3000 });
+        } catch (e) {
+          console.warn('⚠️ Image-path intent resolution failed (category fallback):', e.message);
+        }
       }
       const imageSearch = selectImageSearch(imageIntent, resolvedCategory);
       if (imageSearch) {
@@ -2927,6 +2949,15 @@ async function processWithClaudeAgent(message, customerPhone, context = [], opti
       // quantity, customer type, branding). Regex fallback + telemetry flag
       // live inside the resolver. 3s wall-clock budget on the interactive path.
       intent = await resolveIntent(sanitizedMessage, context, { budgetMs: 3000 });
+
+      // v62 — hand this turn's resolved intent to the image-detection pass
+      // that runs right after this function returns, keyed on the exact raw
+      // message so it's only reused when nothing about the query changed.
+      pendingIntentByPhone.set(customerPhone, { rawMessage: message, intent });
+      if (pendingIntentByPhone.size > 500) {
+        const oldestKey = pendingIntentByPhone.keys().next().value;
+        pendingIntentByPhone.delete(oldestKey);
+      }
 
       // v61 Phase B.1: derive conversation state and inject the state guard.
       // Customer type arrives on the intent from the LLM-first resolver above.
