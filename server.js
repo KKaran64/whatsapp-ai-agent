@@ -1280,6 +1280,111 @@ async function withPhoneLock(phone, fn) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Shared image handler — single source of truth for all image paths
+// (direct processing, Bull queue, optimized bot fallback)
+// ─────────────────────────────────────────────────────────────────────
+async function handleIncomingImage(mediaId, caption, from, context) {
+  console.log('📸 Processing image with catalog-aware Gemini Vision...');
+  const customerCaption = (caption || '').trim();
+
+  // 1. Download image
+  let imageData = null;
+  try {
+    imageData = await visionHandler.downloadImage(mediaId);
+  } catch (err) {
+    console.warn('⚠️ Image download failed:', err.message);
+  }
+
+  // 2. Run Gemini Vision identification
+  let identification = null;
+  if (imageData?.base64) {
+    try {
+      const imageBuffer = Buffer.from(imageData.base64, 'base64');
+      identification = await identifyProductFromImage(imageBuffer, imageData.mimeType || 'image/jpeg');
+      if (identification) {
+        console.log(`📸 Gemini Vision: "${identification.visibleObject}" (cork=${identification.isCorkProduct}, conf=${(identification.confidence * 100).toFixed(0)}%, category=${identification.matchedCategory || 'none'}, sku=${identification.matchedProductName || 'none'})`);
+      }
+    } catch (err) {
+      console.warn('⚠️ Gemini Vision failed:', err.message);
+    }
+  }
+
+  // 3. Build logTag for customer message storage
+  const logTag = identification
+    ? `vision: "${identification.visibleObject}" cork=${identification.isCorkProduct} conf=${(identification.confidence * 100).toFixed(0)}%`
+    : 'vision: unavailable';
+
+  // 4. Decision tree
+  let response;
+  let catalogToSend = null;
+
+  // GATE: screenshot/text/list/table → skip cork classification entirely
+  const isTextImage = identification &&
+    /\b(screenshot|list|table|text|menu|document|spreadsheet|catalog|catalogue|names|typed|handwritten)\b/i.test(
+      (identification.visibleObject || '') + ' ' + (identification.reasoning || '')
+    );
+
+  if (isTextImage) {
+    const extractedInfo = identification.reasoning || identification.visibleObject || '';
+    const wantsPhotos = /\b(photo|picture|image|pic|pics|show|send|share)\b/i.test(customerCaption || '');
+    const virtualText = customerCaption
+      ? `${customerCaption}\n\n(Customer sent a screenshot/list of product names. Gemini read: ${extractedInfo}.\nIMPORTANT: List ALL the products mentioned, not just one or two. The customer wants help with the ENTIRE list. Do NOT enter the pricing flow — acknowledge all products and ask how you can help.)`
+      : `Customer sent a screenshot/list of products. Gemini read: ${extractedInfo}.\nIMPORTANT: Extract ALL product names mentioned and help the customer with the ENTIRE list. Do NOT focus on just one category.`;
+    console.log(`📸 → text/list image detected, routing to text pipeline (${identification.visibleObject})`);
+    response = await processWithClaudeAgent(virtualText, from, context);
+
+    if (wantsPhotos) {
+      const infoLower = extractedInfo.toLowerCase();
+      if (/\b(horeca|hotel|restaurant|cafe|bar|caddy|bill folder|menu folder|room tag|qr scanner|payment scanner|menu scanner)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_HORECA) {
+        catalogToSend = { url: CONFIG.PDF_CATALOG_HORECA, name: '9Cork-HORECA-Catalog.pdf', caption: 'Here is our HORECA catalog with photos! 🌿' };
+      } else if (/\b(trophy|trophies|award|memento)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_TROPHY) {
+        catalogToSend = { url: CONFIG.PDF_CATALOG_TROPHY, name: '9Cork-Trophy-Catalog.pdf', caption: 'Here is our trophy catalog with photos! 🏆' };
+      } else if (/\byoga\b/i.test(infoLower) && CONFIG.PDF_CATALOG_YOGA) {
+        catalogToSend = { url: CONFIG.PDF_CATALOG_YOGA, name: '9Cork-Yoga-Catalog.pdf', caption: 'Here is our yoga essentials catalog! 🧘' };
+      } else if (/\b(planter|planters|test tube|pot|pots)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_PLANTERS) {
+        catalogToSend = { url: CONFIG.PDF_CATALOG_PLANTERS, name: '9Cork-Planters-Catalog.pdf', caption: 'Here is our planters catalog with photos! 🌱' };
+      } else if (/\b(combo|gifting combo)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_COMBOS) {
+        catalogToSend = { url: CONFIG.PDF_CATALOG_COMBOS, name: '9Cork-Gifting-Combos-Catalog.pdf', caption: 'Here is our gifting combos catalog! 🎁' };
+      } else if (CONFIG.PDF_CATALOG_PRODUCTS) {
+        catalogToSend = { url: CONFIG.PDF_CATALOG_PRODUCTS, name: '9Cork-Products-Catalog.pdf', caption: 'Here is our complete products catalog with photos! 🌿' };
+      }
+    }
+  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
+    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
+    const virtualText = customerCaption
+      ? `${customerCaption} (Customer also sent a photo — Gemini Vision identified it as: ${productLabel}, confidence ${(identification.confidence * 100).toFixed(0)}%. Confirm with customer before quoting.)`
+      : `Customer sent a photo of what appears to be a ${productLabel} (confidence ${(identification.confidence * 100).toFixed(0)}%). Confirm this is what they want, then ask quantity + customer type per RULE F.`;
+    console.log(`📸 → routing through text pipeline (high confidence cork match)`);
+    response = await processWithClaudeAgent(virtualText, from, context);
+  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.5) {
+    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
+    response = customerCaption
+      ? `Thanks for the photo! From what I can see this looks like a ${productLabel} — could you confirm? Once you do, I'll share the pricing.`
+      : `Thanks for the photo! This looks like it could be a ${productLabel}. Could you confirm and let me know how many pieces you need?`;
+    console.log(`📸 → asking customer to confirm (borderline cork match)`);
+  } else if (identification && identification.isCorkProduct === false) {
+    const captionLower = (customerCaption || '').toLowerCase();
+    const captionSignalsProductRequest = /\b(photo|image|picture|price|rate|cost|quote|send|show|provide|product|catalog|list)\b/i.test(captionLower);
+    if (captionSignalsProductRequest) {
+      console.log(`📸 → vision said non-cork but caption signals product request, routing to text pipeline`);
+      const virtualText = customerCaption + ` (Customer sent an image that appears to be: ${identification.visibleObject}. The customer's message suggests they want product info — treat this as a product inquiry and extract any product names from the image description or caption.)`;
+      response = await processWithClaudeAgent(virtualText, from, context);
+    } else {
+      response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
+      console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
+    }
+  } else if (identification && identification.confidence < 0.5) {
+    response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;
+    console.log(`📸 → asking for clarification (low confidence: ${(identification.confidence * 100).toFixed(0)}%)`);
+  } else {
+    console.log(`📸 → Gemini Vision unavailable, asking customer to describe`);
+    response = `Thanks for the photo! I'm having trouble loading the image right now — could you tell me which product you're interested in? (e.g. coasters, diaries, planters, frames, etc.)`;
+  }
+
+  return { response, catalogToSend, logTag };
+}
+
 // Setup message processor (only called when queue is available)
 function setupMessageProcessor() {
   if (!messageQueue) return;
@@ -1324,18 +1429,18 @@ function setupMessageProcessor() {
 
       let agentResponse;
 
-      // Handle IMAGE messages with vision AI
+      // Handle IMAGE messages with shared vision pipeline
       if (messageType === 'image' && mediaId) {
-        console.log('📸 Processing image message with vision AI from queue...');
-        const result = await visionHandler.handleImageMessage(
-          mediaId,
-          messageBody,
-          from,
-          context,
-          SYSTEM_PROMPT
-        );
-        agentResponse = result.response;
-        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
+        const imgResult = await handleIncomingImage(mediaId, messageBody, from, context);
+        agentResponse = imgResult.response;
+        if (imgResult.catalogToSend) {
+          try {
+            await sendWhatsAppDocument(from, imgResult.catalogToSend.url, imgResult.catalogToSend.name, imgResult.catalogToSend.caption);
+          } catch (err) {
+            console.warn('⚠️ Failed to send catalog from queue:', err.message);
+          }
+        }
+        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'} — ${imgResult.logTag}]`, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
       } else {
         // Handle TEXT messages normally
         // Pre-detect image intent so LLM knows images are coming before it speaks
@@ -1900,128 +2005,16 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                 //   to misclassify (e.g. won't call a keychain "Casa Planter").
                 // FALLBACK: legacy Smart Matcher if Gemini Vision is unavailable.
                 if (batchMessageType === 'image' && batchMediaId) {
-                  console.log('📸 Processing image with catalog-aware Gemini Vision...');
-                  const customerCaption = (combinedMessageBody || '').trim();
-
-                  // Download image (reusing vision handler's download method)
-                  let imageData = null;
-                  try {
-                    imageData = await visionHandler.downloadImage(batchMediaId);
-                  } catch (err) {
-                    console.warn('⚠️ Image download failed:', err.message);
-                  }
-
-                  let identification = null;
-                  if (imageData?.base64) {
+                  const imgResult = await handleIncomingImage(batchMediaId, combinedMessageBody, from, context);
+                  response = imgResult.response;
+                  if (imgResult.catalogToSend) {
                     try {
-                      const imageBuffer = Buffer.from(imageData.base64, 'base64');
-                      identification = await identifyProductFromImage(imageBuffer, imageData.mimeType || 'image/jpeg');
-                      if (identification) {
-                        console.log(`📸 Gemini Vision: "${identification.visibleObject}" (cork=${identification.isCorkProduct}, conf=${(identification.confidence * 100).toFixed(0)}%, category=${identification.matchedCategory || 'none'}, sku=${identification.matchedProductName || 'none'})`);
-                      }
+                      await sendWhatsAppDocument(from, imgResult.catalogToSend.url, imgResult.catalogToSend.name, imgResult.catalogToSend.caption);
                     } catch (err) {
-                      console.warn('⚠️ Gemini Vision failed, falling back to Smart Matcher:', err.message);
+                      console.warn('⚠️ Failed to send catalog:', err.message);
                     }
                   }
-
-                  // ─── Decide what to do based on identification ───
-                  // FIRST: if image is a screenshot/text/list/table, skip cork classification
-                  // entirely and route through text pipeline — the image isn't a product photo
-                  const isTextImage = identification &&
-                    /\b(screenshot|list|table|text|menu|document|spreadsheet|catalog|catalogue|names|typed|handwritten)\b/i.test(
-                      (identification.visibleObject || '') + ' ' + (identification.reasoning || '')
-                    );
-                  if (isTextImage) {
-                    const extractedInfo = identification.reasoning || identification.visibleObject || '';
-                    const wantsPhotos = /\b(photo|picture|image|pic|pics|show|send|share)\b/i.test(customerCaption || '');
-                    const virtualText = customerCaption
-                      ? `${customerCaption}\n\n(Customer sent a screenshot/list of product names. Gemini read: ${extractedInfo}.\nIMPORTANT: List ALL the products mentioned, not just one or two. The customer wants help with the ENTIRE list. Do NOT enter the pricing flow — acknowledge all products and ask how you can help.)`
-                      : `Customer sent a screenshot/list of products. Gemini read: ${extractedInfo}.\nIMPORTANT: Extract ALL product names mentioned and help the customer with the ENTIRE list. Do NOT focus on just one category.`;
-                    console.log(`📸 → text/list image detected, routing to text pipeline (${identification.visibleObject})`);
-                    response = await processWithClaudeAgent(virtualText, from, context);
-
-                    // If customer asked for photos, send the best-matching catalog PDF
-                    if (wantsPhotos) {
-                      const infoLower = extractedInfo.toLowerCase();
-                      let catalogUrl = '', catalogName = '', catalogCaption = '';
-
-                      if (/\b(horeca|hotel|restaurant|cafe|bar|caddy|bill folder|menu folder|room tag|qr scanner|payment scanner|menu scanner)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_HORECA) {
-                        catalogUrl = CONFIG.PDF_CATALOG_HORECA;
-                        catalogName = '9Cork-HORECA-Catalog.pdf';
-                        catalogCaption = 'Here is our HORECA catalog with photos! 🌿';
-                      } else if (/\b(trophy|trophies|award|memento)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_TROPHY) {
-                        catalogUrl = CONFIG.PDF_CATALOG_TROPHY;
-                        catalogName = '9Cork-Trophy-Catalog.pdf';
-                        catalogCaption = 'Here is our trophy catalog with photos! 🏆';
-                      } else if (/\byoga\b/i.test(infoLower) && CONFIG.PDF_CATALOG_YOGA) {
-                        catalogUrl = CONFIG.PDF_CATALOG_YOGA;
-                        catalogName = '9Cork-Yoga-Catalog.pdf';
-                        catalogCaption = 'Here is our yoga essentials catalog! 🧘';
-                      } else if (/\b(planter|planters|test tube|pot|pots)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_PLANTERS) {
-                        catalogUrl = CONFIG.PDF_CATALOG_PLANTERS;
-                        catalogName = '9Cork-Planters-Catalog.pdf';
-                        catalogCaption = 'Here is our planters catalog with photos! 🌱';
-                      } else if (/\b(combo|gifting combo)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_COMBOS) {
-                        catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
-                        catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
-                        catalogCaption = 'Here is our gifting combos catalog! 🎁';
-                      } else if (CONFIG.PDF_CATALOG_PRODUCTS) {
-                        catalogUrl = CONFIG.PDF_CATALOG_PRODUCTS;
-                        catalogName = '9Cork-Products-Catalog.pdf';
-                        catalogCaption = 'Here is our complete products catalog with photos! 🌿';
-                      }
-
-                      if (catalogUrl) {
-                        try {
-                          console.log(`📄 Screenshot photo request — sending ${catalogName}`);
-                          await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
-                        } catch (err) {
-                          console.warn('⚠️ Failed to send catalog:', err.message);
-                        }
-                      }
-                    }
-                  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
-                    // HIGH confidence cork product — route through text pipeline
-                    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
-                    const virtualText = customerCaption
-                      ? `${customerCaption} (Customer also sent a photo — Gemini Vision identified it as: ${productLabel}, confidence ${(identification.confidence * 100).toFixed(0)}%. Confirm with customer before quoting.)`
-                      : `Customer sent a photo of what appears to be a ${productLabel} (confidence ${(identification.confidence * 100).toFixed(0)}%). Confirm this is what they want, then ask quantity + customer type per RULE F.`;
-                    console.log(`📸 → routing through text pipeline (high confidence cork match)`);
-                    response = await processWithClaudeAgent(virtualText, from, context);
-                  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.5) {
-                    // BORDERLINE cork product — ask for confirmation
-                    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
-                    response = customerCaption
-                      ? `Thanks for the photo! From what I can see this looks like a ${productLabel} — could you confirm? Once you do, I'll share the pricing.`
-                      : `Thanks for the photo! This looks like it could be a ${productLabel}. Could you confirm and let me know how many pieces you need?`;
-                    console.log(`📸 → asking customer to confirm (borderline cork match)`);
-                  } else if (identification && identification.isCorkProduct === false) {
-                    // Check if customer caption signals a product request despite vision saying non-cork
-                    const captionLower = (customerCaption || '').toLowerCase();
-                    const captionSignalsProductRequest = /\b(photo|image|picture|price|rate|cost|quote|send|show|provide|product|catalog|list)\b/i.test(captionLower);
-                    if (captionSignalsProductRequest) {
-                      console.log(`📸 → vision said non-cork but caption signals product request, routing to text pipeline`);
-                      const virtualText = customerCaption + ` (Customer sent an image that appears to be: ${identification.visibleObject}. The customer's message suggests they want product info — treat this as a product inquiry and extract any product names from the image description or caption.)`;
-                      response = await processWithClaudeAgent(virtualText, from, context);
-                    } else {
-                      response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
-                      console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
-                    }
-                  } else if (identification && identification.confidence < 0.5) {
-                    // Unclear image — ask for clarification
-                    response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;
-                    console.log(`📸 → asking for clarification (low confidence: ${(identification.confidence * 100).toFixed(0)}%)`);
-                  } else {
-                    // Gemini Vision unavailable (network/API issue). No legacy
-                    // matcher to fall back to — ask the customer to describe.
-                    console.log(`📸 → Gemini Vision unavailable, asking customer to describe`);
-                    response = `Thanks for the photo! I'm having trouble loading the image right now — could you tell me which product you're interested in? (e.g. coasters, diaries, planters, frames, etc.)`;
-                  }
-
-                  const logTag = identification
-                    ? `vision: "${identification.visibleObject}" cork=${identification.isCorkProduct} conf=${(identification.confidence * 100).toFixed(0)}%`
-                    : 'vision: unavailable';
-                  await storeCustomerMessage(from, `[IMAGE: ${customerCaption || 'no caption'} — ${logTag}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+                  await storeCustomerMessage(from, `[IMAGE: ${(combinedMessageBody || '').trim() || 'no caption'} — ${imgResult.logTag}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
                 }
                 // v60: Handle VOICE messages — transcribe with Groq Whisper, then process as normal text
                 else if (batchMessageType === 'audio' && batchMediaId) {

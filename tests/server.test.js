@@ -121,6 +121,12 @@ const mockVisionHandler = {
     response: 'I can see a cork coaster!',
     confidence: 0.85
   }),
+  downloadImage: jest.fn().mockResolvedValue({
+    base64: Buffer.from('fake-image').toString('base64'),
+    mimeType: 'image/jpeg',
+    sizeKB: 50,
+    compressed: false
+  }),
   getStats: jest.fn().mockReturnValue({
     totalRequests: 10,
     successRate: '80%'
@@ -131,6 +137,19 @@ const mockVisionHandler = {
 jest.mock('../vision-handler', () => {
   return jest.fn().mockImplementation(() => mockVisionHandler);
 });
+
+// ─── Mock vision-identifier (Gemini Vision) ──────────────────────────────
+const mockIdentifyProduct = jest.fn().mockResolvedValue({
+  visibleObject: 'cork coaster',
+  isCorkProduct: true,
+  matchedCategory: 'coasters',
+  matchedProductName: null,
+  confidence: 0.85,
+  reasoning: 'Appears to be a cork coaster'
+});
+jest.mock('../pricing/vision-identifier', () => ({
+  identifyProductFromImage: (...args) => mockIdentifyProduct(...args)
+}));
 
 // ─── Mock whatsapp-media-upload ────────────────────────────────────────────
 jest.mock('../whatsapp-media-upload', () => ({
@@ -1400,6 +1419,16 @@ describe('Server - POST /webhook deeper paths', () => {
     mockAiManager.getResponse.mockClear();
     mockAiManager.getResponse.mockResolvedValue({ response: 'Hello!', provider: 'groq' });
     mockVisionHandler.handleImageMessage.mockClear();
+    mockVisionHandler.downloadImage.mockClear();
+    mockIdentifyProduct.mockClear();
+    mockIdentifyProduct.mockResolvedValue({
+      visibleObject: 'cork coaster',
+      isCorkProduct: true,
+      matchedCategory: 'coasters',
+      matchedProductName: null,
+      confidence: 0.85,
+      reasoning: 'Appears to be a cork coaster'
+    });
     axios.post.mockClear();
     axios.post.mockResolvedValue({ data: { messages: [{ id: 'msg-1' }] } });
     mockConversationModel.findOne.mockResolvedValue(null);
@@ -1462,11 +1491,6 @@ describe('Server - POST /webhook deeper paths', () => {
   });
 
   test('processes image messages with vision AI', async () => {
-    mockVisionHandler.handleImageMessage.mockResolvedValue({
-      response: 'I see a cork coaster!',
-      confidence: 0.9
-    });
-
     const body = {
       object: 'whatsapp_business_account',
       entry: [{
@@ -1486,13 +1510,8 @@ describe('Server - POST /webhook deeper paths', () => {
     await supertest(server.app).post('/webhook').send(body);
     await new Promise(r => setTimeout(r, 300));
 
-    expect(mockVisionHandler.handleImageMessage).toHaveBeenCalledWith(
-      'media-123',
-      'What is this?',
-      '919876543210',
-      expect.any(Array),
-      expect.any(String)
-    );
+    expect(mockVisionHandler.downloadImage).toHaveBeenCalledWith('media-123');
+    expect(mockIdentifyProduct).toHaveBeenCalled();
   });
 
   test('skips already-sent messages (sentResponses dedup)', async () => {
