@@ -1680,7 +1680,8 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
   // Pre-existing order-dependent failure (not caused by any current change) —
   // HORECA catalog routing assertion depends on state left by earlier tests
   // in this file. Tracked as known debt; needs a rewrite against the v60/v61
-  // catalog-routing path, not a quick fix.
+  // catalog-routing path, not a quick fix. See project memory:
+  // whatsapp-claude-bridge-architecture.
   test.skip('sends HORECA catalog for HORECA-specific products', async () => {
     const origHoreca = server.CONFIG.PDF_CATALOG_HORECA;
     server.CONFIG.PDF_CATALOG_HORECA = 'https://example.com/horeca.pdf';
@@ -1736,7 +1737,8 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
   // Pre-existing order-dependent failure (not caused by any current change) —
   // legacy-catalog fallback assertion depends on state left by earlier tests
   // in this file. Tracked as known debt; needs a rewrite against the v60/v61
-  // catalog-routing path, not a quick fix.
+  // catalog-routing path, not a quick fix. See project memory:
+  // whatsapp-claude-bridge-architecture.
   test.skip('falls back to legacy catalog URL when products catalog not set', async () => {
     const origProducts = server.CONFIG.PDF_CATALOG_PRODUCTS;
     const origLegacy = server.CONFIG.PDF_CATALOG_URL;
@@ -1850,7 +1852,8 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
   // unmasked by skipping the HORECA/legacy-catalog tests above, which were
   // leaving behind state this assertion implicitly depended on. Same root
   // cause as the other skips in this file; tracked as known debt, needs a
-  // rewrite against the v60/v61 catalog-routing path, not a quick fix.
+  // rewrite against the v60/v61 catalog-routing path, not a quick fix. See
+  // project memory: whatsapp-claude-bridge-architecture.
   test.skip('falls back to JSON system when MongoDB empty', async () => {
     const { findProductImage, isValidCorkProductUrl } = require('../product-images-v2');
     findProductImage.mockReturnValue('https://example.com/fallback.jpg');
