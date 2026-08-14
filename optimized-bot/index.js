@@ -15,6 +15,7 @@ const RouterAgent = require('./router-agent');
 const ResponderAgent = require('./responder-agent');
 const StateManager = require('./state-manager');
 const MediaHandler = require('./media-handler');
+const { sanitizeAIPrompt, detectSuspiciousInput } = require('../input-sanitizer');
 
 class OptimizedBot {
   constructor(config) {
@@ -76,6 +77,20 @@ class OptimizedBot {
     console.log(`[OptimizedBot] Processing: ${phoneNumber.slice(-4)} "${message?.slice(0, 30)}..."`);
 
     try {
+      // Step 0: Sanitize once, here, before anything downstream (router
+      // classification, state extraction, responder LLM call, history
+      // storage) sees this text. router-agent.js and responder-agent.js
+      // each make an independent Groq call fed from this same `message`
+      // variable, so sanitizing at this single chokepoint covers both.
+      // Inside the try block deliberately: a sanitizer fault degrades to
+      // the fallback reply rather than throwing out of processMessage.
+      if (messageType === 'text' && message) {
+        if (detectSuspiciousInput(message)) {
+          console.warn(`[OptimizedBot] Suspicious input detected from ${phoneNumber.slice(-4)}`);
+        }
+        message = sanitizeAIPrompt(message);
+      }
+
       // Step 1: Get current state (zero tokens)
       let state;
       try {
