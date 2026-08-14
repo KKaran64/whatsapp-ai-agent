@@ -62,6 +62,16 @@ const optimizedStateSchema = new mongoose.Schema({
     default: null
   },
 
+  // Pricing-slab customer type from resolveIntent() — a DIFFERENT axis from
+  // product_type above (which is a use-case: retail/corporate/horeca).
+  // This is end_consumer vs. reseller, the axis quote-engine.js prices by.
+  // Never map one onto the other.
+  pricing_customer_type: {
+    type: String,
+    enum: ['end_consumer', 'reseller', null],
+    default: null
+  },
+
   // Current conversation node (from router)
   current_node: {
     type: String,

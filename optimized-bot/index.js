@@ -16,6 +16,7 @@ const ResponderAgent = require('./responder-agent');
 const StateManager = require('./state-manager');
 const MediaHandler = require('./media-handler');
 const { sanitizeAIPrompt, detectSuspiciousInput } = require('../input-sanitizer');
+const { resolveIntent } = require('../pricing/intent-resolver');
 
 class OptimizedBot {
   constructor(config) {
@@ -135,6 +136,20 @@ class OptimizedBot {
         recentMessages = await this.stateManager.getRecentMessages(phoneNumber);
       } catch (e) {
         console.warn(`[OptimizedBot] Get state failed:`, e.message);
+      }
+
+      // Step 5.5: Resolve pricing intent (non-blocking — mirrors the
+      // fallback-first posture every other step here already uses).
+      let intent = null;
+      try {
+        intent = await resolveIntent(message, recentMessages, { budgetMs: 3000 });
+        if (intent && intent.customerType) {
+          await this.stateManager.updateState(phoneNumber, {
+            pricing_customer_type: intent.customerType
+          });
+        }
+      } catch (e) {
+        console.warn(`[OptimizedBot] resolveIntent failed:`, e.message);
       }
 
       // Step 6: Generate response (~50 tokens output)
