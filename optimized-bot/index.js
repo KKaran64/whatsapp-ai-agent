@@ -17,6 +17,7 @@ const StateManager = require('./state-manager');
 const MediaHandler = require('./media-handler');
 const { sanitizeAIPrompt, detectSuspiciousInput } = require('../input-sanitizer');
 const { resolveIntent } = require('../pricing/intent-resolver');
+const { computeQuote } = require('../pricing/quote-engine');
 
 class OptimizedBot {
   constructor(config) {
@@ -152,13 +153,26 @@ class OptimizedBot {
         console.warn(`[OptimizedBot] resolveIntent failed:`, e.message);
       }
 
+      // Step 5.6: Compute a verified quote if intent is complete enough
+      // (mirrors the main bot's gate — product + quantity + customerType
+      // all present). computeQuote is synchronous; no await.
+      let verifiedQuote = null;
+      if (intent && intent.productQuery && intent.quantity && intent.customerType) {
+        try {
+          verifiedQuote = computeQuote(intent);
+        } catch (e) {
+          console.warn(`[OptimizedBot] computeQuote failed:`, e.message);
+        }
+      }
+
       // Step 6: Generate response (~50 tokens output)
       console.log(`[OptimizedBot] Generating response for node: ${node}`);
       const { response, media } = await this.responder.generateResponse(
         node,
         updatedState,
         message,
-        recentMessages
+        recentMessages,
+        verifiedQuote
       );
       console.log(`[OptimizedBot] Response generated: "${response.slice(0, 50)}..."`);
 
