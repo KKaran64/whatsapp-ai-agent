@@ -15,6 +15,11 @@ const RouterAgent = require('./router-agent');
 const ResponderAgent = require('./responder-agent');
 const StateManager = require('./state-manager');
 const MediaHandler = require('./media-handler');
+const { sanitizeAIPrompt, detectSuspiciousInput } = require('../input-sanitizer');
+const { resolveIntent } = require('../pricing/intent-resolver');
+const { computeQuote } = require('../pricing/quote-engine');
+const { deriveStateAsync } = require('../pricing/conversation-state');
+const { enforce } = require('../pricing/state-enforcer');
 
 class OptimizedBot {
   constructor(config) {
@@ -76,6 +81,20 @@ class OptimizedBot {
     console.log(`[OptimizedBot] Processing: ${phoneNumber.slice(-4)} "${message?.slice(0, 30)}..."`);
 
     try {
+      // Step 0: Sanitize once, here, before anything downstream (router
+      // classification, state extraction, responder LLM call, history
+      // storage) sees this text. router-agent.js and responder-agent.js
+      // each make an independent Groq call fed from this same `message`
+      // variable, so sanitizing at this single chokepoint covers both.
+      // Inside the try block deliberately: a sanitizer fault degrades to
+      // the fallback reply rather than throwing out of processMessage.
+      if (messageType === 'text' && message) {
+        if (detectSuspiciousInput(message)) {
+          console.warn(`[OptimizedBot] Suspicious input detected from ${phoneNumber.slice(-4)}`);
+        }
+        message = sanitizeAIPrompt(message);
+      }
+
       // Step 1: Get current state (zero tokens)
       let state;
       try {
@@ -122,14 +141,81 @@ class OptimizedBot {
         console.warn(`[OptimizedBot] Get state failed:`, e.message);
       }
 
+      // Step 5.5: Resolve pricing intent (non-blocking — mirrors the
+      // fallback-first posture every other step here already uses).
+      let intent = null;
+      try {
+        intent = await resolveIntent(message, recentMessages, { budgetMs: 3000 });
+        if (intent && intent.customerType) {
+          await this.stateManager.updateState(phoneNumber, {
+            pricing_customer_type: intent.customerType
+          });
+        }
+      } catch (e) {
+        console.warn(`[OptimizedBot] resolveIntent failed:`, e.message);
+      }
+
+      // Step 5.6: Compute a verified quote if intent is complete enough
+      // (mirrors the main bot's gate — product + quantity + customerType
+      // all present). computeQuote is synchronous; no await.
+      let verifiedQuote = null;
+      if (intent && intent.productQuery && intent.quantity && intent.customerType) {
+        try {
+          verifiedQuote = computeQuote(intent);
+        } catch (e) {
+          console.warn(`[OptimizedBot] computeQuote failed:`, e.message);
+        }
+      }
+
+      // Step 5.7: Derive conversation state independently of the router's
+      // node — router nodes (COASTERS, QUOTE_REQUEST, ...) are a
+      // product/step taxonomy; conversation-state's codes (GREETING,
+      // QUOTE_PRESENTED, AWAITING_PAYMENT, ...) are a pricing-process
+      // taxonomy derived from accumulated facts. They do not map 1:1, so
+      // this must run independently rather than being inferred from `node`.
+      //
+      // On failure, fall back to a minimal synthetic state rather than
+      // null: enforce()'s fabricated-amount check depends only on
+      // options.quote, not on the state code, and its switch statement's
+      // default case safely no-ops an unrecognized code. This keeps the
+      // single highest-value protection running even when state derivation
+      // fails — stronger than skipping enforcement outright.
+      let derivedState = null;
+      try {
+        const fullContext = [...recentMessages, { role: 'customer', content: message }];
+        derivedState = await deriveStateAsync(fullContext, intent, phoneNumber);
+      } catch (e) {
+        console.warn(`[OptimizedBot] deriveStateAsync failed, using fallback state so the fabrication check still runs:`, e.message);
+      }
+      if (!derivedState) {
+        derivedState = { code: 'UNKNOWN', reason: 'deriveStateAsync unavailable', guard: '' };
+      }
+
       // Step 6: Generate response (~50 tokens output)
       console.log(`[OptimizedBot] Generating response for node: ${node}`);
-      const { response, media } = await this.responder.generateResponse(
+      let { response, media } = await this.responder.generateResponse(
         node,
         updatedState,
         message,
-        recentMessages
+        recentMessages,
+        verifiedQuote
       );
+
+      // Step 6.5: Outbound numeric guard. Applies to EVERY response path —
+      // LLM-generated and template-short-circuited alike (generateResponse
+      // returns both through the same {response, media} shape, so this one
+      // call covers both; template responses are static text today but must
+      // not be treated as exempt). derivedState is never null here, so the
+      // fabrication check runs whenever a verified quote exists.
+      try {
+        const enforced = enforce(derivedState, response, { quote: verifiedQuote });
+        if (!enforced.allowed) {
+          console.warn(`[OptimizedBot] Enforcer blocked reply: ${enforced.reason}`);
+        }
+        response = enforced.reply;
+      } catch (e) {
+        console.warn(`[OptimizedBot] enforce() failed, passing reply through unchecked:`, e.message);
+      }
       console.log(`[OptimizedBot] Response generated: "${response.slice(0, 50)}..."`);
 
       // Step 7: Store messages in history (non-blocking)

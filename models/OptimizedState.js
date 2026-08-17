@@ -62,6 +62,16 @@ const optimizedStateSchema = new mongoose.Schema({
     default: null
   },
 
+  // Pricing-slab customer type from resolveIntent() — a DIFFERENT axis from
+  // product_type above (which is a use-case: retail/corporate/horeca).
+  // This is end_consumer vs. reseller, the axis quote-engine.js prices by.
+  // Never map one onto the other.
+  pricing_customer_type: {
+    type: String,
+    enum: ['end_consumer', 'reseller', null],
+    default: null
+  },
+
   // Current conversation node (from router)
   current_node: {
     type: String,
@@ -109,15 +119,17 @@ const optimizedStateSchema = new mongoose.Schema({
     default: Date.now
   },
 
-  // Compact conversation history (last 3 messages only)
+  // Compact conversation history (last 50 messages — matches the main
+  // bot's context window; deriveStateAsync needs this depth to still see
+  // evidence like an earlier quote or a payment confirmation).
   conversation_history: {
     type: [compactMessageSchema],
     default: [],
     validate: {
       validator: function(arr) {
-        return arr.length <= 3;
+        return arr.length <= 50;
       },
-      message: 'Conversation history limited to 3 messages'
+      message: 'Conversation history limited to 50 messages'
     }
   },
 
@@ -152,7 +164,7 @@ optimizedStateSchema.pre('save', function(next) {
   next();
 });
 
-// Method to add a message (maintains 3-message limit)
+// Method to add a message (maintains 50-message limit)
 optimizedStateSchema.methods.addMessage = function(role, content) {
   // Truncate content if too long
   const truncatedContent = content.length > 500
@@ -165,9 +177,9 @@ optimizedStateSchema.methods.addMessage = function(role, content) {
     timestamp: new Date()
   });
 
-  // Keep only last 3 messages
-  if (this.conversation_history.length > 3) {
-    this.conversation_history = this.conversation_history.slice(-3);
+  // Keep only last 50 messages
+  if (this.conversation_history.length > 50) {
+    this.conversation_history = this.conversation_history.slice(-50);
   }
 
   return this;

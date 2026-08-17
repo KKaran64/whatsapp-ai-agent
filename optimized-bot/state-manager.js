@@ -184,7 +184,7 @@ class StateManager {
               conversation_history: {
                 $slice: [
                   { $concatArrays: ['$conversation_history', [newMessage]] },
-                  -3  // Keep only last 3
+                  -50  // Keep only last 50 (matches OptimizedState's cap)
                 ]
               },
               last_interaction: new Date()

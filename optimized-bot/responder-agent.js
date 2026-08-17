@@ -175,7 +175,7 @@ class ResponderAgent {
   /**
    * Generate response using LLM
    */
-  async _generateWithLLM(node, state, message, recentMessages) {
+  async _generateWithLLM(node, state, message, recentMessages, verifiedQuote = null) {
     const client = this._getNextClient();
     if (!client) {
       throw new Error('No Groq API keys configured');
@@ -184,6 +184,16 @@ class ResponderAgent {
     // Build compact prompt
     const template = NODE_TEMPLATES[node] || NODE_TEMPLATES.FALLBACK;
     const context = this._buildContext(state);
+
+    // Compact verified-quote injection — the LLM's job becomes "present this
+    // number conversationally", not "compute a price". Kept to one line to
+    // preserve the compact-prompt token budget (mirrors server.js's
+    // [VERIFIED QUOTE] block, trimmed for optimized-bot's ~100-150 token design).
+    let quoteBlock = '';
+    if (verifiedQuote && verifiedQuote.found) {
+      const { formatQuoteForCustomer } = require('../pricing/quote-engine');
+      quoteBlock = `\n[VERIFIED QUOTE — present this exact figure, do not compute your own]: ${formatQuoteForCustomer(verifiedQuote)}`;
+    }
 
     // Build conversation context (last 2-3 messages)
     let conversationContext = '';
@@ -195,7 +205,7 @@ class ResponderAgent {
     }
 
     const systemPrompt = `${BASE_PROMPT}
-${context}
+${context}${quoteBlock}
 ${template.info ? `\nProduct info: ${template.info}` : ''}
 ${template.prompt}`;
 
@@ -294,7 +304,7 @@ ${template.prompt}`;
    * @param {Array} recentMessages - Last 2-3 messages
    * @returns {Promise<Object>} { response, media }
    */
-  async generateResponse(node, state, message, recentMessages = []) {
+  async generateResponse(node, state, message, recentMessages = [], verifiedQuote = null) {
     this.stats.responses++;
 
     try {
@@ -305,7 +315,7 @@ ${template.prompt}`;
       }
 
       // Generate with LLM
-      const llmResponse = await this._generateWithLLM(node, state, message, recentMessages);
+      const llmResponse = await this._generateWithLLM(node, state, message, recentMessages, verifiedQuote);
       return this.extractMediaTrigger(llmResponse);
 
     } catch (error) {
