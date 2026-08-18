@@ -16,6 +16,13 @@
 //   When they disagree, the state machine wins. Predictability over fluency.
 
 const { STATES } = require('./conversation-state');
+const { extractRupeeAmounts, hasRupeeAmount } = require('./money');
+
+// Below this a "₹N" is a stray digit, not an asserted price. Expressed as a
+// threshold rather than a digit count: the old `₹\s*\d{2,}` form encoded
+// "at least 2 digits" as a regex and, in doing so, stopped matching at the
+// first comma — so it never saw ₹1,000 and above.
+const MIN_ASSERTED_PRICE = 10;
 
 // ─────────────────────────────────────────────────────────────────────
 // Violation detectors
@@ -26,15 +33,18 @@ const { STATES } = require('./conversation-state');
 // alongside a product or quantity context.
 function botQuotedPrice(text) {
   if (!text) return false;
-  // ₹ followed by digits + "per piece" / "total" / "incl" patterns
-  return /₹\s*\d{2,}/.test(text) && /\b(per|total|incl|each)\b/i.test(text);
+  // A rupee amount PLUS an assertion word ("per piece" / "total" / "incl").
+  // The assertion word is what distinguishes "the bot stated a price" from
+  // "a number happened to appear", keeping incidental mentions from tripping
+  // the state rules.
+  return hasRupeeAmount(text, MIN_ASSERTED_PRICE) && /\b(per|total|incl|each)\b/i.test(text);
 }
 
 // "Did the LLM list multiple products with prices?" — common when state says
 // AWAITING_PRODUCT_DISAMBIGUATION (we want just names, not a price list)
 function botListedProductsWithPrices(text) {
   if (!text) return false;
-  const pricePoints = (text.match(/₹\s*\d{2,}/g) || []).length;
+  const pricePoints = extractRupeeAmounts(text).filter(n => n >= MIN_ASSERTED_PRICE).length;
   const productCues = (text.match(/\b\d+\.\s|•\s|–\s/g) || []).length;
   return pricePoints >= 2 && (productCues >= 2 || /\boptions?\b/i.test(text));
 }
@@ -136,16 +146,11 @@ function stripPricingStrategy(text) {
 // mislabeled it "incl. GST". This guard closes the invariant by construction:
 // when an engine quote is active for the turn, every ₹ amount in the reply
 // must be one of the quote's customer-facing figures.
-function extractRupeeAmounts(text) {
-  const out = [];
-  const re = /₹\s*([\d,]+(?:\.\d+)?)/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const n = Number(m[1].replace(/,/g, ''));
-    if (Number.isFinite(n)) out.push(n);
-  }
-  return out;
-}
+//
+// extractRupeeAmounts now comes from ./money — this file previously carried
+// its own comma-aware copy alongside two comma-blind regexes, which is how
+// the fabricated-amount check ended up working while the quoted-too-early
+// checks silently did not.
 
 function allowedQuoteAmounts(quote) {
   const allowed = new Set([quote.perPiece, quote.grandTotal]);
