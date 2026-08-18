@@ -81,6 +81,12 @@ function botExposedPricingStrategy(text) {
 // These are deliberately short + warm. The enforcer uses them as fallbacks
 // when the LLM produced an inappropriate response for the current state.
 
+// Used when the bot stated a price but no engine quote existed to check it
+// against. Deliberately carries no figure of its own — the whole point is
+// that we have no verified number to give, so it asks for what is missing.
+const UNVERIFIED_PRICE_FALLBACK =
+  "Let me confirm the exact figures before I quote — could you confirm the product and the quantity you need?";
+
 const CANNED = {
   GREETING:
     "👋 Welcome to 9 Cork! What brings you here today — corporate gifting, your business, or personal use?",
@@ -182,7 +188,8 @@ function enforce(stateResult, llmReply, options = {}) {
   // Checked first and repaired deterministically from the engine quote —
   // a wrong number must never reach the customer, whatever the state.
   const quote = options.quote;
-  if (quote && quote.found) {
+  const hasVerifiedQuote = !!(quote && quote.found);
+  if (hasVerifiedQuote) {
     const fabricated = findFabricatedAmounts(llmReply, quote);
     if (fabricated.length > 0) {
       const { formatQuoteForCustomer } = require('./quote-engine');
@@ -193,6 +200,20 @@ function enforce(stateResult, llmReply, options = {}) {
         originalReply: llmReply
       };
     }
+  } else if (botQuotedPrice(llmReply)) {
+    // ── Universal violation: price stated with nothing to verify it against ──
+    //
+    // Several state cases below skip price checks on the premise that "the
+    // [VERIFIED QUOTE] block constrains the LLM enough". That premise is an
+    // assumption about the CALLER, and until now nothing tested it. When no
+    // engine quote reached us, the premise is false and the LLM's figure is
+    // unverifiable by construction.
+    //
+    // Enforcing the premise here — rather than patching each way it can be
+    // false (the INTENT_RESOLVER=regex kill-switch, a missing quantity, an
+    // ambiguous catalogue match, a resolver timeout) — means every such path
+    // degrades to the same safe behaviour, including ones not yet identified.
+    violations.push('unverified_price');
   }
 
   // ── Universal violation: pricing strategy exposure ──
@@ -315,6 +336,19 @@ function enforce(stateResult, llmReply, options = {}) {
     };
   }
 
+  // A money violation must never reach the pass-through path below. States
+  // like READY_TO_QUOTE and QUOTE_PRESENTED have no canned entry (they are
+  // the states where quoting is normally expected), so without this an
+  // unverifiable price would be "blocked" and then sent anyway.
+  if (violations.includes('unverified_price')) {
+    return {
+      allowed: false,
+      reply: UNVERIFIED_PRICE_FALLBACK,
+      reason: violations.join(', '),
+      originalReply: llmReply
+    };
+  }
+
   // No canned fallback for this state — at least return the stripped version
   // if we did any stripping. Otherwise pass through with a warning.
   if (replyAfterStrip !== llmReply) {
@@ -333,6 +367,7 @@ function enforce(stateResult, llmReply, options = {}) {
 module.exports = {
   enforce,
   CANNED,
+  UNVERIFIED_PRICE_FALLBACK,
   // exports for testing
   botQuotedPrice,
   botListedProductsWithPrices,

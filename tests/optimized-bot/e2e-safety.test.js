@@ -121,6 +121,30 @@ describe('optimized-bot end-to-end: intent -> quote -> enforcement', () => {
     expect(result.error).toBeUndefined();
   });
 
+  test('the INTENT_RESOLVER=regex kill-switch no longer disables price protection', async () => {
+    // Flipping the resolver kill-switch sends resolveIntent down its regex
+    // path, which usually yields quantity: null — so computeQuote never runs
+    // and no verified quote exists for the turn. That used to leave the
+    // fabrication guard inert, silently trading away price protection as a
+    // side effect of an unrelated lever. enforce() now blocks any price it
+    // cannot verify, so the kill-switch is safe to pull again.
+    const prev = process.env.INTENT_RESOLVER;
+    process.env.INTENT_RESOLVER = 'regex';
+    try {
+      mockGroqCreate.mockResolvedValueOnce({
+        choices: [{ message: { content: `Sure! That will be ₹${FABRICATED} total.` } }]
+      });
+
+      const result = await bot.processMessage('919876543210', '100 coasters for resale, what is the price', 'text');
+
+      expect(result.response).not.toContain(FABRICATED);
+      expect(result.response).not.toMatch(/₹/);
+    } finally {
+      if (prev === undefined) delete process.env.INTENT_RESOLVER;
+      else process.env.INTENT_RESOLVER = prev;
+    }
+  });
+
   test('no test in this file reaches the network', async () => {
     mockGroqCreate.mockResolvedValueOnce({ choices: [{ message: { content: 'Sure!' } }] });
 
