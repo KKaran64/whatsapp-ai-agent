@@ -86,10 +86,31 @@ describe('legitimate replies pass through', () => {
     expect(result.reply).toBe(reply);
   });
 
-  test('guard is inactive when no quote context is provided (legacy behavior)', () => {
+  // CONTRACT CHANGED 2026-08-18. This test previously asserted the opposite —
+  // that with no quote context a "₹9,99,999 incl. GST" reply was allowed
+  // through — and its own name called that "legacy behavior".
+  //
+  // That was the hole, not a feature: it meant the guard protected the
+  // customer only on turns where an engine quote happened to exist, and went
+  // silent on every turn where one did not (no quantity given yet, ambiguous
+  // catalogue match, resolver timeout, or the INTENT_RESOLVER=regex
+  // kill-switch). A price nobody can verify is exactly the case the
+  // 2026-07-06 incident was made of, so it is now blocked rather than
+  // passed through. See tests/state-enforcer-unverified-price.test.js.
+  test('a price stated with NO quote context is blocked, not passed through', () => {
     const reply = `The total is ₹9,99,999 incl. GST.`;
     const result = enforce(QUOTE_PRESENTED_STATE, reply);
+
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('unverified_price');
+    expect(result.reply).not.toContain('9,99,999');
+  });
+
+  test('a no-amount reply with no quote context is still untouched', () => {
+    const reply = `Sure — could you tell me how many pieces you need?`;
+    const result = enforce(QUOTE_PRESENTED_STATE, reply);
     expect(result.allowed).toBe(true);
+    expect(result.reply).toBe(reply);
   });
 });
 

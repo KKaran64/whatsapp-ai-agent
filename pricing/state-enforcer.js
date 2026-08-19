@@ -16,6 +16,13 @@
 //   When they disagree, the state machine wins. Predictability over fluency.
 
 const { STATES } = require('./conversation-state');
+const { extractRupeeAmounts, hasRupeeAmount } = require('./money');
+
+// Below this a "₹N" is a stray digit, not an asserted price. Expressed as a
+// threshold rather than a digit count: the old `₹\s*\d{2,}` form encoded
+// "at least 2 digits" as a regex and, in doing so, stopped matching at the
+// first comma — so it never saw ₹1,000 and above.
+const MIN_ASSERTED_PRICE = 10;
 
 // ─────────────────────────────────────────────────────────────────────
 // Violation detectors
@@ -26,15 +33,18 @@ const { STATES } = require('./conversation-state');
 // alongside a product or quantity context.
 function botQuotedPrice(text) {
   if (!text) return false;
-  // ₹ followed by digits + "per piece" / "total" / "incl" patterns
-  return /₹\s*\d{2,}/.test(text) && /\b(per|total|incl|each)\b/i.test(text);
+  // A rupee amount PLUS an assertion word ("per piece" / "total" / "incl").
+  // The assertion word is what distinguishes "the bot stated a price" from
+  // "a number happened to appear", keeping incidental mentions from tripping
+  // the state rules.
+  return hasRupeeAmount(text, MIN_ASSERTED_PRICE) && /\b(per|total|incl|each)\b/i.test(text);
 }
 
 // "Did the LLM list multiple products with prices?" — common when state says
 // AWAITING_PRODUCT_DISAMBIGUATION (we want just names, not a price list)
 function botListedProductsWithPrices(text) {
   if (!text) return false;
-  const pricePoints = (text.match(/₹\s*\d{2,}/g) || []).length;
+  const pricePoints = extractRupeeAmounts(text).filter(n => n >= MIN_ASSERTED_PRICE).length;
   const productCues = (text.match(/\b\d+\.\s|•\s|–\s/g) || []).length;
   return pricePoints >= 2 && (productCues >= 2 || /\boptions?\b/i.test(text));
 }
@@ -70,6 +80,12 @@ function botExposedPricingStrategy(text) {
 // ─────────────────────────────────────────────────────────────────────
 // These are deliberately short + warm. The enforcer uses them as fallbacks
 // when the LLM produced an inappropriate response for the current state.
+
+// Used when the bot stated a price but no engine quote existed to check it
+// against. Deliberately carries no figure of its own — the whole point is
+// that we have no verified number to give, so it asks for what is missing.
+const UNVERIFIED_PRICE_FALLBACK =
+  "Let me confirm the exact figures before I quote — could you confirm the product and the quantity you need?";
 
 const CANNED = {
   GREETING:
@@ -136,16 +152,11 @@ function stripPricingStrategy(text) {
 // mislabeled it "incl. GST". This guard closes the invariant by construction:
 // when an engine quote is active for the turn, every ₹ amount in the reply
 // must be one of the quote's customer-facing figures.
-function extractRupeeAmounts(text) {
-  const out = [];
-  const re = /₹\s*([\d,]+(?:\.\d+)?)/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const n = Number(m[1].replace(/,/g, ''));
-    if (Number.isFinite(n)) out.push(n);
-  }
-  return out;
-}
+//
+// extractRupeeAmounts now comes from ./money — this file previously carried
+// its own comma-aware copy alongside two comma-blind regexes, which is how
+// the fabricated-amount check ended up working while the quoted-too-early
+// checks silently did not.
 
 function allowedQuoteAmounts(quote) {
   const allowed = new Set([quote.perPiece, quote.grandTotal]);
@@ -177,7 +188,8 @@ function enforce(stateResult, llmReply, options = {}) {
   // Checked first and repaired deterministically from the engine quote —
   // a wrong number must never reach the customer, whatever the state.
   const quote = options.quote;
-  if (quote && quote.found) {
+  const hasVerifiedQuote = !!(quote && quote.found);
+  if (hasVerifiedQuote) {
     const fabricated = findFabricatedAmounts(llmReply, quote);
     if (fabricated.length > 0) {
       const { formatQuoteForCustomer } = require('./quote-engine');
@@ -188,6 +200,20 @@ function enforce(stateResult, llmReply, options = {}) {
         originalReply: llmReply
       };
     }
+  } else if (botQuotedPrice(llmReply)) {
+    // ── Universal violation: price stated with nothing to verify it against ──
+    //
+    // Several state cases below skip price checks on the premise that "the
+    // [VERIFIED QUOTE] block constrains the LLM enough". That premise is an
+    // assumption about the CALLER, and until now nothing tested it. When no
+    // engine quote reached us, the premise is false and the LLM's figure is
+    // unverifiable by construction.
+    //
+    // Enforcing the premise here — rather than patching each way it can be
+    // false (the INTENT_RESOLVER=regex kill-switch, a missing quantity, an
+    // ambiguous catalogue match, a resolver timeout) — means every such path
+    // degrades to the same safe behaviour, including ones not yet identified.
+    violations.push('unverified_price');
   }
 
   // ── Universal violation: pricing strategy exposure ──
@@ -310,6 +336,19 @@ function enforce(stateResult, llmReply, options = {}) {
     };
   }
 
+  // A money violation must never reach the pass-through path below. States
+  // like READY_TO_QUOTE and QUOTE_PRESENTED have no canned entry (they are
+  // the states where quoting is normally expected), so without this an
+  // unverifiable price would be "blocked" and then sent anyway.
+  if (violations.includes('unverified_price')) {
+    return {
+      allowed: false,
+      reply: UNVERIFIED_PRICE_FALLBACK,
+      reason: violations.join(', '),
+      originalReply: llmReply
+    };
+  }
+
   // No canned fallback for this state — at least return the stripped version
   // if we did any stripping. Otherwise pass through with a warning.
   if (replyAfterStrip !== llmReply) {
@@ -328,6 +367,7 @@ function enforce(stateResult, llmReply, options = {}) {
 module.exports = {
   enforce,
   CANNED,
+  UNVERIFIED_PRICE_FALLBACK,
   // exports for testing
   botQuotedPrice,
   botListedProductsWithPrices,

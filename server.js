@@ -21,6 +21,23 @@ const { resolveIntent, getResolverStats } = require('./pricing/intent-resolver')
 const { deriveState: deriveConversationState, deriveStateAsync } = require('./pricing/conversation-state');
 // v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
 const { enforce: enforceState, extractRupeeAmounts } = require('./pricing/state-enforcer');
+const { RUPEE_AMOUNT_SOURCE, parseAmount } = require('./pricing/money');
+
+// Customer-stated budget ("under ₹10,000", "below Rs 500", "around 2,500").
+//
+// Pure and exported so it is testable without the surrounding Mongo write.
+// The amount portion comes from pricing/money.js: the previous inline (\d+)
+// stopped at the first comma, so "under ₹10,000" was recorded as a ₹10
+// budget and then fed back into later prompts as if the customer had said it.
+function parseBudget(text) {
+  if (!text) return null;
+  const re = new RegExp(
+    `\\b(?:below|under|around|budget)\\s*(?:rs\\.?|₹)?\\s*(${RUPEE_AMOUNT_SOURCE})`,
+    'i'
+  );
+  const m = String(text).match(re);
+  return m ? parseAmount(m[1]) : null;
+}
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // 2026-07-06 — intent-driven image selection: images narrow by the resolver's
@@ -2439,10 +2456,10 @@ async function extractAndSaveMetadata(phoneNumber, customerMessage, agentRespons
       }
     }
 
-    // Extract BUDGET (below 700, under 500, etc.)
-    const budgetMatch = recentText.match(/\b(?:below|under|around|budget)\s*(?:rs\.?|₹)?\s*(\d+)/i);
-    if (budgetMatch) {
-      conversation.metadata.budget = `₹${budgetMatch[1]} per piece`;
+    // Extract BUDGET (below 700, under ₹10,000, etc.)
+    const budgetAmount = parseBudget(recentText);
+    if (budgetAmount !== null) {
+      conversation.metadata.budget = `₹${budgetAmount.toLocaleString('en-IN')} per piece`;
     }
 
     // Extract QUANTITY (100 pcs, 50 pieces, 200 nos, etc.)
@@ -4053,6 +4070,7 @@ module.exports = {
   getConversationContext,
   clearConversationHistory,
   extractAndSaveMetadata,
+  parseBudget,
   // Token-optimized bot
   getOrInitOptimizedBot,
   // Internal state (for testing)
