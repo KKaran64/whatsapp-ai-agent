@@ -5,6 +5,23 @@ const fs = require('fs');
 const path = require('path');
 const { getIndex, isConfigured } = require('./pinecone-client');
 const { embedText } = require('./embed');
+const { RUPEE_AMOUNT_SOURCE, parseAmount } = require('../pricing/money');
+
+// Product nouns a per-piece price can be quoted against. Shared by both
+// price-extraction sites below so they cannot drift apart.
+const PRICE_NOUNS = 'piece|pc|diary|diaries|coaster|coasters|planter|planters|bag|bags|sleeve|sleeves|organizer|organizers|frame|frames|tray|trays|holder|holders|bottle|bottles|trivet|trivets|tablemat|tablemats|clock|clocks|trophy|trophies|pouch|pouches|wallet|wallets|box|boxes|brick|bricks|ball|balls|roller|rollers';
+
+// "₹4,050 per bag" — the amount portion comes from pricing/money.js so it
+// keeps matching Indian comma grouping. The previous inline `\d+(?:\.\d+)?`
+// stopped at the first comma, so this detector silently ignored every quote
+// of ₹1,000 or more — and the bot formats with toLocaleString('en-IN'), so
+// that is every high-value quote it makes.
+function perPiecePriceRegex(flags) {
+  return new RegExp(
+    `₹\\s*(${RUPEE_AMOUNT_SOURCE})\\s*(?:per|/|each|a)\\s+(${PRICE_NOUNS})\\b`,
+    flags
+  );
+}
 
 const STALE_PRICING_DAYS = 90;
 
@@ -191,12 +208,12 @@ function validateConversationQuality(pair) {
   const mentionedNouns = detectMentionedNouns(bot);
   if (catalog && mentionedNouns.length > 0) {
     // Find per-piece price quotes with their text position
-    const pricePattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each|a)\s+(piece|pc|diary|diaries|coaster|coasters|planter|planters|bag|bags|sleeve|sleeves|organizer|organizers|frame|frames|tray|trays|holder|holders|bottle|bottles|trivet|trivets|tablemat|tablemats|clock|clocks|trophy|trophies|pouch|pouches|wallet|wallets|box|boxes|brick|bricks|ball|balls|roller|rollers)\b/gi;
+    const pricePattern = perPiecePriceRegex('gi');
     const discountPattern = /(\d+(?:\.\d+)?)\s*%\s*(?:off|discount)/gi;
     const discountHits = [...bot.matchAll(discountPattern)].map(m => ({ index: m.index, value: parseFloat(m[1]) }));
 
     for (const pm of [...bot.matchAll(pricePattern)]) {
-      const price = parseFloat(pm[1]);
+      const price = parseAmount(pm[1]);
       const pos = pm.index;
       // Find nearest discount % within ±250 chars (typical bot quote span)
       const nearby = discountHits.find(d => Math.abs(d.index - pos) <= 250);
@@ -247,14 +264,14 @@ function validateConversationQuality(pair) {
         const winEnd = Math.min(bot.length, pos + 500);
         const window = bot.substring(winStart, winEnd);
 
-        const pricePattern = /₹\s*(\d+(?:\.\d+)?)\s*(?:per|\/|each|a)\s+(piece|pc|diary|diaries|coaster|coasters|planter|planters|bag|bags|sleeve|sleeves|organizer|organizers|frame|frames|tray|trays|holder|holders|bottle|bottles|trivet|trivets|tablemat|tablemats|clock|clocks|trophy|trophies|pouch|pouches|wallet|wallets|box|boxes|brick|bricks|ball|balls|roller|rollers)/i;
+        const pricePattern = perPiecePriceRegex('i');
         const discPattern = /(\d+(?:\.\d+)?)\s*%\s*(?:off|discount)/i;
 
         const priceMatch = window.match(pricePattern);
         const discMatch = window.match(discPattern);
         if (!priceMatch || !discMatch) continue;
 
-        const price = parseFloat(priceMatch[1]);
+        const price = parseAmount(priceMatch[1]);
         const disc = parseFloat(discMatch[1]);
         if (disc >= 100) continue;
 
