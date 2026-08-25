@@ -62,9 +62,31 @@ function hasRupeeAmount(text, minValue = 0) {
   return extractRupeeAmounts(text).some(n => n >= minValue);
 }
 
+/**
+ * A customer-stated budget: "under ₹10,000", "below Rs 500", "around 2,500".
+ *
+ * Lives here rather than in server.js because it is pure money parsing with
+ * no I/O. Keeping it in server.js meant a six-line string function could only
+ * be tested by importing a 4,000-line module that calls process.exit(1) when
+ * required env vars are absent — so the test passed locally (a gitignored
+ * .env supplied them via dotenv) and killed the Jest worker in CI.
+ *
+ * @returns {number|null} the amount, or null when no budget is stated.
+ */
+function parseBudget(text) {
+  if (!text) return null;
+  const re = new RegExp(
+    `\\b(?:below|under|around|budget)\\s*(?:rs\\.?|₹)?\\s*(${RUPEE_AMOUNT_SOURCE})`,
+    'i'
+  );
+  const m = String(text).match(re);
+  return m ? parseAmount(m[1]) : null;
+}
+
 module.exports = {
   RUPEE_AMOUNT_SOURCE,
   parseAmount,
   extractRupeeAmounts,
-  hasRupeeAmount
+  hasRupeeAmount,
+  parseBudget
 };

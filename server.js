@@ -21,23 +21,10 @@ const { resolveIntent, getResolverStats } = require('./pricing/intent-resolver')
 const { deriveState: deriveConversationState, deriveStateAsync } = require('./pricing/conversation-state');
 // v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
 const { enforce: enforceState, extractRupeeAmounts } = require('./pricing/state-enforcer');
-const { RUPEE_AMOUNT_SOURCE, parseAmount } = require('./pricing/money');
-
-// Customer-stated budget ("under ₹10,000", "below Rs 500", "around 2,500").
-//
-// Pure and exported so it is testable without the surrounding Mongo write.
-// The amount portion comes from pricing/money.js: the previous inline (\d+)
-// stopped at the first comma, so "under ₹10,000" was recorded as a ₹10
-// budget and then fed back into later prompts as if the customer had said it.
-function parseBudget(text) {
-  if (!text) return null;
-  const re = new RegExp(
-    `\\b(?:below|under|around|budget)\\s*(?:rs\\.?|₹)?\\s*(${RUPEE_AMOUNT_SOURCE})`,
-    'i'
-  );
-  const m = String(text).match(re);
-  return m ? parseAmount(m[1]) : null;
-}
+// Customer-stated budget parsing lives in pricing/money.js — it is pure
+// string work, and keeping it here made it untestable without importing this
+// whole module (which exits the process when env vars are missing).
+const { parseBudget } = require('./pricing/money');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // 2026-07-06 — intent-driven image selection: images narrow by the resolver's
@@ -4070,7 +4057,6 @@ module.exports = {
   getConversationContext,
   clearConversationHistory,
   extractAndSaveMetadata,
-  parseBudget,
   // Token-optimized bot
   getOrInitOptimizedBot,
   // Internal state (for testing)

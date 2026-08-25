@@ -5,10 +5,14 @@
 //
 // Indian digit grouping means this affected every budget of ₹1,000 or more,
 // i.e. essentially every bulk enquiry.
+//
+// This imports pricing/money.js, NOT server.js. parseBudget is pure string
+// work; when it lived in server.js the only way to test it was to import a
+// module that calls process.exit(1) on missing env vars. That passed locally
+// — a gitignored .env fed dotenv — and killed the Jest worker in CI, where
+// no .env exists. Pure logic belongs outside the module with side effects.
 
-process.env.MONGODB_ENCRYPTION_KEY = process.env.MONGODB_ENCRYPTION_KEY || 'a'.repeat(64);
-
-const { parseBudget } = require('../server');
+const { parseBudget } = require('../pricing/money');
 
 describe('parseBudget', () => {
   test('reads comma-grouped budgets correctly (previously truncated)', () => {
