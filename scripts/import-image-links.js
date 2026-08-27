@@ -27,6 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
+const { parseSheetPrice } = require('../pricing/money');
 
 const APPLY = process.argv.includes('--apply');
 
@@ -240,6 +241,7 @@ async function main() {
   // 1. Fetch + parse all sheets
   const products = new Map(); // norm name → merged record
   const supplementalPrices = new Map(); // norm name → { price, id }
+  const rejectedPrices = []; // rows whose price cell could not be parsed unambiguously
   let comboData = {};
   for (const s of SHEETS) {
     if (SHEET_FILTER.size > 0 && !SHEET_FILTER.has(s.label)) continue;
@@ -262,11 +264,14 @@ async function main() {
       let count = 0;
       for (const r of rows.slice(headerIdx + 1)) {
         const name = norm(r[nameCol] || '');
-        const price = Number(String(r[priceCol] || '').replace(/[^\d.]/g, ''));
-        if (name && Number.isFinite(price) && price > 0 && !supplementalPrices.has(name)) {
-          supplementalPrices.set(name, { price, id: null });
-          count++;
+        if (!name || supplementalPrices.has(name)) continue;
+        const parsed = parseSheetPrice(r[priceCol]);
+        if (!parsed.ok) {
+          if (r[priceCol] && String(r[priceCol]).trim()) rejectedPrices.push({ sheet: s.label, name, raw: String(r[priceCol]).trim(), reason: parsed.reason });
+          continue;
         }
+        supplementalPrices.set(name, { price: parsed.value, id: null });
+        count++;
       }
       console.log(`sheet ${s.label}: ${count} supplemental prices from combo components`);
       continue;
@@ -278,14 +283,22 @@ async function main() {
       // trophies sheet uses "Product code" column name
       const idCol = header.findIndex(h => /PRODUCT ?(ID|CODE)/.test(h));
       const priceCol = header.findIndex(h => /PRICE/.test(h));
+      // DIMENSION doubles as the variant declaration: a row reading "S,M,L"
+      // carries three sizes, and its price cell then holds three values.
+      const dimCol = header.findIndex(h => /DIMENSION/.test(h));
       let count = 0;
       for (const r of rows.slice(headerIdx + 1)) {
         const name = norm(r[nameCol]);
-        const price = Number(String(r[priceCol] || '').replace(/[^\d.]/g, ''));
-        if (name && Number.isFinite(price) && price > 0) {
-          supplementalPrices.set(name, { price, id: (r[idCol] || '').trim() || null });
-          count++;
+        if (!name) continue;
+        const dim = dimCol === -1 ? '' : String(r[dimCol] || '');
+        const variantCount = dim.split(',').map(x => x.trim()).filter(Boolean).length;
+        const parsed = parseSheetPrice(r[priceCol], { variantCount });
+        if (!parsed.ok) {
+          if (r[priceCol] && String(r[priceCol]).trim()) rejectedPrices.push({ sheet: s.label, name, raw: String(r[priceCol]).trim(), reason: parsed.reason });
+          continue;
         }
+        supplementalPrices.set(name, { price: parsed.value, id: (r[idCol] || '').trim() || null });
+        count++;
       }
       console.log(`sheet ${s.label}: ${count} supplemental prices`);
       continue;
@@ -350,6 +363,14 @@ async function main() {
     console.log(`\nSkipped (no price):`);
     report.skipNoPrice.forEach(x => console.log(`  - ${x.name} (${x.images} imgs)`));
   }
+  if (rejectedPrices.length) {
+    // Loud, not silent: a rejected cell means that product now has NO price
+    // and will not be created. Previously these parsed into nonsense (a
+    // three-size "583,750,916" became ₹58 crore and reached production).
+    console.log(`\n⚠️  UNPARSEABLE PRICE CELLS (${rejectedPrices.length}) — these products get no price and need a sheet fix:`);
+    rejectedPrices.forEach(x => console.log(`  - [${x.sheet}] ${x.name}: "${x.raw}" → ${x.reason}`));
+  }
+
   console.log(`\nCombos parsed: ${Object.keys(comboData).length} (→ data/combo-images.json)`);
 
   // 3. Apply

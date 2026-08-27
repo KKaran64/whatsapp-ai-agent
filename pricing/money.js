@@ -83,10 +83,68 @@ function parseBudget(text) {
   return m ? parseAmount(m[1]) : null;
 }
 
+// No single cork product costs anywhere near this per piece (the dearest is
+// about ₹7,500). A "price" above it is a parse artifact, not a price. Used as
+// a backstop for malformed cells whose shape we have not seen before.
+const MAX_PLAUSIBLE_UNIT_PRICE = 1000000;
+
+/**
+ * Parse a price cell from a Google Sheet.
+ *
+ * Sheet cells are not always one number. CORK YOGA PEANUT ships in three
+ * sizes and the sheet encodes that as a single cell — DIMENSION "S,M,L",
+ * PRICE "583,750,916". Stripping non-digits reads that as 583 million, and
+ * it reached production (₹35,04,50,550 on the live product).
+ *
+ * Comma-stripping is right for "3,317" and wrong for "583,750,916", and the
+ * two are syntactically identical — both are validly grouped numbers. Syntax
+ * cannot separate them, so the variant count from the DIMENSION column is the
+ * disambiguating signal.
+ *
+ * We never pick one variant on the customer's behalf: an ambiguous row is
+ * rejected and reported, matching the importer's rule that it never invents
+ * a price.
+ *
+ * @param {string} raw            the price cell
+ * @param {object} [opts]
+ * @param {number} [opts.variantCount] how many variants the row declares
+ * @returns {{ok: true, value: number} | {ok: false, reason: string}}
+ */
+function parseSheetPrice(raw, opts = {}) {
+  if (raw === null || raw === undefined) return { ok: false, reason: 'empty' };
+  const s = String(raw).trim();
+  if (!s) return { ok: false, reason: 'empty' };
+
+  // Multi-variant cell: one comma-separated group per declared variant.
+  const variantCount = Number(opts.variantCount) || 0;
+  if (variantCount > 1) {
+    const groups = s.split(',').map(g => g.trim()).filter(Boolean);
+    if (groups.length === variantCount && groups.every(g => /^\d+(\.\d+)?$/.test(g))) {
+      return {
+        ok: false,
+        reason: `multi-variant price cell (${groups.length} values for ${variantCount} variants): "${s}" — split the variants into separate rows`
+      };
+    }
+  }
+
+  // A hyphen means a negative or a range ("22-24"). Stripping it would
+  // silently concatenate a range into 2224, so reject rather than guess.
+  if (/-/.test(s)) return { ok: false, reason: 'negative or range, not a single price' };
+
+  const n = parseFloat(s.replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return { ok: false, reason: 'not_a_number' };
+  if (n > MAX_PLAUSIBLE_UNIT_PRICE) {
+    return { ok: false, reason: `implausible unit price ${n} — likely several values in one cell` };
+  }
+  return { ok: true, value: Math.round(n * 100) / 100 };
+}
+
 module.exports = {
   RUPEE_AMOUNT_SOURCE,
+  MAX_PLAUSIBLE_UNIT_PRICE,
   parseAmount,
   extractRupeeAmounts,
   hasRupeeAmount,
-  parseBudget
+  parseBudget,
+  parseSheetPrice
 };
