@@ -55,7 +55,12 @@ const SHEETS = [
   { label: 'trophies-prices',  docId: '14pafWDZsAxPqA5gQHprfH7pvQCuP0EVjEF0_U4XvnjQ',  gid: '1661831986', kind: 'pricelist' },
   // Combo-pricing sheet has "PRODUCTS NAME" (plural) header — handled separately.
   { label: 'planters-prices',  docId: '1gGOTQjWbV60xgE-Px8PD87s0YcRxDQ9iTvSbEESghhE',  gid: '0',          kind: 'pricelist' },
-  { label: 'combos-prices',    docId: '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  gid: '0',          kind: 'combopricelist' },
+  // gid was '0', which this document rejects with HTTP 400 (its first tab is
+  // not gid 0). Day 1 of the month syncs the combos group, so every scheduled
+  // run failed on that day — 2026-08-01 is in the run history. Verified: gid
+  // 116040534 returns the expected 'COMBO / PRODUCT IMAGE / PRODUCTS NAME /
+  // MRP PRICE 100-300PCS' header.
+  { label: 'combos-prices',    docId: '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  gid: '116040534',  kind: 'combopricelist' },
   { label: 'catalogue-prices', docId: '1THVTSBXIzdoY-kC12JKAIRcM7vKzU-rsDNV31ctQ_Dc',  gid: '1028285259', kind: 'pricelist' },
 ];
 

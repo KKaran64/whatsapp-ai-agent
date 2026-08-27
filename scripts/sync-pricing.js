@@ -240,8 +240,24 @@ async function syncAll() {
     console.error('  ✗ Trophies failed:', err.message);
   }
 
+  // Never write a partial catalog over a good one.
+  //
+  // Each fetch above catches its own error and leaves that section as [], and
+  // this write used to run unconditionally — so one transient Google throttle
+  // wrote an EMPTY section and reported success. Since this also runs at boot
+  // on an ephemeral filesystem, a throttle during a deploy could leave the
+  // container with no HORECA products (206 → 0) until the next daily run, and
+  // the outbound guard would then refuse to quote them at all.
+  const emptied = ['catalogue', 'horeca', 'combos', 'trophies'].filter(k => data[k].length === 0);
+  if (emptied.length > 0) {
+    throw new Error(
+      `Refusing to write pricing.json: ${emptied.join(', ')} came back empty ` +
+      `(fetch failed). Existing prices left untouched.`
+    );
+  }
+
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(data, null, 2));
-  console.log(`💾 Wrote ${OUTPUT_FILE}`);
+  console.log(`💾 Wrote ${OUTPUT_FILE} (${data.catalogue.length} catalogue, ${data.horeca.length} horeca, ${data.combos.length} combos, ${data.trophies.length} trophies)`);
 
   return data;
 }
