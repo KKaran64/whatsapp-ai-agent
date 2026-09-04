@@ -8,9 +8,10 @@
 // keys failed). It NEVER throws — callers branch on null and degrade.
 
 const axios = require('axios');
+const { MODELS } = require('../config/models');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = MODELS.GROQ_JSON;
 
 // Total wall-clock across ALL key attempts. A customer is waiting on the
 // interactive path, so failed keys must never stack their timeouts.

@@ -12,6 +12,7 @@
  */
 
 const Groq = require('groq-sdk');
+const { MODELS } = require('../config/models');
 
 // Node-specific response templates and prompts
 const NODE_TEMPLATES = {
@@ -224,7 +225,7 @@ ${template.prompt}`;
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          model: 'llama-3.3-70b-versatile',
+          model: MODELS.GROQ_CHAT,
           temperature: 0.4,
           max_tokens: 80, // ~30 words max
           top_p: 1

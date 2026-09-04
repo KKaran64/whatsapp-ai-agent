@@ -5,6 +5,7 @@ const Groq = require('groq-sdk');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 const crypto = require('crypto');
+const { MODELS } = require('./config/models');
 
 class AIProviderManager {
   constructor(config) {
@@ -146,7 +147,7 @@ class AIProviderManager {
 
         const completion = await groqClient.chat.completions.create({
           messages,
-          model: 'llama-3.3-70b-versatile',
+          model: MODELS.GROQ_CHAT,
           temperature: 0.4,
           max_tokens: 500,
           top_p: 1,
@@ -222,7 +223,7 @@ class AIProviderManager {
         console.log(`🟢 Trying Gemini (key ${this.currentGeminiIndex || this.geminiKeys.length}/${this.geminiKeys.length})...`);
 
         const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_CHAT}:generateContent?key=${geminiKey}`,
           {
             contents: [{
               parts: [{ text: fullPrompt }]
