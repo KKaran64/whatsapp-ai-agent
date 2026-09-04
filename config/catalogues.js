@@ -1,0 +1,111 @@
+// Canonical catalogue PDF links — versioned, not scattered across env vars.
+//
+// 2026-09 incident: a customer asked for the wall-tiles catalogue and then the
+// yoga catalogue and got nothing. All three PDF_CATALOG_* values that were set
+// in the environment pointed at Drive files that no longer exist (HTTP 404 on
+// the exact URL the bot sends), and the other six slots the routing code
+// supports had never been set at all. Net working catalogues: zero, while the
+// current 2026 PDFs sat in Drive downloading fine.
+//
+// Why these IDs belong in git rather than in env vars:
+//   - They are public share links, not secrets. Anyone with the catalogue has
+//     them; they gate nothing.
+//   - Keeping them here makes a dead link reviewable, diffable and testable.
+//     As env vars they were invisible — nothing failed loudly, customers just
+//     silently got no catalogue.
+//   - Env still wins (see resolve() below), so Render can override without a
+//     deploy, same lever as config/models.js.
+//
+// Source of truth: the "9 CORK_CATALOGUES_2026" Drive folder
+// https://drive.google.com/drive/folders/1MqtPv8XMvfMhIwzbm6jHAAGK4Cw3QKxL
+// Every id below was verified to return a real PDF over the same
+// uc?export=download URL WhatsApp fetches.
+
+const FILE_IDS = {
+  PRODUCTS:   '16pPDKjPlhnNHEs6WupDf4eFwgoZebBqn', // CORK PRODUCT CATALOGUE 2026 (34 MB)
+  HORECA:     '1iGFZMKWFhNvi4Rn2YSlMTeS3WqzXD2X3', // CORK HORECA PRODUCT CATALOGUE (58 MB)
+  COMBOS:     '1zaI5lH12dNzvleu4hsF89lIj9BZSDSWH', // CORK GIFTING COMBO CATALOGUE (9 MB)
+  TROPHY:     '1P2hdqrwSfFfYGeeD5q8bEpo4DXVhP1SP', // CORK TROPHY CATALOGUE (19 MB)
+  PLANTERS:   '1WDKMNUAWsAIPWlLoX3Htp6CO4U1aSXYG', // CORK PLANTERS CATALOGUE (10 MB)
+  YOGA:       '15h5MXMCGyCc2gX4uKyTbnNDduPJv5kJv', // CORK YOGA WELLNESS CATALOGUE (79 MB)
+  ELEVATION:  '1dAU4GIPIMy1DexaHdUe5nvdJF5eVBcN0', // THE ELEVATION E CATALOGUE (10 MB) — wall coverings
+  MINIMALIST: '1rvwbhFzwc4PDfORi2EERSPBl_DPt0a6t', // THE MINIMALIST E CATALOGUE (10 MB) — wall coverings
+  FESTIVE:    '14hzZauUSDb_nU_wABAVyptsutxnI-koD'  // FESTIVE GIFTING CATALOGUE (9 MB)
+};
+
+function driveDownloadUrl(id) {
+  return `https://drive.google.com/uc?export=download&id=${id}`;
+}
+
+/**
+ * The URL for a catalogue slot.
+ *
+ * An explicit PDF_CATALOG_<SLOT> env var always wins, so a link can be
+ * repointed on Render without a deploy. Otherwise the versioned default is
+ * used — which is what makes the slots work at all, since six of the nine
+ * were never configured in any environment.
+ */
+function resolve(slot) {
+  const override = (process.env[`PDF_CATALOG_${slot}`] || '').trim();
+  if (override) return override;
+  const id = FILE_IDS[slot];
+  return id ? driveDownloadUrl(id) : '';
+}
+
+const CATALOGUES = Object.fromEntries(
+  Object.keys(FILE_IDS).map(slot => [slot, resolve(slot)])
+);
+
+// Does this message ask for a catalogue at all?
+const CATALOGUE_REQUEST = /\b(catalog|catalogue|pdf|brochure|full range|all products|price list)\b/i;
+
+// Keyword → catalogue, most specific first. Ordering matters: "yoga mat
+// catalogue" must not fall through to the generic product catalogue.
+//
+// This lived as an inline else-if chain inside a 4,000-line request handler,
+// which is why a missing YOGA branch went unnoticed — there was no way to test
+// it, and a customer asking for the wellness catalogue simply received the
+// wrong one. As a table it is reviewable and covered by tests.
+const ROUTES = [
+  { slot: 'TROPHY',     match: /\b(trophy|trophies|award|awards|recognition|memento)\b/i,
+    filename: '9Cork-Trophy-Catalog.pdf',      caption: 'Here is our cork trophy catalog! 🏆' },
+  { slot: 'YOGA',       match: /\b(yoga|wellness|mat|mats|brick|bolster|meditation|fitness)\b/i,
+    filename: '9Cork-Yoga-Wellness-Catalog.pdf', caption: 'Here is our cork yoga & wellness catalog! 🧘' },
+  { slot: 'PLANTERS',   match: /\b(planter|planters|plant|pot|pots|test tube)\b/i,
+    filename: '9Cork-Planters-Catalog.pdf',    caption: 'Here is our cork planters catalog! 🌱' },
+  // Wall coverings ship as two ranges. "wall tiles" is what customers ask for
+  // and previously matched no branch at all.
+  { slot: 'ELEVATION',  match: /\b(elevation|wall tile|wall tiles|wall covering|wall panel|wall panels|premium|executive|luxury)\b/i,
+    filename: '9Cork-Elevation-Catalog.pdf',   caption: 'Here is our Elevation e-catalog — cork wall coverings! ✨' },
+  { slot: 'MINIMALIST', match: /\b(minimal|minimalist|basic|simple|essential)\b/i,
+    filename: '9Cork-Minimalist-Catalog.pdf',  caption: 'Here is our Minimalist e-catalog! 🌿' },
+  { slot: 'FESTIVE',    match: /\b(festive|festival|diwali|christmas|new year|holiday)\b/i,
+    filename: '9Cork-Festive-Gifting-Catalog.pdf', caption: 'Here is our festive gifting catalog! 🎉' },
+  { slot: 'COMBOS',     match: /\b(combo|combos|gifting combo)\b/i,
+    filename: '9Cork-Gifting-Combos-Catalog.pdf', caption: 'Here is our gifting combos catalog! 🎁' },
+  { slot: 'HORECA',     match: /\b(horeca|hotel|restaurant|cafe|bar|hospitality|caddy|bill folder|menu folder|room tag|qr scanner)\b/i,
+    filename: '9Cork-HORECA-Catalog.pdf',      caption: 'Here is our HORECA catalog for Hotels, Restaurants & Cafes! 🌿' },
+];
+
+const DEFAULT_ROUTE = {
+  slot: 'PRODUCTS',
+  filename: '9Cork-Products-Catalog.pdf',
+  caption: 'Here is our complete cork products catalog! 🌿'
+};
+
+/**
+ * Choose the catalogue for a customer message.
+ * @returns {{slot, url, filename, caption}|null} null when the message is not
+ *          a catalogue request at all.
+ */
+function selectCatalogue(userMessage) {
+  const msg = String(userMessage || '');
+  if (!CATALOGUE_REQUEST.test(msg)) return null;
+
+  const route = ROUTES.find(r => r.match.test(msg)) || DEFAULT_ROUTE;
+  const url = resolve(route.slot);
+  if (!url) return null;
+  return { slot: route.slot, url, filename: route.filename, caption: route.caption };
+}
+
+module.exports = { CATALOGUES, FILE_IDS, resolve, driveDownloadUrl, selectCatalogue, ROUTES };

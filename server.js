@@ -25,6 +25,7 @@ const { enforce: enforceState, extractRupeeAmounts } = require('./pricing/state-
 // string work, and keeping it here made it untestable without importing this
 // whole module (which exits the process when env vars are missing).
 const { parseBudget } = require('./pricing/money');
+const { CATALOGUES, selectCatalogue } = require('./config/catalogues');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // 2026-07-06 — intent-driven image selection: images narrow by the resolver's
@@ -389,15 +390,21 @@ const CONFIG = {
   MONGODB_URI: (process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales').trim(),
   REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
   SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
+  // Catalogue links come from config/catalogues.js, which reads the same
+  // PDF_CATALOG_* env vars first and falls back to versioned defaults. These
+  // used to be env-only: the three that were set pointed at deleted Drive
+  // files (404) and the other six were never set, so every catalogue request
+  // silently sent nothing.
   PDF_CATALOG_URL: (process.env.PDF_CATALOG_URL || '').trim(),
-  PDF_CATALOG_HORECA: (process.env.PDF_CATALOG_HORECA || '').trim(),
-  PDF_CATALOG_PRODUCTS: (process.env.PDF_CATALOG_PRODUCTS || '').trim(),
-  PDF_CATALOG_COMBOS: (process.env.PDF_CATALOG_COMBOS || '').trim(),
-  PDF_CATALOG_TROPHY: (process.env.PDF_CATALOG_TROPHY || '').trim(),
-  PDF_CATALOG_YOGA: (process.env.PDF_CATALOG_YOGA || '').trim(),
-  PDF_CATALOG_PLANTERS: (process.env.PDF_CATALOG_PLANTERS || '').trim(),
-  PDF_CATALOG_ELEVATION: (process.env.PDF_CATALOG_ELEVATION || '').trim(),
-  PDF_CATALOG_MINIMALIST: (process.env.PDF_CATALOG_MINIMALIST || '').trim(),
+  PDF_CATALOG_HORECA: CATALOGUES.HORECA,
+  PDF_CATALOG_PRODUCTS: CATALOGUES.PRODUCTS,
+  PDF_CATALOG_COMBOS: CATALOGUES.COMBOS,
+  PDF_CATALOG_TROPHY: CATALOGUES.TROPHY,
+  PDF_CATALOG_YOGA: CATALOGUES.YOGA,
+  PDF_CATALOG_PLANTERS: CATALOGUES.PLANTERS,
+  PDF_CATALOG_ELEVATION: CATALOGUES.ELEVATION,
+  PDF_CATALOG_MINIMALIST: CATALOGUES.MINIMALIST,
+  PDF_CATALOG_FESTIVE: CATALOGUES.FESTIVE,
   NODE_ENV: process.env.NODE_ENV || 'development',
   // Contact info (used in fallback responses — change in .env, not here)
   CONTACT_PHONE: (process.env.CONTACT_PHONE || '+91 70090 52784').trim(),
@@ -816,61 +823,15 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     const pdfCatalogRequest = /\b(catalog|catalogue|pdf|brochure|full range|all products|price list)\b/i;
     if (pdfCatalogRequest.test(userMessage)) {
       try {
-        let catalogUrl = '';
-        let catalogName = '';
-        let catalogCaption = '';
-
-        // v56: Smart catalog routing — pick the right PDF based on keywords in the message.
-        // Order matters: more specific categories first, generic last.
-        if (/\b(trophy|trophies|award|awards|recognition|memento)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_TROPHY) {
-          catalogUrl = CONFIG.PDF_CATALOG_TROPHY;
-          catalogName = '9Cork-Trophy-Catalog.pdf';
-          catalogCaption = 'Here is our cork trophy catalog! 🏆';
-        }
-        // v58: Tightened — match only yoga-specific phrases, not bare "mat" (which catches tablemat/dining mat)
-        else if (/\byoga\b|\byoga ?mat\b|\byoga ?block\b|\byoga ?wheel\b|\byoga ?bolster\b/i.test(userMessage) && CONFIG.PDF_CATALOG_YOGA) {
-          catalogUrl = CONFIG.PDF_CATALOG_YOGA;
-          catalogName = '9Cork-Yoga-Catalog.pdf';
-          catalogCaption = 'Here is our cork yoga essentials catalog! 🧘';
-        }
-        else if (/\b(planter|planters|plant|pot|pots|test tube)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_PLANTERS) {
-          catalogUrl = CONFIG.PDF_CATALOG_PLANTERS;
-          catalogName = '9Cork-Planters-Catalog.pdf';
-          catalogCaption = 'Here is our cork planters catalog! 🌱';
-        }
-        else if (/\b(elevation|premium|executive|luxury)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_ELEVATION) {
-          catalogUrl = CONFIG.PDF_CATALOG_ELEVATION;
-          catalogName = '9Cork-Elevation-Catalog.pdf';
-          catalogCaption = 'Here is our Elevation e-catalog (premium line)! ✨';
-        }
-        else if (/\b(minimal|minimalist|basic|simple|essential)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_MINIMALIST) {
-          catalogUrl = CONFIG.PDF_CATALOG_MINIMALIST;
-          catalogName = '9Cork-Minimalist-Catalog.pdf';
-          catalogCaption = 'Here is our Minimalist e-catalog! 🌿';
-        }
-        else if (/\b(combo|combos|gifting combo|combo catalog)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
-          catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
-          catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
-          catalogCaption = 'Here is our gifting combos catalog! 🎁';
-        }
-        // HORECA catalog detection (also covers caddy, bill folder, menu folder)
-        else if (/\b(horeca|hotel|restaurant|cafe|bar|hospitality|caddy|bill folder|menu folder|room tag|qr scanner)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_HORECA) {
-          catalogUrl = CONFIG.PDF_CATALOG_HORECA;
-          catalogName = '9Cork-HORECA-Catalog.pdf';
-          catalogCaption = 'Here is our HORECA catalog for Hotels, Restaurants & Cafes! 🌿';
-        }
-        // General products catalog (default)
-        else if (CONFIG.PDF_CATALOG_PRODUCTS) {
-          catalogUrl = CONFIG.PDF_CATALOG_PRODUCTS;
-          catalogName = '9Cork-Products-Catalog.pdf';
-          catalogCaption = 'Here is our complete cork products catalog! 🌿';
-        }
-        // Fallback to legacy single catalog URL
-        else if (CONFIG.PDF_CATALOG_URL) {
-          catalogUrl = CONFIG.PDF_CATALOG_URL;
-          catalogName = '9Cork-Catalog.pdf';
-          catalogCaption = 'Here is our product catalog! 🌿';
-        }
+        // Routing lives in config/catalogues.js as a testable table. It was
+        // an inline else-if chain here, which is how a missing YOGA branch and
+        // an unmatched "wall tiles" went unnoticed — untestable, and a wrong
+        // or absent match just silently sent nothing.
+        const picked = selectCatalogue(userMessage);
+        const catalogUrl = picked ? picked.url : (CONFIG.PDF_CATALOG_URL || '');
+        const catalogName = picked ? picked.filename : '9Cork-Catalog.pdf';
+        const catalogCaption = picked ? picked.caption : 'Here is our product catalog! 🌿';
+        const catalogSlot = picked ? picked.slot : 'LEGACY';
 
         if (catalogUrl) {
           console.log('📄 Sending catalog (' + catalogName + ') to', from);
@@ -878,9 +839,10 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
         if (catalogUrl) {
           // v55: Dedup — same catalog only once per 30 min
-          const catalogType = catalogName.includes('HORECA') ? 'horeca'
-            : catalogName.includes('Combos') ? 'combos'
-            : 'products';
+          // Key on the slot: the old derivation mapped everything except
+          // HORECA and Combos to 'products', so sending the trophy catalogue
+          // blocked the planters catalogue for 30 minutes.
+          const catalogType = catalogSlot;
           if (!canSendCatalog(from, catalogType)) {
             console.log('📄 Catalog already sent recently, skipping (' + catalogType + ')');
             return;
