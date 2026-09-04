@@ -16,7 +16,7 @@
 //   - size under WhatsApp's 100 MB document ceiling
 
 const https = require('https');
-const { CATALOGUES } = require('../config/catalogues');
+const { CATALOGUES, isOversized, viewUrl } = require('../config/catalogues');
 
 const WHATSAPP_DOC_LIMIT = 100 * 1024 * 1024;
 const PDF_MAGIC = '%PDF-';
@@ -52,6 +52,16 @@ async function main() {
   for (const slot of slots) {
     const url = CATALOGUES[slot];
     let verdict, detail;
+
+    // An oversized catalogue is delivered as a link by design, so its
+    // download URL returning Drive's interstitial is expected, not a fault.
+    // Reporting it as a failure would make this job red every single day —
+    // and a check that always fails is a check nobody reads, which is how
+    // three genuinely dead links survived for months.
+    if (isOversized(slot)) {
+      console.log(`  ${'LINK'.padEnd(8)} ${slot.padEnd(11)} too large to send as a document — shared as ${viewUrl(slot)}`);
+      continue;
+    }
     try {
       const r = await head(url);
       const mb = (r.bytes / 1048576).toFixed(1) + ' MB';

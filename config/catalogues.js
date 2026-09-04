@@ -36,13 +36,36 @@ const path = require('path');
 // which is why reconciliation against the folder, not liveness alone, is the
 // actual fix.
 let MANIFEST_IDS = {};
+let MANIFEST_SIZES = {};
 try {
   const m = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'drive-manifest.json'), 'utf-8'));
   for (const [slot, v] of Object.entries(m.catalogues || {})) {
     if (v && typeof v.id === 'string') MANIFEST_IDS[slot] = v.id;
+    if (v && Number.isFinite(v.sizeBytes)) MANIFEST_SIZES[slot] = v.sizeBytes;
   }
 } catch {
   MANIFEST_IDS = {}; // fall through to the pinned floor below
+  MANIFEST_SIZES = {};
+}
+
+// WhatsApp refuses documents above this. Past it a catalogue must be shared
+// as a link instead — and Drive compounds the problem: beyond its virus-scan
+// threshold the download URL serves an HTML interstitial rather than the
+// file, so Meta would fetch a web page and deliver a broken document.
+const WHATSAPP_DOC_LIMIT_BYTES = 100 * 1024 * 1024;
+
+/** Is this slot's file too large to send as a WhatsApp document? */
+function isOversized(slot) {
+  const size = MANIFEST_SIZES[slot];
+  // Unknown size must not suppress document delivery — absence of data is
+  // not evidence of a problem.
+  return Number.isFinite(size) && size > WHATSAPP_DOC_LIMIT_BYTES;
+}
+
+/** Human-clickable Drive link, for catalogues too big to send as a file. */
+function viewUrl(slot) {
+  const id = FILE_IDS[slot];
+  return id ? `https://drive.google.com/file/d/${id}/view` : '';
 }
 
 const PINNED_FILE_IDS = {
@@ -96,13 +119,18 @@ const CATALOGUE_REQUEST = /\b(catalog|catalogue|pdf|brochure|full range|all prod
 const ROUTES = [
   { slot: 'TROPHY',     match: /\b(trophy|trophies|award|awards|recognition|memento)\b/i,
     filename: '9Cork-Trophy-Catalog.pdf',      caption: 'Here is our cork trophy catalog! 🏆' },
+  // Wall panels are their own line — distinct from the Elevation/Minimalist
+  // wall COVERING ranges. Listed first so "wall panel" cannot be captured by
+  // ELEVATION's broader wall pattern, which is what used to happen.
+  { slot: 'WALL_PANELS', match: /\b(3d|wall panel|wall panels)\b/i,
+    filename: '9Cork-3D-Wall-Panels-Catalog.pdf', caption: 'Here is our 3D cork wall panel catalog! 🧱' },
   { slot: 'YOGA',       match: /\b(yoga|wellness|mat|mats|brick|bolster|meditation|fitness)\b/i,
     filename: '9Cork-Yoga-Wellness-Catalog.pdf', caption: 'Here is our cork yoga & wellness catalog! 🧘' },
   { slot: 'PLANTERS',   match: /\b(planter|planters|plant|pot|pots|test tube)\b/i,
     filename: '9Cork-Planters-Catalog.pdf',    caption: 'Here is our cork planters catalog! 🌱' },
   // Wall coverings ship as two ranges. "wall tiles" is what customers ask for
   // and previously matched no branch at all.
-  { slot: 'ELEVATION',  match: /\b(elevation|wall tile|wall tiles|wall covering|wall panel|wall panels|premium|executive|luxury)\b/i,
+  { slot: 'ELEVATION',  match: /\b(elevation|wall tile|wall tiles|wall covering|wall coverings|premium|executive|luxury)\b/i,
     filename: '9Cork-Elevation-Catalog.pdf',   caption: 'Here is our Elevation e-catalog — cork wall coverings! ✨' },
   { slot: 'MINIMALIST', match: /\b(minimal|minimalist|basic|simple|essential)\b/i,
     filename: '9Cork-Minimalist-Catalog.pdf',  caption: 'Here is our Minimalist e-catalog! 🌿' },
@@ -132,7 +160,14 @@ function selectCatalogue(userMessage) {
   const route = ROUTES.find(r => r.match.test(msg)) || DEFAULT_ROUTE;
   const url = resolve(route.slot);
   if (!url) return null;
-  return { slot: route.slot, url, filename: route.filename, caption: route.caption };
+  return {
+    slot: route.slot,
+    url,
+    filename: route.filename,
+    caption: route.caption,
+    oversized: isOversized(route.slot),
+    viewUrl: viewUrl(route.slot)
+  };
 }
 
-module.exports = { CATALOGUES, FILE_IDS, resolve, driveDownloadUrl, selectCatalogue, ROUTES };
+module.exports = { CATALOGUES, FILE_IDS, resolve, driveDownloadUrl, selectCatalogue, ROUTES, isOversized, viewUrl, WHATSAPP_DOC_LIMIT_BYTES };

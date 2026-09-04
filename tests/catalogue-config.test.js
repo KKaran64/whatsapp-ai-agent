@@ -82,10 +82,24 @@ describe('the Drive manifest is the source of truth, not the pinned floor', () =
     }
   });
 
-  test('no catalogue exceeds WhatsApp\'s 100 MB document limit', () => {
+  // CONTRACT CHANGED: this previously asserted that no catalogue exceeds
+  // WhatsApp's 100 MB limit. The 3D wall panel catalogue is 247 MB and is a
+  // real product catalogue, so the requirement is not "never too big" — it is
+  // "a too-big catalogue is recognised and delivered as a link instead of
+  // being sent as a document that would arrive broken".
+  test('any catalogue over the document limit is flagged oversized', () => {
+    const { isOversized } = require('../config/catalogues');
     const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
     for (const [slot, v] of Object.entries(m.catalogues)) {
-      expect(v.sizeBytes).toBeLessThan(100 * 1024 * 1024);
+      expect(isOversized(slot)).toBe(v.sizeBytes > 100 * 1024 * 1024);
+    }
+  });
+
+  test('an oversized catalogue still has a usable view link', () => {
+    const { isOversized, viewUrl } = require('../config/catalogues');
+    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    for (const slot of Object.keys(m.catalogues)) {
+      if (isOversized(slot)) expect(viewUrl(slot)).toMatch(/^https:\/\/drive\.google\.com\/file\/d\/.+\/view$/);
     }
   });
 });

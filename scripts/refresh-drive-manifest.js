@@ -24,7 +24,11 @@ const { listFolder, pickNewest } = require('../lib/drive-folder');
 
 const MANIFEST = path.join(__dirname, '..', 'data', 'drive-manifest.json');
 
-// WhatsApp rejects documents above 100 MB; warn before the ceiling.
+// WhatsApp rejects documents above 100 MB. Above that a catalogue cannot be
+// sent as a document at all — and Drive compounds it: past its virus-scan
+// threshold the uc?export=download URL returns an HTML interstitial instead
+// of the file, so even the bytes are unreachable to an automated fetcher.
+const SIZE_HARD_LIMIT_BYTES = 100 * 1024 * 1024;
 const SIZE_WARN_BYTES = 90 * 1024 * 1024;
 
 const CATALOGUE_FOLDER = '1MqtPv8XMvfMhIwzbm6jHAAGK4Cw3QKxL'; // 9 CORK_CATALOGUES_2026
@@ -33,6 +37,7 @@ const CATALOGUE_FOLDER = '1MqtPv8XMvfMhIwzbm6jHAAGK4Cw3QKxL'; // 9 CORK_CATALOGU
 // named "CORK YOGA WELLNESS PRODUCT CATALOGUE", so it must be claimed before
 // the generic PRODUCTS pattern can swallow it.
 const CATALOGUE_SLOTS = [
+  ['WALL_PANELS', /\b3d\b|wall panel/i],
   ['YOGA',       /yoga|wellness/i],
   ['HORECA',     /horeca/i],
   ['COMBOS',     /combo/i],
@@ -68,7 +73,9 @@ async function build() {
       sizeBytes: hit.sizeBytes,
       modifiedMs: hit.modifiedMs
     };
-    if (hit.sizeBytes > SIZE_WARN_BYTES) {
+    if (hit.sizeBytes > SIZE_HARD_LIMIT_BYTES) {
+      warnings.push(`${slot} is ${fmtMB(hit.sizeBytes)} — EXCEEDS WhatsApp's 100 MB document limit; it will be shared as a link, not sent as a file. Compress it to restore document delivery.`);
+    } else if (hit.sizeBytes > SIZE_WARN_BYTES) {
       warnings.push(`${slot} is ${fmtMB(hit.sizeBytes)} — close to WhatsApp's 100 MB document limit`);
     }
   }

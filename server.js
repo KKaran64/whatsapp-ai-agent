@@ -832,6 +832,8 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
         const catalogName = picked ? picked.filename : '9Cork-Catalog.pdf';
         const catalogCaption = picked ? picked.caption : 'Here is our product catalog! 🌿';
         const catalogSlot = picked ? picked.slot : 'LEGACY';
+        const catalogOversized = picked ? picked.oversized : false;
+        const catalogViewUrl = picked ? picked.viewUrl : '';
 
         if (catalogUrl) {
           console.log('📄 Sending catalog (' + catalogName + ') to', from);
@@ -847,8 +849,18 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
             console.log('📄 Catalog already sent recently, skipping (' + catalogType + ')');
             return;
           }
-          await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
-          return; // Exit after sending PDF, don't send images
+          if (catalogOversized) {
+            // Over WhatsApp's 100 MB document ceiling. Sending it as a
+            // document fails twice over: Meta rejects the size, and past
+            // Drive's virus-scan threshold the download URL serves an HTML
+            // interstitial rather than the file. The view link renders that
+            // page correctly for a human, who can read or download from there.
+            console.log('📄 Catalog ' + catalogSlot + ' exceeds WhatsApp document limit — sending link instead');
+            await sendWhatsAppMessage(from, `${catalogCaption}\n\n${catalogViewUrl}`);
+          } else {
+            await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
+          }
+          return; // Exit after sending catalog, don't send images
         }
       } catch (error) {
         console.error('❌ Failed to send PDF catalog:', error.message);
