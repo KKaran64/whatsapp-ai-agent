@@ -52,6 +52,44 @@ describe('file ids are distinct and well formed', () => {
   });
 });
 
+describe('the Drive manifest is the source of truth, not the pinned floor', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const manifestPath = path.join(__dirname, '..', 'data', 'drive-manifest.json');
+
+  test('a committed manifest exists', () => {
+    expect(fs.existsSync(manifestPath)).toBe(true);
+  });
+
+  test('every routed slot resolves to the id the manifest names', () => {
+    // This is the property the pinned-id approach could not provide: within
+    // hours of pinning, the wellness catalogue was re-uploaded and the pin
+    // pointed at a superseded file that still resolved, so nothing 404'd and
+    // the bot quietly served the old document.
+    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    for (const slot of ROUTED_SLOTS) {
+      expect(m.catalogues[slot]).toBeDefined();
+      expect(FILE_IDS[slot]).toBe(m.catalogues[slot].id);
+    }
+  });
+
+  test('manifest entries carry the metadata the reconcile job needs', () => {
+    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    for (const [, v] of Object.entries(m.catalogues)) {
+      expect(typeof v.name).toBe('string');
+      expect(v.sizeBytes).toBeGreaterThan(0);
+      expect(v.modifiedMs).toBeGreaterThan(0);
+    }
+  });
+
+  test('no catalogue exceeds WhatsApp\'s 100 MB document limit', () => {
+    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    for (const [slot, v] of Object.entries(m.catalogues)) {
+      expect(v.sizeBytes).toBeLessThan(100 * 1024 * 1024);
+    }
+  });
+});
+
 describe('env override still wins', () => {
   test('PDF_CATALOG_<SLOT> overrides the versioned default', () => {
     const prev = process.env.PDF_CATALOG_HORECA;

@@ -1,0 +1,38 @@
+name: Drive reconcile
+
+# The catalogue outage was silent: three links had been dead for months and
+# the only signal was a customer receiving nothing. Unit tests cannot catch
+# it — they must stay offline — so liveness and drift are checked here on a
+# schedule instead of by someone remembering to look.
+on:
+  schedule:
+    # 03:00 UTC daily — after the monthly sheet sync window (02:00).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # Fails when Drive has moved on from the committed manifest — e.g. a
+      # catalogue re-uploaded as "(2)" superseding "(5)". The old file keeps
+      # resolving by id, so this drift is invisible to a liveness check.
+      - name: Manifest matches Drive
+        run: node scripts/refresh-drive-manifest.js --check
+
+      # Fails when a link would not actually send: deleted file, permission
+      # change, non-PDF body, or over WhatsApp's 100 MB document limit.
+      - name: Catalogue links are live
+        run: node scripts/check-catalogue-links.js

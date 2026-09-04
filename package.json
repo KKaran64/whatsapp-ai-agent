@@ -12,7 +12,10 @@
     "test:legacy": "node tests/critical-bugs.manual.js",
     "test:ai": "node tests/ai-response-validation.js",
     "test:rag": "jest tests/rag/ --verbose",
-    "test:all": "jest"
+    "test:all": "jest",
+    "drive:refresh": "node scripts/refresh-drive-manifest.js",
+    "drive:check": "node scripts/refresh-drive-manifest.js --check",
+    "catalogue:check": "node scripts/check-catalogue-links.js"
   },
   "keywords": [
     "whatsapp",
