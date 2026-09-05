@@ -139,6 +139,55 @@ function parseSheetPrice(raw, opts = {}) {
   return { ok: true, value: Math.round(n * 100) / 100 };
 }
 
+/**
+ * Parse a price cell that may describe several size variants.
+ *
+ * CORK YOGA PEANUT is sold in three sizes and the sheet says so in one row:
+ * DIMENSION "S,M,L", PRICE "583,750,916" — ₹583 / ₹750 / ₹916. That is a real
+ * description of the product, not a data-entry error, so it expands into three
+ * priced variants rather than being read as one number (₹58 crore, which
+ * shipped to production) or refused outright (safe, but left the peanut with
+ * no price at all).
+ *
+ * The DIMENSION cell is what disambiguates. "583,750,916" and "1,26,900" are
+ * both validly grouped numbers; only the declared variant count separates a
+ * three-variant row from one lakh-grouped price. When the two disagree the row
+ * is refused rather than guessed — we never decide which size a customer meant.
+ *
+ * @returns {{ok: true, variants: Array<{label: string|null, price: number}>}
+ *          | {ok: false, reason: string}}
+ */
+function parseSheetPriceVariants(rawPrice, rawDimension) {
+  const price = String(rawPrice === null || rawPrice === undefined ? '' : rawPrice).trim();
+  const labels = String(rawDimension || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // Only treat a cell as multi-variant when the dimension declares more than
+  // one AND the price splits into exactly that many bare numbers.
+  if (labels.length > 1) {
+    const groups = price.split(',').map(s => s.trim()).filter(Boolean);
+    const allNumeric = groups.length > 0 && groups.every(g => /^\d+(\.\d+)?$/.test(g));
+    if (allNumeric && groups.length === labels.length) {
+      const variants = groups.map((g, i) => ({ label: labels[i], price: Number(g) }));
+      const bad = variants.find(v => !Number.isFinite(v.price) || v.price <= 0 || v.price > MAX_PLAUSIBLE_UNIT_PRICE);
+      if (bad) return { ok: false, reason: `implausible variant price ${bad.price} for "${bad.label}"` };
+      return { ok: true, variants };
+    }
+    if (allNumeric && groups.length > 1) {
+      return {
+        ok: false,
+        reason: `variant mismatch: ${groups.length} price(s) for ${labels.length} declared variant(s) ("${price}" vs "${String(rawDimension).trim()}")`
+      };
+    }
+  }
+
+  const single = parseSheetPrice(price);
+  if (!single.ok) return single;
+  return { ok: true, variants: [{ label: null, price: single.value }] };
+}
+
 module.exports = {
   RUPEE_AMOUNT_SOURCE,
   MAX_PLAUSIBLE_UNIT_PRICE,
@@ -146,5 +195,6 @@ module.exports = {
   extractRupeeAmounts,
   hasRupeeAmount,
   parseBudget,
-  parseSheetPrice
+  parseSheetPrice,
+  parseSheetPriceVariants
 };
