@@ -1,7 +1,7 @@
 module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.js'],
-  testPathIgnorePatterns: ['/node_modules/', 'critical-bugs', '.claude/worktrees/'],
+  testPathIgnorePatterns: ['/node_modules/', 'critical-bugs'],
   collectCoverageFrom: [
     'input-sanitizer.js',
     'ai-provider-manager.js',

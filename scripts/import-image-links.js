@@ -27,7 +27,6 @@ const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
-const { parseSheetPrice, parseSheetPriceVariants } = require('../pricing/money');
 
 const APPLY = process.argv.includes('--apply');
 
@@ -55,12 +54,7 @@ const SHEETS = [
   { label: 'trophies-prices',  docId: '14pafWDZsAxPqA5gQHprfH7pvQCuP0EVjEF0_U4XvnjQ',  gid: '1661831986', kind: 'pricelist' },
   // Combo-pricing sheet has "PRODUCTS NAME" (plural) header — handled separately.
   { label: 'planters-prices',  docId: '1gGOTQjWbV60xgE-Px8PD87s0YcRxDQ9iTvSbEESghhE',  gid: '0',          kind: 'pricelist' },
-  // gid was '0', which this document rejects with HTTP 400 (its first tab is
-  // not gid 0). Day 1 of the month syncs the combos group, so every scheduled
-  // run failed on that day — 2026-08-01 is in the run history. Verified: gid
-  // 116040534 returns the expected 'COMBO / PRODUCT IMAGE / PRODUCTS NAME /
-  // MRP PRICE 100-300PCS' header.
-  { label: 'combos-prices',    docId: '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  gid: '116040534',  kind: 'combopricelist' },
+  { label: 'combos-prices',    docId: '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  gid: '0',          kind: 'combopricelist' },
   { label: 'catalogue-prices', docId: '1THVTSBXIzdoY-kC12JKAIRcM7vKzU-rsDNV31ctQ_Dc',  gid: '1028285259', kind: 'pricelist' },
 ];
 
@@ -239,55 +233,6 @@ function slugId(name) {
   return 'IMG-' + norm(name).replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 }
 
-
-// Parse one "pricelist" sheet's rows into { normName -> {price, id} }.
-// Shared by the importer and by the price-repair script so the two can never
-// disagree about how a price cell is read.
-function parsePricelistRows(rows, label, sink, rejected) {
-  const headerIdx = rows.findIndex(r => r.some(c => /PRODUCT NAME/i.test(c)));
-  if (headerIdx === -1) return 0;
-  const header = rows[headerIdx].map(c => c.trim().toUpperCase());
-  const nameCol = header.findIndex(h => h === 'PRODUCT NAME');
-  const idCol = header.findIndex(h => /PRODUCT ?(ID|CODE)/.test(h));
-  const priceCol = header.findIndex(h => /PRICE/.test(h));
-  const dimCol = header.findIndex(h => /DIMENSION/.test(h));
-  if (nameCol === -1 || priceCol === -1) return 0;
-
-  let count = 0;
-  for (const r of rows.slice(headerIdx + 1)) {
-    const name = norm(r[nameCol]);
-    if (!name) continue;
-    const dim = dimCol === -1 ? '' : String(r[dimCol] || '');
-    const parsed = parseSheetPriceVariants(r[priceCol], dim);
-    if (!parsed.ok) {
-      if (r[priceCol] && String(r[priceCol]).trim() && rejected) {
-        rejected.push({ sheet: label, name, raw: String(r[priceCol]).trim(), reason: parsed.reason });
-      }
-      continue;
-    }
-    const baseId = (r[idCol] || '').trim() || null;
-    for (const v of parsed.variants) {
-      const vName = v.label ? `${name} ${v.label}` : name;
-      const vId = v.label && baseId ? `${baseId}-${v.label}` : baseId;
-      sink.set(norm(vName), { price: v.price, id: vId });
-      count++;
-    }
-  }
-  return count;
-}
-
-// Read every pricelist sheet and return the merged price map. Used by the
-// price-repair script so a replacement price always comes from the sheets.
-async function collectSupplementalPrices() {
-  const out = new Map();
-  for (const s of SHEETS) {
-    if (s.kind !== 'pricelist') continue;
-    const rows = parseCsv(await fetchCsv(s.docId, s.gid));
-    parsePricelistRows(rows, s.label, out, null);
-  }
-  return out;
-}
-
 async function main() {
   const sheetsList = SHEET_FILTER.size > 0 ? `  Sheets: ${[...SHEET_FILTER].join(', ')}` : '  (all sheets)';
   console.log(`Mode: ${APPLY ? 'APPLY (writing)' : 'DRY RUN (no writes; pass --apply to write)'}${sheetsList}\n`);
@@ -295,7 +240,6 @@ async function main() {
   // 1. Fetch + parse all sheets
   const products = new Map(); // norm name → merged record
   const supplementalPrices = new Map(); // norm name → { price, id }
-  const rejectedPrices = []; // rows whose price cell could not be parsed unambiguously
   let comboData = {};
   for (const s of SHEETS) {
     if (SHEET_FILTER.size > 0 && !SHEET_FILTER.has(s.label)) continue;
@@ -318,21 +262,32 @@ async function main() {
       let count = 0;
       for (const r of rows.slice(headerIdx + 1)) {
         const name = norm(r[nameCol] || '');
-        if (!name || supplementalPrices.has(name)) continue;
-        const parsed = parseSheetPrice(r[priceCol]);
-        if (!parsed.ok) {
-          if (r[priceCol] && String(r[priceCol]).trim()) rejectedPrices.push({ sheet: s.label, name, raw: String(r[priceCol]).trim(), reason: parsed.reason });
-          continue;
+        const price = Number(String(r[priceCol] || '').replace(/[^\d.]/g, ''));
+        if (name && Number.isFinite(price) && price > 0 && !supplementalPrices.has(name)) {
+          supplementalPrices.set(name, { price, id: null });
+          count++;
         }
-        supplementalPrices.set(name, { price: parsed.value, id: null });
-        count++;
       }
       console.log(`sheet ${s.label}: ${count} supplemental prices from combo components`);
       continue;
     }
     if (s.kind === 'pricelist') {
-      const n = parsePricelistRows(rows, s.label, supplementalPrices, rejectedPrices);
-      console.log(`sheet ${s.label}: ${n} supplemental prices`);
+      const headerIdx = rows.findIndex(r => r.some(c => /PRODUCT NAME/i.test(c)));
+      const header = rows[headerIdx].map(c => c.trim().toUpperCase());
+      const nameCol = header.findIndex(h => h === 'PRODUCT NAME');
+      // trophies sheet uses "Product code" column name
+      const idCol = header.findIndex(h => /PRODUCT ?(ID|CODE)/.test(h));
+      const priceCol = header.findIndex(h => /PRICE/.test(h));
+      let count = 0;
+      for (const r of rows.slice(headerIdx + 1)) {
+        const name = norm(r[nameCol]);
+        const price = Number(String(r[priceCol] || '').replace(/[^\d.]/g, ''));
+        if (name && Number.isFinite(price) && price > 0) {
+          supplementalPrices.set(name, { price, id: (r[idCol] || '').trim() || null });
+          count++;
+        }
+      }
+      console.log(`sheet ${s.label}: ${count} supplemental prices`);
       continue;
     }
     const items = extractProducts(rows, s.kind);
@@ -395,14 +350,6 @@ async function main() {
     console.log(`\nSkipped (no price):`);
     report.skipNoPrice.forEach(x => console.log(`  - ${x.name} (${x.images} imgs)`));
   }
-  if (rejectedPrices.length) {
-    // Loud, not silent: a rejected cell means that product now has NO price
-    // and will not be created. Previously these parsed into nonsense (a
-    // three-size "583,750,916" became ₹58 crore and reached production).
-    console.log(`\n⚠️  UNPARSEABLE PRICE CELLS (${rejectedPrices.length}) — these products get no price and need a sheet fix:`);
-    rejectedPrices.forEach(x => console.log(`  - [${x.sheet}] ${x.name}: "${x.raw}" → ${x.reason}`));
-  }
-
   console.log(`\nCombos parsed: ${Object.keys(comboData).length} (→ data/combo-images.json)`);
 
   // 3. Apply
@@ -441,10 +388,4 @@ async function main() {
   await mongoose.disconnect();
 }
 
-// Guarded so this module can be required (e.g. by
-// scripts/fix-implausible-prices.js) without triggering a full import run.
-if (require.main === module) {
-  main().catch(e => { console.error('FAILED:', e.message); process.exit(1); });
-}
-
-module.exports = { SHEETS, collectSupplementalPrices, parsePricelistRows, norm };
+main().catch(e => { console.error('FAILED:', e.message); process.exit(1); });

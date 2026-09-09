@@ -21,20 +21,11 @@ const { resolveIntent, getResolverStats } = require('./pricing/intent-resolver')
 const { deriveState: deriveConversationState, deriveStateAsync } = require('./pricing/conversation-state');
 // v61 Phase B.2 — state enforcer (post-LLM action-allowlist + surgical stripping)
 const { enforce: enforceState, extractRupeeAmounts } = require('./pricing/state-enforcer');
-// Customer-stated budget parsing lives in pricing/money.js — it is pure
-// string work, and keeping it here made it untestable without importing this
-// whole module (which exits the process when env vars are missing).
-const { parseBudget } = require('./pricing/money');
-const { CATALOGUES, selectCatalogue } = require('./config/catalogues');
 // v60 — comprehensive image-category routing
 const { resolveCategory: resolveImageCategory } = require('./pricing/image-routing');
 // 2026-07-06 — intent-driven image selection: images narrow by the resolver's
 // refinements, same understanding layer as pricing.
 const { filterByRefinements, selectImageSearch } = require('./pricing/refinement-filter');
-// Curated combo → component → exact-image-URL data (kept in sync by
-// scripts/import-image-links.js). Keys are "COMBO 01".."COMBO 49", matching
-// the combo numbers system-prompt.js quotes to customers (e.g. "Combo #12").
-const COMBO_IMAGES = require('./data/combo-images.json');
 // v60 — voice message transcription via Groq Whisper
 const { handleVoiceMessage } = require('./audio-handler');
 // v60 — catalog-aware vision identification via Gemini multimodal
@@ -390,21 +381,15 @@ const CONFIG = {
   MONGODB_URI: (process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-sales').trim(),
   REDIS_URL: (process.env.REDIS_URL || 'redis://localhost:6379').trim(),
   SENTRY_DSN: (process.env.SENTRY_DSN || '').trim(),
-  // Catalogue links come from config/catalogues.js, which reads the same
-  // PDF_CATALOG_* env vars first and falls back to versioned defaults. These
-  // used to be env-only: the three that were set pointed at deleted Drive
-  // files (404) and the other six were never set, so every catalogue request
-  // silently sent nothing.
   PDF_CATALOG_URL: (process.env.PDF_CATALOG_URL || '').trim(),
-  PDF_CATALOG_HORECA: CATALOGUES.HORECA,
-  PDF_CATALOG_PRODUCTS: CATALOGUES.PRODUCTS,
-  PDF_CATALOG_COMBOS: CATALOGUES.COMBOS,
-  PDF_CATALOG_TROPHY: CATALOGUES.TROPHY,
-  PDF_CATALOG_YOGA: CATALOGUES.YOGA,
-  PDF_CATALOG_PLANTERS: CATALOGUES.PLANTERS,
-  PDF_CATALOG_ELEVATION: CATALOGUES.ELEVATION,
-  PDF_CATALOG_MINIMALIST: CATALOGUES.MINIMALIST,
-  PDF_CATALOG_FESTIVE: CATALOGUES.FESTIVE,
+  PDF_CATALOG_HORECA: (process.env.PDF_CATALOG_HORECA || '').trim(),
+  PDF_CATALOG_PRODUCTS: (process.env.PDF_CATALOG_PRODUCTS || '').trim(),
+  PDF_CATALOG_COMBOS: (process.env.PDF_CATALOG_COMBOS || '').trim(),
+  PDF_CATALOG_TROPHY: (process.env.PDF_CATALOG_TROPHY || '').trim(),
+  PDF_CATALOG_YOGA: (process.env.PDF_CATALOG_YOGA || '').trim(),
+  PDF_CATALOG_PLANTERS: (process.env.PDF_CATALOG_PLANTERS || '').trim(),
+  PDF_CATALOG_ELEVATION: (process.env.PDF_CATALOG_ELEVATION || '').trim(),
+  PDF_CATALOG_MINIMALIST: (process.env.PDF_CATALOG_MINIMALIST || '').trim(),
   NODE_ENV: process.env.NODE_ENV || 'development',
   // Contact info (used in fallback responses — change in .env, not here)
   CONTACT_PHONE: (process.env.CONTACT_PHONE || '+91 70090 52784').trim(),
@@ -533,14 +518,6 @@ let messageQueue;
 // In-memory conversation cache (fallback when MongoDB is down)
 // Structure: Map<phoneNumber, Array<{role, content, timestamp}>>
 const conversationMemory = new Map();
-
-// v62 — this turn's resolveIntent result, handed from processWithClaudeAgent
-// to the handleImageDetectionAndSending call that immediately follows it, so
-// the same incoming message doesn't cost two Groq LLM calls. Consumed (read
-// + deleted) by the first matching read; a phone's entry is overwritten each
-// turn, so this never grows past one entry per active phone.
-// Structure: Map<phoneNumber, {rawMessage, intent}>
-const pendingIntentByPhone = new Map();
 
 // Initialize MongoDB connection (non-blocking)
 async function connectDatabase() {
@@ -823,17 +800,61 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     const pdfCatalogRequest = /\b(catalog|catalogue|pdf|brochure|full range|all products|price list)\b/i;
     if (pdfCatalogRequest.test(userMessage)) {
       try {
-        // Routing lives in config/catalogues.js as a testable table. It was
-        // an inline else-if chain here, which is how a missing YOGA branch and
-        // an unmatched "wall tiles" went unnoticed — untestable, and a wrong
-        // or absent match just silently sent nothing.
-        const picked = selectCatalogue(userMessage);
-        const catalogUrl = picked ? picked.url : (CONFIG.PDF_CATALOG_URL || '');
-        const catalogName = picked ? picked.filename : '9Cork-Catalog.pdf';
-        const catalogCaption = picked ? picked.caption : 'Here is our product catalog! 🌿';
-        const catalogSlot = picked ? picked.slot : 'LEGACY';
-        const catalogOversized = picked ? picked.oversized : false;
-        const catalogViewUrl = picked ? picked.viewUrl : '';
+        let catalogUrl = '';
+        let catalogName = '';
+        let catalogCaption = '';
+
+        // v56: Smart catalog routing — pick the right PDF based on keywords in the message.
+        // Order matters: more specific categories first, generic last.
+        if (/\b(trophy|trophies|award|awards|recognition|memento)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_TROPHY) {
+          catalogUrl = CONFIG.PDF_CATALOG_TROPHY;
+          catalogName = '9Cork-Trophy-Catalog.pdf';
+          catalogCaption = 'Here is our cork trophy catalog! 🏆';
+        }
+        // v58: Tightened — match only yoga-specific phrases, not bare "mat" (which catches tablemat/dining mat)
+        else if (/\byoga\b|\byoga ?mat\b|\byoga ?block\b|\byoga ?wheel\b|\byoga ?bolster\b/i.test(userMessage) && CONFIG.PDF_CATALOG_YOGA) {
+          catalogUrl = CONFIG.PDF_CATALOG_YOGA;
+          catalogName = '9Cork-Yoga-Catalog.pdf';
+          catalogCaption = 'Here is our cork yoga essentials catalog! 🧘';
+        }
+        else if (/\b(planter|planters|plant|pot|pots|test tube)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_PLANTERS) {
+          catalogUrl = CONFIG.PDF_CATALOG_PLANTERS;
+          catalogName = '9Cork-Planters-Catalog.pdf';
+          catalogCaption = 'Here is our cork planters catalog! 🌱';
+        }
+        else if (/\b(elevation|premium|executive|luxury)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_ELEVATION) {
+          catalogUrl = CONFIG.PDF_CATALOG_ELEVATION;
+          catalogName = '9Cork-Elevation-Catalog.pdf';
+          catalogCaption = 'Here is our Elevation e-catalog (premium line)! ✨';
+        }
+        else if (/\b(minimal|minimalist|basic|simple|essential)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_MINIMALIST) {
+          catalogUrl = CONFIG.PDF_CATALOG_MINIMALIST;
+          catalogName = '9Cork-Minimalist-Catalog.pdf';
+          catalogCaption = 'Here is our Minimalist e-catalog! 🌿';
+        }
+        else if (/\b(combo|combos|gifting combo|combo catalog)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_COMBOS) {
+          catalogUrl = CONFIG.PDF_CATALOG_COMBOS;
+          catalogName = '9Cork-Gifting-Combos-Catalog.pdf';
+          catalogCaption = 'Here is our gifting combos catalog! 🎁';
+        }
+        // HORECA catalog detection (also covers caddy, bill folder, menu folder)
+        else if (/\b(horeca|hotel|restaurant|cafe|bar|hospitality|caddy|bill folder|menu folder|room tag|qr scanner)\b/i.test(userMessage) && CONFIG.PDF_CATALOG_HORECA) {
+          catalogUrl = CONFIG.PDF_CATALOG_HORECA;
+          catalogName = '9Cork-HORECA-Catalog.pdf';
+          catalogCaption = 'Here is our HORECA catalog for Hotels, Restaurants & Cafes! 🌿';
+        }
+        // General products catalog (default)
+        else if (CONFIG.PDF_CATALOG_PRODUCTS) {
+          catalogUrl = CONFIG.PDF_CATALOG_PRODUCTS;
+          catalogName = '9Cork-Products-Catalog.pdf';
+          catalogCaption = 'Here is our complete cork products catalog! 🌿';
+        }
+        // Fallback to legacy single catalog URL
+        else if (CONFIG.PDF_CATALOG_URL) {
+          catalogUrl = CONFIG.PDF_CATALOG_URL;
+          catalogName = '9Cork-Catalog.pdf';
+          catalogCaption = 'Here is our product catalog! 🌿';
+        }
 
         if (catalogUrl) {
           console.log('📄 Sending catalog (' + catalogName + ') to', from);
@@ -841,26 +862,15 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
 
         if (catalogUrl) {
           // v55: Dedup — same catalog only once per 30 min
-          // Key on the slot: the old derivation mapped everything except
-          // HORECA and Combos to 'products', so sending the trophy catalogue
-          // blocked the planters catalogue for 30 minutes.
-          const catalogType = catalogSlot;
+          const catalogType = catalogName.includes('HORECA') ? 'horeca'
+            : catalogName.includes('Combos') ? 'combos'
+            : 'products';
           if (!canSendCatalog(from, catalogType)) {
             console.log('📄 Catalog already sent recently, skipping (' + catalogType + ')');
             return;
           }
-          if (catalogOversized) {
-            // Over WhatsApp's 100 MB document ceiling. Sending it as a
-            // document fails twice over: Meta rejects the size, and past
-            // Drive's virus-scan threshold the download URL serves an HTML
-            // interstitial rather than the file. The view link renders that
-            // page correctly for a human, who can read or download from there.
-            console.log('📄 Catalog ' + catalogSlot + ' exceeds WhatsApp document limit — sending link instead');
-            await sendWhatsAppMessage(from, `${catalogCaption}\n\n${catalogViewUrl}`);
-          } else {
-            await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
-          }
-          return; // Exit after sending catalog, don't send images
+          await sendWhatsAppDocument(from, catalogUrl, catalogName, catalogCaption);
+          return; // Exit after sending PDF, don't send images
         }
       } catch (error) {
         console.error('❌ Failed to send PDF catalog:', error.message);
@@ -877,40 +887,6 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
     if (comboMatch && hasTrigger) {
       const comboNumber = parseInt(comboMatch[1]);
       console.log(`🎯 Combo-specific image request detected: Combo/Option #${comboNumber}`);
-
-      // v62 — exact match first: combo-images.json has the curated
-      // component list + image for every catalog combo (same numbering
-      // system-prompt.js quotes to customers, e.g. "Combo #12"). Only fall
-      // through to category-keyword guessing below for numbers outside the
-      // catalog (typos, custom combos the bot improvised).
-      const comboKey = `COMBO ${String(comboNumber).padStart(2, '0')}`;
-      const exactCombo = COMBO_IMAGES[comboKey];
-
-      if (exactCombo && exactCombo.components && exactCombo.components.length > 0) {
-        console.log(`📦 Sending ${exactCombo.components.length} exact images for ${comboKey} (${exactCombo.section})`);
-        await sentImagesTracker.clear(from);
-
-        let totalSent = 0;
-        for (const component of exactCombo.components) {
-          try {
-            const imageUrl = convertGoogleDriveUrl(component.image);
-            if (isValidImageUrl(imageUrl)) {
-              await sendWhatsAppImage(from, imageUrl, `${component.name} 🌿`);
-              await sentImagesTracker.add(from, component.image);
-              totalSent++;
-              console.log(`   ✅ Sent: ${component.name}`);
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-          } catch (err) {
-            console.error(`   ❌ Failed to send ${component.name}:`, err.message);
-          }
-        }
-
-        console.log(`📦 Sent ${totalSent} exact images for ${comboKey}`);
-        return; // Exit early — exact combo images sent
-      }
-
-      console.log(`   ${comboKey} not in combo-images.json, falling back to category-keyword matching`);
 
       // Look for bot's previous message containing combo suggestions
       const recentMessages = conversationContext.slice(-10);
@@ -1005,24 +981,10 @@ async function handleImageDetectionAndSending(from, agentResponse, messageBody, 
       // (LLM outage / no product mentioned) falls back to the category bucket,
       // which is the legacy behavior.
       let imageIntent = null;
-      // v62 — this same message was already run through resolveIntent once
-      // by processWithClaudeAgent just before this function was called. Reuse
-      // that result instead of paying for a second Groq call, but only when
-      // userMessage is still exactly what the customer sent — the
-      // pronoun/context enrichment above (the genericImageRequest block) can
-      // rewrite userMessage with extra product context the pricing call
-      // never saw, and a fresh call is required to reflect that.
-      const pending = pendingIntentByPhone.get(from);
-      if (pending && pending.rawMessage === messageBody && userMessage === messageBody) {
-        imageIntent = pending.intent;
-        pendingIntentByPhone.delete(from);
-        console.log('♻️  Reusing this turn\'s resolved intent for image selection (no duplicate LLM call)');
-      } else {
-        try {
-          imageIntent = await resolveIntent(userMessage, conversationContext, { budgetMs: 3000 });
-        } catch (e) {
-          console.warn('⚠️ Image-path intent resolution failed (category fallback):', e.message);
-        }
+      try {
+        imageIntent = await resolveIntent(userMessage, conversationContext, { budgetMs: 3000 });
+      } catch (e) {
+        console.warn('⚠️ Image-path intent resolution failed (category fallback):', e.message);
       }
       const imageSearch = selectImageSearch(imageIntent, resolvedCategory);
       if (imageSearch) {
@@ -1318,111 +1280,6 @@ async function withPhoneLock(phone, fn) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Shared image handler — single source of truth for all image paths
-// (direct processing, Bull queue, optimized bot fallback)
-// ─────────────────────────────────────────────────────────────────────
-async function handleIncomingImage(mediaId, caption, from, context) {
-  console.log('📸 Processing image with catalog-aware Gemini Vision...');
-  const customerCaption = (caption || '').trim();
-
-  // 1. Download image
-  let imageData = null;
-  try {
-    imageData = await visionHandler.downloadImage(mediaId);
-  } catch (err) {
-    console.warn('⚠️ Image download failed:', err.message);
-  }
-
-  // 2. Run Gemini Vision identification
-  let identification = null;
-  if (imageData?.base64) {
-    try {
-      const imageBuffer = Buffer.from(imageData.base64, 'base64');
-      identification = await identifyProductFromImage(imageBuffer, imageData.mimeType || 'image/jpeg');
-      if (identification) {
-        console.log(`📸 Gemini Vision: "${identification.visibleObject}" (cork=${identification.isCorkProduct}, conf=${(identification.confidence * 100).toFixed(0)}%, category=${identification.matchedCategory || 'none'}, sku=${identification.matchedProductName || 'none'})`);
-      }
-    } catch (err) {
-      console.warn('⚠️ Gemini Vision failed:', err.message);
-    }
-  }
-
-  // 3. Build logTag for customer message storage
-  const logTag = identification
-    ? `vision: "${identification.visibleObject}" cork=${identification.isCorkProduct} conf=${(identification.confidence * 100).toFixed(0)}%`
-    : 'vision: unavailable';
-
-  // 4. Decision tree
-  let response;
-  let catalogToSend = null;
-
-  // GATE: screenshot/text/list/table → skip cork classification entirely
-  const isTextImage = identification &&
-    /\b(screenshot|list|table|text|menu|document|spreadsheet|catalog|catalogue|names|typed|handwritten)\b/i.test(
-      (identification.visibleObject || '') + ' ' + (identification.reasoning || '')
-    );
-
-  if (isTextImage) {
-    const extractedInfo = identification.reasoning || identification.visibleObject || '';
-    const wantsPhotos = /\b(photo|picture|image|pic|pics|show|send|share)\b/i.test(customerCaption || '');
-    const virtualText = customerCaption
-      ? `${customerCaption}\n\n(Customer sent a screenshot/list of product names. Gemini read: ${extractedInfo}.\nIMPORTANT: List ALL the products mentioned, not just one or two. The customer wants help with the ENTIRE list. Do NOT enter the pricing flow — acknowledge all products and ask how you can help.)`
-      : `Customer sent a screenshot/list of products. Gemini read: ${extractedInfo}.\nIMPORTANT: Extract ALL product names mentioned and help the customer with the ENTIRE list. Do NOT focus on just one category.`;
-    console.log(`📸 → text/list image detected, routing to text pipeline (${identification.visibleObject})`);
-    response = await processWithClaudeAgent(virtualText, from, context);
-
-    if (wantsPhotos) {
-      const infoLower = extractedInfo.toLowerCase();
-      if (/\b(horeca|hotel|restaurant|cafe|bar|caddy|bill folder|menu folder|room tag|qr scanner|payment scanner|menu scanner)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_HORECA) {
-        catalogToSend = { url: CONFIG.PDF_CATALOG_HORECA, name: '9Cork-HORECA-Catalog.pdf', caption: 'Here is our HORECA catalog with photos! 🌿' };
-      } else if (/\b(trophy|trophies|award|memento)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_TROPHY) {
-        catalogToSend = { url: CONFIG.PDF_CATALOG_TROPHY, name: '9Cork-Trophy-Catalog.pdf', caption: 'Here is our trophy catalog with photos! 🏆' };
-      } else if (/\byoga\b/i.test(infoLower) && CONFIG.PDF_CATALOG_YOGA) {
-        catalogToSend = { url: CONFIG.PDF_CATALOG_YOGA, name: '9Cork-Yoga-Catalog.pdf', caption: 'Here is our yoga essentials catalog! 🧘' };
-      } else if (/\b(planter|planters|test tube|pot|pots)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_PLANTERS) {
-        catalogToSend = { url: CONFIG.PDF_CATALOG_PLANTERS, name: '9Cork-Planters-Catalog.pdf', caption: 'Here is our planters catalog with photos! 🌱' };
-      } else if (/\b(combo|gifting combo)\b/i.test(infoLower) && CONFIG.PDF_CATALOG_COMBOS) {
-        catalogToSend = { url: CONFIG.PDF_CATALOG_COMBOS, name: '9Cork-Gifting-Combos-Catalog.pdf', caption: 'Here is our gifting combos catalog! 🎁' };
-      } else if (CONFIG.PDF_CATALOG_PRODUCTS) {
-        catalogToSend = { url: CONFIG.PDF_CATALOG_PRODUCTS, name: '9Cork-Products-Catalog.pdf', caption: 'Here is our complete products catalog with photos! 🌿' };
-      }
-    }
-  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
-    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
-    const virtualText = customerCaption
-      ? `${customerCaption} (Customer also sent a photo — Gemini Vision identified it as: ${productLabel}, confidence ${(identification.confidence * 100).toFixed(0)}%. Confirm with customer before quoting.)`
-      : `Customer sent a photo of what appears to be a ${productLabel} (confidence ${(identification.confidence * 100).toFixed(0)}%). Confirm this is what they want, then ask quantity + customer type per RULE F.`;
-    console.log(`📸 → routing through text pipeline (high confidence cork match)`);
-    response = await processWithClaudeAgent(virtualText, from, context);
-  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.5) {
-    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
-    response = customerCaption
-      ? `Thanks for the photo! From what I can see this looks like a ${productLabel} — could you confirm? Once you do, I'll share the pricing.`
-      : `Thanks for the photo! This looks like it could be a ${productLabel}. Could you confirm and let me know how many pieces you need?`;
-    console.log(`📸 → asking customer to confirm (borderline cork match)`);
-  } else if (identification && identification.isCorkProduct === false) {
-    const captionLower = (customerCaption || '').toLowerCase();
-    const captionSignalsProductRequest = /\b(photo|image|picture|price|rate|cost|quote|send|show|provide|product|catalog|list)\b/i.test(captionLower);
-    if (captionSignalsProductRequest) {
-      console.log(`📸 → vision said non-cork but caption signals product request, routing to text pipeline`);
-      const virtualText = customerCaption + ` (Customer sent an image that appears to be: ${identification.visibleObject}. The customer's message suggests they want product info — treat this as a product inquiry and extract any product names from the image description or caption.)`;
-      response = await processWithClaudeAgent(virtualText, from, context);
-    } else {
-      response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
-      console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
-    }
-  } else if (identification && identification.confidence < 0.5) {
-    response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;
-    console.log(`📸 → asking for clarification (low confidence: ${(identification.confidence * 100).toFixed(0)}%)`);
-  } else {
-    console.log(`📸 → Gemini Vision unavailable, asking customer to describe`);
-    response = `Thanks for the photo! I'm having trouble loading the image right now — could you tell me which product you're interested in? (e.g. coasters, diaries, planters, frames, etc.)`;
-  }
-
-  return { response, catalogToSend, logTag };
-}
-
 // Setup message processor (only called when queue is available)
 function setupMessageProcessor() {
   if (!messageQueue) return;
@@ -1467,18 +1324,18 @@ function setupMessageProcessor() {
 
       let agentResponse;
 
-      // Handle IMAGE messages with shared vision pipeline
+      // Handle IMAGE messages with vision AI
       if (messageType === 'image' && mediaId) {
-        const imgResult = await handleIncomingImage(mediaId, messageBody, from, context);
-        agentResponse = imgResult.response;
-        if (imgResult.catalogToSend) {
-          try {
-            await sendWhatsAppDocument(from, imgResult.catalogToSend.url, imgResult.catalogToSend.name, imgResult.catalogToSend.caption);
-          } catch (err) {
-            console.warn('⚠️ Failed to send catalog from queue:', err.message);
-          }
-        }
-        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'} — ${imgResult.logTag}]`, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
+        console.log('📸 Processing image message with vision AI from queue...');
+        const result = await visionHandler.handleImageMessage(
+          mediaId,
+          messageBody,
+          from,
+          context,
+          SYSTEM_PROMPT
+        );
+        agentResponse = result.response;
+        await storeCustomerMessage(from, `[IMAGE: ${messageBody || 'no caption'}]`, messageId).catch(err => console.error('⚠️ storeCustomerMessage failed (non-blocking):', err.message));
       } else {
         // Handle TEXT messages normally
         // Pre-detect image intent so LLM knows images are coming before it speaks
@@ -1972,24 +1829,17 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
       // v60: audio added — transcribed via Groq Whisper inside processBatch.
       if ((messageType === 'text' && messageBody) || messageType === 'image' || messageType === 'audio') {
         // Add to queue for processing (if queue is available)
-        let queued = false;
         if (messageQueue) {
-          try {
-            await messageQueue.add('process-message', {
-              from,
-              messageBody: messageBody || 'What is this?',
-              messageId,
-              messageType,
-              mediaId,
-              timestamp: new Date()
-            });
-            console.log('✅ Message added to queue');
-            queued = true;
-          } catch (queueErr) {
-            console.warn('⚠️  Queue add failed, falling back to direct processing:', queueErr.message);
-          }
-        }
-        if (!queued) {
+          await messageQueue.add('process-message', {
+            from,
+            messageBody: messageBody || 'What is this?',
+            messageId,
+            messageType,
+            mediaId,
+            timestamp: new Date()
+          });
+          console.log('✅ Message added to queue');
+        } else {
           console.log('⚠️  Queue unavailable - processing directly');
 
           // v52 FIX: Check if already sent
@@ -2043,16 +1893,65 @@ app.post('/webhook', webhookLimiter, validateWebhookSignature, async (req, res) 
                 //   to misclassify (e.g. won't call a keychain "Casa Planter").
                 // FALLBACK: legacy Smart Matcher if Gemini Vision is unavailable.
                 if (batchMessageType === 'image' && batchMediaId) {
-                  const imgResult = await handleIncomingImage(batchMediaId, combinedMessageBody, from, context);
-                  response = imgResult.response;
-                  if (imgResult.catalogToSend) {
+                  console.log('📸 Processing image with catalog-aware Gemini Vision...');
+                  const customerCaption = (combinedMessageBody || '').trim();
+
+                  // Download image (reusing vision handler's download method)
+                  let imageData = null;
+                  try {
+                    imageData = await visionHandler.downloadImage(batchMediaId);
+                  } catch (err) {
+                    console.warn('⚠️ Image download failed:', err.message);
+                  }
+
+                  let identification = null;
+                  if (imageData?.base64) {
                     try {
-                      await sendWhatsAppDocument(from, imgResult.catalogToSend.url, imgResult.catalogToSend.name, imgResult.catalogToSend.caption);
+                      const imageBuffer = Buffer.from(imageData.base64, 'base64');
+                      identification = await identifyProductFromImage(imageBuffer, imageData.mimeType || 'image/jpeg');
+                      if (identification) {
+                        console.log(`📸 Gemini Vision: "${identification.visibleObject}" (cork=${identification.isCorkProduct}, conf=${(identification.confidence * 100).toFixed(0)}%, category=${identification.matchedCategory || 'none'}, sku=${identification.matchedProductName || 'none'})`);
+                      }
                     } catch (err) {
-                      console.warn('⚠️ Failed to send catalog:', err.message);
+                      console.warn('⚠️ Gemini Vision failed, falling back to Smart Matcher:', err.message);
                     }
                   }
-                  await storeCustomerMessage(from, `[IMAGE: ${(combinedMessageBody || '').trim() || 'no caption'} — ${imgResult.logTag}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
+
+                  // ─── Decide what to do based on identification ───
+                  if (identification && identification.isCorkProduct && identification.confidence >= 0.75) {
+                    // HIGH confidence cork product — route through text pipeline
+                    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
+                    const virtualText = customerCaption
+                      ? `${customerCaption} (Customer also sent a photo — Gemini Vision identified it as: ${productLabel}, confidence ${(identification.confidence * 100).toFixed(0)}%. Confirm with customer before quoting.)`
+                      : `Customer sent a photo of what appears to be a ${productLabel} (confidence ${(identification.confidence * 100).toFixed(0)}%). Confirm this is what they want, then ask quantity + customer type per RULE F.`;
+                    console.log(`📸 → routing through text pipeline (high confidence cork match)`);
+                    response = await processWithClaudeAgent(virtualText, from, context);
+                  } else if (identification && identification.isCorkProduct && identification.confidence >= 0.5) {
+                    // BORDERLINE cork product — ask for confirmation
+                    const productLabel = identification.matchedProductName || identification.matchedCategory || 'cork product';
+                    response = customerCaption
+                      ? `Thanks for the photo! From what I can see this looks like a ${productLabel} — could you confirm? Once you do, I'll share the pricing.`
+                      : `Thanks for the photo! This looks like it could be a ${productLabel}. Could you confirm and let me know how many pieces you need?`;
+                    console.log(`📸 → asking customer to confirm (borderline cork match)`);
+                  } else if (identification && identification.isCorkProduct === false) {
+                    // Confidently NOT a cork product (e.g. keychain, leather wallet)
+                    response = `Thanks for sharing the photo. From what I can see, this looks like a ${identification.visibleObject || 'product'} — that's outside our cork range. We specialize in cork-based products: coasters, diaries, planters, bags, frames, trays, holders, tablemats, trivets, gift boxes, yoga products, and more. Is there a cork product I can help you with?`;
+                    console.log(`📸 → declining (non-cork item: ${identification.visibleObject})`);
+                  } else if (identification && identification.confidence < 0.5) {
+                    // Unclear image — ask for clarification
+                    response = `Thanks for the photo! I couldn't quite tell what you're looking for — could you let me know which product you're interested in? (e.g., coasters, diaries, planters, frames, etc.)`;
+                    console.log(`📸 → asking for clarification (low confidence: ${(identification.confidence * 100).toFixed(0)}%)`);
+                  } else {
+                    // Gemini Vision unavailable (network/API issue). No legacy
+                    // matcher to fall back to — ask the customer to describe.
+                    console.log(`📸 → Gemini Vision unavailable, asking customer to describe`);
+                    response = `Thanks for the photo! I'm having trouble loading the image right now — could you tell me which product you're interested in? (e.g. coasters, diaries, planters, frames, etc.)`;
+                  }
+
+                  const logTag = identification
+                    ? `vision: "${identification.visibleObject}" cork=${identification.isCorkProduct} conf=${(identification.confidence * 100).toFixed(0)}%`
+                    : 'vision: unavailable';
+                  await storeCustomerMessage(from, `[IMAGE: ${customerCaption || 'no caption'} — ${logTag}]`, latestMessageId).catch(err => console.warn('⚠️ storeCustomerMessage failed:', err.message));
                 }
                 // v60: Handle VOICE messages — transcribe with Groq Whisper, then process as normal text
                 else if (batchMessageType === 'audio' && batchMediaId) {
@@ -2417,10 +2316,10 @@ async function extractAndSaveMetadata(phoneNumber, customerMessage, agentRespons
       }
     }
 
-    // Extract BUDGET (below 700, under ₹10,000, etc.)
-    const budgetAmount = parseBudget(recentText);
-    if (budgetAmount !== null) {
-      conversation.metadata.budget = `₹${budgetAmount.toLocaleString('en-IN')} per piece`;
+    // Extract BUDGET (below 700, under 500, etc.)
+    const budgetMatch = recentText.match(/\b(?:below|under|around|budget)\s*(?:rs\.?|₹)?\s*(\d+)/i);
+    if (budgetMatch) {
+      conversation.metadata.budget = `₹${budgetMatch[1]} per piece`;
     }
 
     // Extract QUANTITY (100 pcs, 50 pieces, 200 nos, etc.)
@@ -2927,15 +2826,6 @@ async function processWithClaudeAgent(message, customerPhone, context = [], opti
       // quantity, customer type, branding). Regex fallback + telemetry flag
       // live inside the resolver. 3s wall-clock budget on the interactive path.
       intent = await resolveIntent(sanitizedMessage, context, { budgetMs: 3000 });
-
-      // v62 — hand this turn's resolved intent to the image-detection pass
-      // that runs right after this function returns, keyed on the exact raw
-      // message so it's only reused when nothing about the query changed.
-      pendingIntentByPhone.set(customerPhone, { rawMessage: message, intent });
-      if (pendingIntentByPhone.size > 500) {
-        const oldestKey = pendingIntentByPhone.keys().next().value;
-        pendingIntentByPhone.delete(oldestKey);
-      }
 
       // v61 Phase B.1: derive conversation state and inject the state guard.
       // Customer type arrives on the intent from the LLM-first resolver above.

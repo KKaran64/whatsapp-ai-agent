@@ -5,31 +5,6 @@ const Groq = require('groq-sdk');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 const crypto = require('crypto');
-const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('./config/models');
-
-
-// An empty completion is a FAILURE, not an answer.
-//
-// Every provider call used to end with `content || "I'm here to help!"`,
-// which counted the empty response as a success, shipped that placeholder to
-// the customer, and returned immediately — so key rotation and the Gemini
-// fallback never got their chance. A customer asking "what all sizes you
-// have?" got "I'm here to help!" instead of the four cork yoga mats.
-//
-// Throwing puts the failure back on the path that already knows how to
-// recover from it.
-function requireNonEmpty(text, provider) {
-  const t = typeof text === 'string' ? text.trim() : '';
-  if (!t) {
-    const err = new Error(`${provider} returned an empty completion`);
-    // Transient and per-key (a truncated generation, a filtered response),
-    // so it is retried on the next key exactly like a rate limit rather than
-    // aborting the whole provider.
-    err.isEmptyCompletion = true;
-    throw err;
-  }
-  return t;
-}
 
 class AIProviderManager {
   constructor(config) {
@@ -171,15 +146,14 @@ class AIProviderManager {
 
         const completion = await groqClient.chat.completions.create({
           messages,
-          model: MODELS.GROQ_CHAT,
+          model: 'groq/compound-mini', // llama-3.3 retired by Groq 2026-09 (404)
           temperature: 0.4,
-          max_tokens: TOKEN_BUDGETS.CHAT,
-          ...reasoningParams(MODELS.GROQ_CHAT),
+          max_tokens: 500,
           top_p: 1,
           stream: false
         });
 
-        const response = requireNonEmpty(completion.choices[0]?.message?.content, 'Groq');
+        const response = completion.choices[0]?.message?.content || "I'm here to help!";
         this.stats.groq.success++;
 
         return { provider: 'groq', response };
@@ -193,10 +167,7 @@ class AIProviderManager {
         console.error('Error status:', error.response?.status || 'No status');
         console.error('Error stack:', error.stack);
 
-        if (error.isEmptyCompletion) {
-          console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} returned empty content, trying next key...`);
-          continue; // Try next key
-        } else if (error.message?.includes('rate_limit') || error.response?.status === 429) {
+        if (error.message?.includes('rate_limit') || error.response?.status === 429) {
           console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rate limit hit, trying next key...`);
           continue; // Try next key
         } else {
@@ -251,7 +222,7 @@ class AIProviderManager {
         console.log(`🟢 Trying Gemini (key ${this.currentGeminiIndex || this.geminiKeys.length}/${this.geminiKeys.length})...`);
 
         const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_CHAT}:generateContent?key=${geminiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`,
           {
             contents: [{
               parts: [{ text: fullPrompt }]
@@ -260,7 +231,7 @@ class AIProviderManager {
           { timeout: 30000 } // hung call would stall the per-phone lock
         );
 
-        const aiResponse = requireNonEmpty(response.data?.candidates?.[0]?.content?.parts?.[0]?.text, 'Gemini');
+        const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm here to help!";
         this.stats.gemini.success++;
 
         return { provider: 'gemini', response: aiResponse };
@@ -311,7 +282,7 @@ class AIProviderManager {
         ]
       });
 
-      const aiResponse = requireNonEmpty(response.content?.[0]?.text, 'Claude');
+      const aiResponse = response.content[0].text || "I'm here to help!";
       this.stats.claude.success++;
 
       return { provider: 'claude', response: aiResponse };

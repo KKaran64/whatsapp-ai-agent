@@ -12,7 +12,6 @@
  */
 
 const Groq = require('groq-sdk');
-const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
 
 // Node-specific response templates and prompts
 const NODE_TEMPLATES = {
@@ -176,7 +175,7 @@ class ResponderAgent {
   /**
    * Generate response using LLM
    */
-  async _generateWithLLM(node, state, message, recentMessages, verifiedQuote = null) {
+  async _generateWithLLM(node, state, message, recentMessages) {
     const client = this._getNextClient();
     if (!client) {
       throw new Error('No Groq API keys configured');
@@ -185,16 +184,6 @@ class ResponderAgent {
     // Build compact prompt
     const template = NODE_TEMPLATES[node] || NODE_TEMPLATES.FALLBACK;
     const context = this._buildContext(state);
-
-    // Compact verified-quote injection — the LLM's job becomes "present this
-    // number conversationally", not "compute a price". Kept to one line to
-    // preserve the compact-prompt token budget (mirrors server.js's
-    // [VERIFIED QUOTE] block, trimmed for optimized-bot's ~100-150 token design).
-    let quoteBlock = '';
-    if (verifiedQuote && verifiedQuote.found) {
-      const { formatQuoteForCustomer } = require('../pricing/quote-engine');
-      quoteBlock = `\n[VERIFIED QUOTE — present this exact figure, do not compute your own]: ${formatQuoteForCustomer(verifiedQuote)}`;
-    }
 
     // Build conversation context (last 2-3 messages)
     let conversationContext = '';
@@ -206,7 +195,7 @@ class ResponderAgent {
     }
 
     const systemPrompt = `${BASE_PROMPT}
-${context}${quoteBlock}
+${context}
 ${template.info ? `\nProduct info: ${template.info}` : ''}
 ${template.prompt}`;
 
@@ -225,10 +214,9 @@ ${template.prompt}`;
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          model: MODELS.GROQ_CHAT,
+          model: 'groq/compound-mini', // llama-3.3 retired by Groq 2026-09 (404)
           temperature: 0.4,
-          max_tokens: TOKEN_BUDGETS.RESPONDER, // reasoning eats the budget before content
-          ...reasoningParams(MODELS.GROQ_CHAT),
+          max_tokens: 80, // ~30 words max
           top_p: 1
         });
 
@@ -306,7 +294,7 @@ ${template.prompt}`;
    * @param {Array} recentMessages - Last 2-3 messages
    * @returns {Promise<Object>} { response, media }
    */
-  async generateResponse(node, state, message, recentMessages = [], verifiedQuote = null) {
+  async generateResponse(node, state, message, recentMessages = []) {
     this.stats.responses++;
 
     try {
@@ -317,7 +305,7 @@ ${template.prompt}`;
       }
 
       // Generate with LLM
-      const llmResponse = await this._generateWithLLM(node, state, message, recentMessages, verifiedQuote);
+      const llmResponse = await this._generateWithLLM(node, state, message, recentMessages);
       return this.extractMediaTrigger(llmResponse);
 
     } catch (error) {

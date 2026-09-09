@@ -8,10 +8,11 @@
 // keys failed). It NEVER throws — callers branch on null and degrade.
 
 const axios = require('axios');
-const { MODELS } = require('../config/models');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = MODELS.GROQ_JSON;
+// llama-3.3 retired by Groq 2026-09 (404). compound-mini verified to support
+// response_format json_object, which this client requires.
+const MODEL = 'groq/compound-mini';
 
 // Total wall-clock across ALL key attempts. A customer is waiting on the
 // interactive path, so failed keys must never stack their timeouts.

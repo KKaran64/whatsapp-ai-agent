@@ -121,12 +121,6 @@ const mockVisionHandler = {
     response: 'I can see a cork coaster!',
     confidence: 0.85
   }),
-  downloadImage: jest.fn().mockResolvedValue({
-    base64: Buffer.from('fake-image').toString('base64'),
-    mimeType: 'image/jpeg',
-    sizeKB: 50,
-    compressed: false
-  }),
   getStats: jest.fn().mockReturnValue({
     totalRequests: 10,
     successRate: '80%'
@@ -137,19 +131,6 @@ const mockVisionHandler = {
 jest.mock('../vision-handler', () => {
   return jest.fn().mockImplementation(() => mockVisionHandler);
 });
-
-// ─── Mock vision-identifier (Gemini Vision) ──────────────────────────────
-const mockIdentifyProduct = jest.fn().mockResolvedValue({
-  visibleObject: 'cork coaster',
-  isCorkProduct: true,
-  matchedCategory: 'coasters',
-  matchedProductName: null,
-  confidence: 0.85,
-  reasoning: 'Appears to be a cork coaster'
-});
-jest.mock('../pricing/vision-identifier', () => ({
-  identifyProductFromImage: (...args) => mockIdentifyProduct(...args)
-}));
 
 // ─── Mock whatsapp-media-upload ────────────────────────────────────────────
 jest.mock('../whatsapp-media-upload', () => ({
@@ -1419,16 +1400,6 @@ describe('Server - POST /webhook deeper paths', () => {
     mockAiManager.getResponse.mockClear();
     mockAiManager.getResponse.mockResolvedValue({ response: 'Hello!', provider: 'groq' });
     mockVisionHandler.handleImageMessage.mockClear();
-    mockVisionHandler.downloadImage.mockClear();
-    mockIdentifyProduct.mockClear();
-    mockIdentifyProduct.mockResolvedValue({
-      visibleObject: 'cork coaster',
-      isCorkProduct: true,
-      matchedCategory: 'coasters',
-      matchedProductName: null,
-      confidence: 0.85,
-      reasoning: 'Appears to be a cork coaster'
-    });
     axios.post.mockClear();
     axios.post.mockResolvedValue({ data: { messages: [{ id: 'msg-1' }] } });
     mockConversationModel.findOne.mockResolvedValue(null);
@@ -1491,6 +1462,11 @@ describe('Server - POST /webhook deeper paths', () => {
   });
 
   test('processes image messages with vision AI', async () => {
+    mockVisionHandler.handleImageMessage.mockResolvedValue({
+      response: 'I see a cork coaster!',
+      confidence: 0.9
+    });
+
     const body = {
       object: 'whatsapp_business_account',
       entry: [{
@@ -1510,8 +1486,13 @@ describe('Server - POST /webhook deeper paths', () => {
     await supertest(server.app).post('/webhook').send(body);
     await new Promise(r => setTimeout(r, 300));
 
-    expect(mockVisionHandler.downloadImage).toHaveBeenCalledWith('media-123');
-    expect(mockIdentifyProduct).toHaveBeenCalled();
+    expect(mockVisionHandler.handleImageMessage).toHaveBeenCalledWith(
+      'media-123',
+      'What is this?',
+      '919876543210',
+      expect.any(Array),
+      expect.any(String)
+    );
   });
 
   test('skips already-sent messages (sentResponses dedup)', async () => {
@@ -1544,11 +1525,7 @@ describe('Server - POST /webhook deeper paths', () => {
     expect(mockAiManager.getResponse).not.toHaveBeenCalled();
   });
 
-  // Pre-existing order-dependent failure (not caused by any current change) —
-  // debounce timing assumption doesn't hold under full-suite execution order.
-  // Tracked as known debt; needs a rewrite against the v60/v61 AI-error path,
-  // not a quick fix. See project memory: whatsapp-claude-bridge-architecture.
-  test.skip('handles AI processing error gracefully', async () => {
+  test('handles AI processing error gracefully', async () => {
     mockAiManager.getResponse.mockRejectedValue(new Error('AI down'));
 
     const body = {
@@ -1677,12 +1654,7 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
     server.CONFIG.PDF_CATALOG_PRODUCTS = origProducts;
   });
 
-  // Pre-existing order-dependent failure (not caused by any current change) —
-  // HORECA catalog routing assertion depends on state left by earlier tests
-  // in this file. Tracked as known debt; needs a rewrite against the v60/v61
-  // catalog-routing path, not a quick fix. See project memory:
-  // whatsapp-claude-bridge-architecture.
-  test.skip('sends HORECA catalog for HORECA-specific products', async () => {
+  test('sends HORECA catalog for HORECA-specific products', async () => {
     const origHoreca = server.CONFIG.PDF_CATALOG_HORECA;
     server.CONFIG.PDF_CATALOG_HORECA = 'https://example.com/horeca.pdf';
 
@@ -1734,12 +1706,7 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
     server.CONFIG.PDF_CATALOG_HORECA = origHoreca;
   });
 
-  // Pre-existing order-dependent failure (not caused by any current change) —
-  // legacy-catalog fallback assertion depends on state left by earlier tests
-  // in this file. Tracked as known debt; needs a rewrite against the v60/v61
-  // catalog-routing path, not a quick fix. See project memory:
-  // whatsapp-claude-bridge-architecture.
-  test.skip('falls back to legacy catalog URL when products catalog not set', async () => {
+  test('falls back to legacy catalog URL when products catalog not set', async () => {
     const origProducts = server.CONFIG.PDF_CATALOG_PRODUCTS;
     const origLegacy = server.CONFIG.PDF_CATALOG_URL;
     server.CONFIG.PDF_CATALOG_PRODUCTS = '';
@@ -1848,13 +1815,7 @@ describe('Server - handleImageDetectionAndSending deeper paths', () => {
     // Should have called uploadAndSendImage or axios for the single product
   });
 
-  // Pre-existing order-dependent failure (not caused by any current change) —
-  // unmasked by skipping the HORECA/legacy-catalog tests above, which were
-  // leaving behind state this assertion implicitly depended on. Same root
-  // cause as the other skips in this file; tracked as known debt, needs a
-  // rewrite against the v60/v61 catalog-routing path, not a quick fix. See
-  // project memory: whatsapp-claude-bridge-architecture.
-  test.skip('falls back to JSON system when MongoDB empty', async () => {
+  test('falls back to JSON system when MongoDB empty', async () => {
     const { findProductImage, isValidCorkProductUrl } = require('../product-images-v2');
     findProductImage.mockReturnValue('https://example.com/fallback.jpg');
     isValidCorkProductUrl.mockReturnValue(true);

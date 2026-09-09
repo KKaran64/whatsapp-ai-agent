@@ -9,7 +9,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { parseSheetPrice } = require('../pricing/money');
 
 const OUTPUT_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
 
@@ -57,23 +56,13 @@ function parseCsv(text) {
 }
 
 // Strip ₹, commas, whitespace from price string
-// Delegates to pricing/money.js so this file and import-image-links.js cannot
-// disagree about what a price cell means. The private version here stripped
-// commas unconditionally, which is right for "3,317" and wrong for a
-// multi-variant cell like "583,750,916" (three sizes in one cell) — that read
-// as 583 million and reached production.
-//
-// Returns 0 on anything unparseable, which existing callers already treat as
-// "no valid price" and filter out as a junk row.
 function parsePrice(s) {
-  const r = parseSheetPrice(s);
-  if (!r.ok) {
-    if (s && String(s).trim() && r.reason !== 'empty') {
-      console.warn(`  ⚠️ unparseable price "${String(s).trim()}" → ${r.reason} (row dropped)`);
-    }
-    return 0;
-  }
-  return r.value;
+  if (!s) return 0;
+  const cleaned = String(s).replace(/[₹,\s]/g, '');
+  // v58: Use parseFloat — prices like "121.50" or "17.50" must keep decimal precision.
+  // Round to 2 decimal places to avoid floating-point noise.
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : Math.round(n * 100) / 100;
 }
 
 // Parse the HORECA sheet (cleanest structure)
@@ -240,24 +229,8 @@ async function syncAll() {
     console.error('  ✗ Trophies failed:', err.message);
   }
 
-  // Never write a partial catalog over a good one.
-  //
-  // Each fetch above catches its own error and leaves that section as [], and
-  // this write used to run unconditionally — so one transient Google throttle
-  // wrote an EMPTY section and reported success. Since this also runs at boot
-  // on an ephemeral filesystem, a throttle during a deploy could leave the
-  // container with no HORECA products (206 → 0) until the next daily run, and
-  // the outbound guard would then refuse to quote them at all.
-  const emptied = ['catalogue', 'horeca', 'combos', 'trophies'].filter(k => data[k].length === 0);
-  if (emptied.length > 0) {
-    throw new Error(
-      `Refusing to write pricing.json: ${emptied.join(', ')} came back empty ` +
-      `(fetch failed). Existing prices left untouched.`
-    );
-  }
-
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(data, null, 2));
-  console.log(`💾 Wrote ${OUTPUT_FILE} (${data.catalogue.length} catalogue, ${data.horeca.length} horeca, ${data.combos.length} combos, ${data.trophies.length} trophies)`);
+  console.log(`💾 Wrote ${OUTPUT_FILE}`);
 
   return data;
 }

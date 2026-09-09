@@ -36,3 +36,4 @@ data/past-chats/*.txt
 CREDENTIALS.txt
 product-hash-index.json
 vision-stats.json
+.superpowers/
