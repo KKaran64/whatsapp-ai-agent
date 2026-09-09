@@ -42,4 +42,40 @@ const MODELS = {
   GEMINI_VISION: process.env.GEMINI_MODEL_VISION || 'gemini-3.6-flash'
 };
 
-module.exports = { MODELS };
+
+// ── Reasoning-model awareness ─────────────────────────────────────────────
+//
+// The Llama models this system was built on emitted an answer directly. Their
+// replacements reason first: openai/gpt-oss spends a few hundred tokens on
+// hidden reasoning BEFORE writing content, and those tokens come out of
+// max_tokens. Budgets tuned for a non-reasoning model therefore produced
+// empty completions — the router's 10-token budget classified every message
+// as FALLBACK, and the responder's 80 returned four characters.
+//
+// So a token budget is not a property of the caller alone; it depends on the
+// configured model. Both now live here, next to the model ids they belong to.
+
+// Groq rejects this parameter on some models with a hard 400 ("`reasoning_effort`
+// is not supported with this model" — verified on groq/compound-mini), so it is
+// sent only where support is known. Unknown models are assumed NOT to support
+// it: omitting it costs a few tokens, sending it wrongly costs every reply.
+const REASONING_EFFORT = process.env.GROQ_REASONING_EFFORT || 'low';
+
+function supportsReasoningEffort(model) {
+  return /^(openai\/gpt-oss|qwen\/)/.test(String(model || ''));
+}
+
+// Floors that leave room for a reply after reasoning. Measured: 10 tokens
+// yielded empty content, 80 yielded 4 characters, 500 worked.
+const TOKEN_BUDGETS = {
+  ROUTER: Number(process.env.GROQ_TOKENS_ROUTER) || 150,
+  RESPONDER: Number(process.env.GROQ_TOKENS_RESPONDER) || 400,
+  CHAT: Number(process.env.GROQ_TOKENS_CHAT) || 800
+};
+
+/** Extra request fields for the configured model. Empty when unsupported. */
+function reasoningParams(model) {
+  return supportsReasoningEffort(model) ? { reasoning_effort: REASONING_EFFORT } : {};
+}
+
+module.exports = { MODELS, REASONING_EFFORT, TOKEN_BUDGETS, supportsReasoningEffort, reasoningParams };

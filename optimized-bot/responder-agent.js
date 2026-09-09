@@ -12,7 +12,7 @@
  */
 
 const Groq = require('groq-sdk');
-const { MODELS } = require('../config/models');
+const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
 
 // Node-specific response templates and prompts
 const NODE_TEMPLATES = {
@@ -227,7 +227,8 @@ ${template.prompt}`;
           ],
           model: MODELS.GROQ_CHAT,
           temperature: 0.4,
-          max_tokens: 80, // ~30 words max
+          max_tokens: TOKEN_BUDGETS.RESPONDER, // reasoning eats the budget before content
+          ...reasoningParams(MODELS.GROQ_CHAT),
           top_p: 1
         });
 

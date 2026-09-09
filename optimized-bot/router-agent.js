@@ -19,7 +19,7 @@
  */
 
 const Groq = require('groq-sdk');
-const { MODELS } = require('../config/models');
+const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
 
 // Classification prompt (~80 tokens)
 const ROUTER_PROMPT = `Classify this WhatsApp message for cork products store.
@@ -153,7 +153,8 @@ class RouterAgent {
           ],
           model: MODELS.GROQ_FAST, // Fast, small model for classification
           temperature: 0.1, // Low temp for consistent classification
-          max_tokens: 10, // Only need node name
+          max_tokens: TOKEN_BUDGETS.ROUTER, // reasoning models spend tokens before content
+          ...reasoningParams(MODELS.GROQ_FAST),
           top_p: 1
         });
 
