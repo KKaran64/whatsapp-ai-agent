@@ -15,6 +15,11 @@ const RouterAgent = require('./router-agent');
 const ResponderAgent = require('./responder-agent');
 const StateManager = require('./state-manager');
 const MediaHandler = require('./media-handler');
+const { sanitizeAIPrompt, detectSuspiciousInput } = require('../input-sanitizer');
+const { resolveIntent } = require('../pricing/intent-resolver');
+const { computeQuote } = require('../pricing/quote-engine');
+const { deriveStateAsync } = require('../pricing/conversation-state');
+const { enforce } = require('../pricing/state-enforcer');
 
 class OptimizedBot {
   constructor(config) {
@@ -76,6 +81,19 @@ class OptimizedBot {
     console.log(`[OptimizedBot] Processing: ${phoneNumber.slice(-4)} "${message?.slice(0, 30)}..."`);
 
     try {
+      // Step 0: Sanitize once, here, before anything downstream sees this
+      // text. router-agent and responder-agent each make an independent LLM
+      // call fed from this same `message`, so one sanitization at this
+      // chokepoint covers both — and history stores the sanitized form too.
+      // Inside the try block deliberately: a sanitizer fault degrades to the
+      // existing fallback reply rather than throwing out of processMessage.
+      if (messageType === 'text' && message) {
+        if (detectSuspiciousInput(message)) {
+          console.warn(`[OptimizedBot] Suspicious input from ${phoneNumber.slice(-4)}`);
+        }
+        message = sanitizeAIPrompt(message);
+      }
+
       // Step 1: Get current state (zero tokens)
       let state;
       try {
@@ -122,14 +140,62 @@ class OptimizedBot {
         console.warn(`[OptimizedBot] Get state failed:`, e.message);
       }
 
+      // Step 5.5: Resolve pricing intent and compute a verified quote. Every
+      // step here is non-fatal — matching this function's existing
+      // fallback-first posture, so a pricing fault can never stop the bot
+      // replying.
+      let intent = null;
+      try {
+        intent = await resolveIntent(message, recentMessages, { budgetMs: 3000 });
+      } catch (e) {
+        console.warn(`[OptimizedBot] resolveIntent failed:`, e.message);
+      }
+
+      let verifiedQuote = null;
+      if (intent && intent.productQuery && intent.quantity && intent.customerType) {
+        try {
+          verifiedQuote = computeQuote(intent); // synchronous
+        } catch (e) {
+          console.warn(`[OptimizedBot] computeQuote failed:`, e.message);
+        }
+      }
+
+      // Derive conversation state independently of the router's node: router
+      // nodes are a product/step taxonomy, conversation-state codes are a
+      // pricing-process one, and they do not map 1:1. On failure fall back to
+      // a minimal state rather than null, because enforce()'s fabricated-amount
+      // check depends only on options.quote and its switch default safely
+      // no-ops an unknown code — so the highest-value protection keeps running.
+      let derivedState = null;
+      try {
+        const fullContext = [...recentMessages, { role: 'customer', content: message }];
+        derivedState = await deriveStateAsync(fullContext, intent, phoneNumber);
+      } catch (e) {
+        console.warn(`[OptimizedBot] deriveStateAsync failed:`, e.message);
+      }
+      if (!derivedState) derivedState = { code: 'UNKNOWN', reason: 'unavailable', guard: '' };
+
       // Step 6: Generate response (~50 tokens output)
       console.log(`[OptimizedBot] Generating response for node: ${node}`);
-      const { response, media } = await this.responder.generateResponse(
+      let { response, media } = await this.responder.generateResponse(
         node,
         updatedState,
         message,
         recentMessages
       );
+
+      // Step 6.5: Outbound numeric guard. Applies to EVERY reply — LLM and
+      // template alike, since both return through this same shape. Template
+      // replies are static text today but must not be treated as exempt.
+      try {
+        const enforced = enforce(derivedState, response, { quote: verifiedQuote });
+        if (!enforced.allowed) {
+          console.warn(`[OptimizedBot] Enforcer blocked reply: ${enforced.reason}`);
+        }
+        response = enforced.reply;
+      } catch (e) {
+        console.warn(`[OptimizedBot] enforce() failed, passing reply through:`, e.message);
+      }
       console.log(`[OptimizedBot] Response generated: "${response.slice(0, 50)}..."`);
 
       // Step 7: Store messages in history (non-blocking)
