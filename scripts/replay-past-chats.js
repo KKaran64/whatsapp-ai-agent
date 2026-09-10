@@ -110,6 +110,13 @@ async function main() {
     }
     done++;
     if (done % 20 === 0) console.log(`  ...${done}/${scenarios.length}`);
+    // Pace to stay under Groq's tokens-per-minute ceiling. The ~7k-token
+    // system prompt rides on EVERY request, so a burst exhausts TPM quickly:
+    // an unpaced run of this script produced a 33% failure rate that was
+    // purely self-inflicted. Measured per key, each has its own ~200k/min
+    // bucket, so rotation does help — but the prompt size, not the key count,
+    // is what sets the ceiling.
+    await new Promise(r => setTimeout(r, Number(process.env.REPLAY_DELAY_MS) || 2500));
   }
 
   console.log(`\n===== RESULT =====`);
