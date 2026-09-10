@@ -24,17 +24,27 @@ const { STATES } = require('./conversation-state');
 
 // "Did the LLM quote a price?" — i.e. mention an actual rupee amount
 // alongside a product or quantity context.
+// Below this a "₹N" is a stray digit, not an asserted price. Expressed as a
+// value rather than a digit count: the old /₹\s*\d{2,}/ form encoded "at
+// least 2 digits" as consecutive digits and so stopped at the first comma,
+// missing every amount from ₹1,000 up — which in Indian grouping is every
+// bulk order, and is exactly how formatQuoteForCustomer writes them.
+const MIN_ASSERTED_PRICE = 10;
+
 function botQuotedPrice(text) {
   if (!text) return false;
-  // ₹ followed by digits + "per piece" / "total" / "incl" patterns
-  return /₹\s*\d{2,}/.test(text) && /\b(per|total|incl|each)\b/i.test(text);
+  // A rupee amount PLUS an assertion word ("per piece" / "total" / "incl").
+  // extractRupeeAmounts (below, hoisted) is already comma-aware — reusing it
+  // keeps one notion of "an amount" in this file instead of two that disagree.
+  const amounts = extractRupeeAmounts(text).filter(n => n >= MIN_ASSERTED_PRICE);
+  return amounts.length > 0 && /\b(per|total|incl|each)\b/i.test(text);
 }
 
 // "Did the LLM list multiple products with prices?" — common when state says
 // AWAITING_PRODUCT_DISAMBIGUATION (we want just names, not a price list)
 function botListedProductsWithPrices(text) {
   if (!text) return false;
-  const pricePoints = (text.match(/₹\s*\d{2,}/g) || []).length;
+  const pricePoints = extractRupeeAmounts(text).filter(n => n >= MIN_ASSERTED_PRICE).length;
   const productCues = (text.match(/\b\d+\.\s|•\s|–\s/g) || []).length;
   return pricePoints >= 2 && (productCues >= 2 || /\boptions?\b/i.test(text));
 }

@@ -6,6 +6,28 @@ const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 const crypto = require('crypto');
 
+
+// An empty completion is a FAILURE, not an answer.
+//
+// Each provider call used to end with `content || "I'm here to help!"`, which
+// counted the empty response as a success, shipped that placeholder to the
+// customer, and returned immediately — so key rotation and the Gemini
+// fallback never got their chance. A recoverable hiccup became an
+// unrecoverable non-answer while success metrics stayed clean.
+//
+// Throwing hands the failure back to the retry paths that already exist.
+function requireNonEmpty(text, provider) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (!t) {
+    const err = new Error(`${provider} returned an empty completion`);
+    // Transient and per-key (truncated generation, filtered response), so it
+    // is retried on the next key exactly like a rate limit.
+    err.isEmptyCompletion = true;
+    throw err;
+  }
+  return t;
+}
+
 class AIProviderManager {
   constructor(config) {
     this.config = config;
@@ -153,7 +175,7 @@ class AIProviderManager {
           stream: false
         });
 
-        const response = completion.choices[0]?.message?.content || "I'm here to help!";
+        const response = requireNonEmpty(completion.choices[0]?.message?.content, 'Groq');
         this.stats.groq.success++;
 
         return { provider: 'groq', response };
@@ -167,7 +189,10 @@ class AIProviderManager {
         console.error('Error status:', error.response?.status || 'No status');
         console.error('Error stack:', error.stack);
 
-        if (error.message?.includes('rate_limit') || error.response?.status === 429) {
+        if (error.isEmptyCompletion) {
+          console.log(`⚠️ Groq key returned empty content, trying next key...`);
+          continue; // Try next key
+        } else if (error.message?.includes('rate_limit') || error.response?.status === 429) {
           console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rate limit hit, trying next key...`);
           continue; // Try next key
         } else {
@@ -231,7 +256,7 @@ class AIProviderManager {
           { timeout: 30000 } // hung call would stall the per-phone lock
         );
 
-        const aiResponse = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm here to help!";
+        const aiResponse = requireNonEmpty(response.data?.candidates?.[0]?.content?.parts?.[0]?.text, 'Gemini');
         this.stats.gemini.success++;
 
         return { provider: 'gemini', response: aiResponse };
@@ -282,7 +307,7 @@ class AIProviderManager {
         ]
       });
 
-      const aiResponse = response.content[0].text || "I'm here to help!";
+      const aiResponse = requireNonEmpty(response.content?.[0]?.text, 'Claude');
       this.stats.claude.success++;
 
       return { provider: 'claude', response: aiResponse };
