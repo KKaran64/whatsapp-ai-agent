@@ -18,6 +18,22 @@ const ANTHROPIC_SLOTS = ['CLAUDE_FALLBACK'];
 
 const MAX_ERROR_MESSAGE_LENGTH = 120;
 
+// Anthropic's /v1/models lists dated snapshots ("claude-haiku-4-5-20251001"),
+// while config/models.js configures the alias the Messages API accepts
+// ("claude-haiku-4-5"). A snapshot id is exactly "<alias>-<YYYYMMDD>", so an
+// alias is available when any listed id has that shape. Plain prefix matching
+// would wrongly accept "claude-sonnet-5-1-20260301" for "claude-sonnet-5".
+function anthropicHasModel(available, id) {
+  if (available.has(id)) return true;
+  const snapshot = new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d{8}$`);
+  for (const listed of available) if (snapshot.test(listed)) return true;
+  return false;
+}
+
+function exactHasModel(available, id) {
+  return available.has(id);
+}
+
 // Same env-var ranges ai-provider-manager.js uses to build its key lists.
 function collectKeys(env, baseName, maxIndex) {
   const keys = [];
@@ -58,9 +74,9 @@ async function listAnthropicKey(fetchImpl, key) {
 async function probeModels({ fetchImpl = globalThis.fetch, env = process.env } = {}) {
   const result = { ok: true, missing: [], checked: [], errors: [], keys: {} };
   const providers = [
-    { name: 'groq', keys: collectKeys(env, 'GROQ_API_KEY', 10), slots: GROQ_SLOTS, list: listGroqKey },
-    { name: 'gemini', keys: collectKeys(env, 'GEMINI_API_KEY', 20), slots: GEMINI_SLOTS, list: listGeminiKey },
-    { name: 'anthropic', keys: collectKeys(env, 'ANTHROPIC_API_KEY', 1), slots: ANTHROPIC_SLOTS, list: listAnthropicKey },
+    { name: 'groq', keys: collectKeys(env, 'GROQ_API_KEY', 10), slots: GROQ_SLOTS, list: listGroqKey, has: exactHasModel },
+    { name: 'gemini', keys: collectKeys(env, 'GEMINI_API_KEY', 20), slots: GEMINI_SLOTS, list: listGeminiKey, has: exactHasModel },
+    { name: 'anthropic', keys: collectKeys(env, 'ANTHROPIC_API_KEY', 1), slots: ANTHROPIC_SLOTS, list: listAnthropicKey, has: anthropicHasModel },
   ];
 
   for (const p of providers) {
@@ -87,7 +103,7 @@ async function probeModels({ fetchImpl = globalThis.fetch, env = process.env } =
     for (const slot of p.slots) {
       const id = MODELS[slot];
       result.checked.push(`${p.name}:${slot}=${id}`);
-      if (!available.has(id)) {
+      if (!p.has(available, id)) {
         result.ok = false;
         result.missing.push(`${p.name}:${slot}=${id}`);
       }

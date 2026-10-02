@@ -95,4 +95,37 @@ describe('probeModels', () => {
     expect(r.checked.some(c => c.startsWith('anthropic'))).toBe(false);
     expect(r.keys.anthropic).toEqual({ total: 0, valid: 0 });
   });
+
+  test('Anthropic alias is satisfied by a dated snapshot of that alias', async () => {
+    const f = fakeFetch({
+      'https://api.groq.com': { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }, { id: 'whisper-large-v3-turbo' }] },
+      'https://generativelanguage': { models: [{ name: 'models/gemini-3.6-flash' }, { name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-2.5-flash-lite' }] },
+      'https://api.anthropic.com': { data: [{ id: 'claude-haiku-4-5-20251001' }, { id: 'claude-sonnet-4-5-20250929' }], has_more: false },
+    });
+    const r = await probeModels({ fetchImpl: f, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'x', ANTHROPIC_API_KEY: 'a' } });
+    expect(r.ok).toBe(true);
+    expect(r.missing).toEqual([]);
+    expect(r.checked).toContain('anthropic:CLAUDE_FALLBACK=claude-haiku-4-5');
+  });
+
+  test('Anthropic alias does NOT match a snapshot of a different alias that merely shares a prefix', async () => {
+    const f = fakeFetch({
+      'https://api.groq.com': { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }, { id: 'whisper-large-v3-turbo' }] },
+      'https://generativelanguage': { models: [{ name: 'models/gemini-3.6-flash' }, { name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-2.5-flash-lite' }] },
+      'https://api.anthropic.com': { data: [{ id: 'claude-haiku-4-5-1-20260101' }], has_more: false },
+    });
+    const r = await probeModels({ fetchImpl: f, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'x', ANTHROPIC_API_KEY: 'a' } });
+    expect(r.ok).toBe(false);
+    expect(r.missing).toEqual(['anthropic:CLAUDE_FALLBACK=claude-haiku-4-5']);
+  });
+
+  test('Groq and Gemini still require an exact id (no snapshot rule)', async () => {
+    const f = fakeFetch({
+      'https://api.groq.com': { data: [{ id: 'openai/gpt-oss-120b-20260101' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }, { id: 'whisper-large-v3-turbo' }] },
+      'https://generativelanguage': { models: [{ name: 'models/gemini-3.6-flash' }, { name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-2.5-flash-lite' }] },
+    });
+    const r = await probeModels({ fetchImpl: f, env });
+    expect(r.ok).toBe(false);
+    expect(r.missing).toEqual(['groq:GROQ_CHAT=openai/gpt-oss-120b']);
+  });
 });
