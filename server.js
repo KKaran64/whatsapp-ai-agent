@@ -59,6 +59,30 @@ const { detectOutcome } = require('./rag/outcome-detector');
 // Redis-backed sent images tracker (survives deploys; falls back to in-memory when Redis unavailable)
 const { RedisSentImagesTracker } = require('./utils/redis-state');
 
+// Startup model probe — checks that every configured model id still exists
+// at its provider. /health used to report key COUNTS, which stayed "ok"
+// through a 100% outage caused by a retired model id; this checks the thing
+// that actually fails. Populated by runModelProbe() once the server starts.
+const { probeModels } = require('./scripts/probe-models');
+let modelProbeStatus = { ok: null, note: 'not yet probed' };
+
+// Non-fatal at boot (the bot can still fall back between providers), but
+// /health reports the result and it is re-checked hourly. Guarded against
+// firing real network calls when required under Jest (tests/server.test.js
+// requires this module with a real GROQ_API_KEY-shaped env var and native
+// fetch available) — the CLI (scripts/probe-models.js) and production boot
+// are unaffected.
+const runModelProbe = () => {
+  if (process.env.JEST_WORKER_ID || typeof fetch !== 'function') {
+    return Promise.resolve();
+  }
+  return probeModels().then(r => {
+    modelProbeStatus = r;
+    if (!r.ok) console.error('❌ MODEL PROBE FAILED:', JSON.stringify(r));
+    else console.log(`✅ Model probe ok (${r.checked.length} ids)`);
+  }).catch(err => { modelProbeStatus = { ok: false, errors: [err.message] }; });
+};
+
 // Track sent images per conversation to avoid duplicates
 let sentImagesTracker = new RedisSentImagesTracker(null); // will be upgraded to Redis after connectQueue
 
@@ -3233,8 +3257,12 @@ async function sendTypingIndicator(to) {
 
 // Health check endpoint (SECURITY: Rate limited to 60 req/min)
 app.get('/health', monitoringLimiter, async (req, res) => {
+  // A retired model id used to pass /health (it only reported key counts).
+  // modelProbeStatus.ok === false degrades the response to 503.
+  const mongoHealthy = mongoose.connection.readyState === 1;
+  const healthy = mongoHealthy && modelProbeStatus.ok !== false;
   const health = {
-    status: 'ok',
+    status: healthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
     version: 'v35-GEMINI-MULTI-KEY',
     providers: {
@@ -3242,12 +3270,13 @@ app.get('/health', monitoringLimiter, async (req, res) => {
       gemini: aiManager.geminiKeys ? aiManager.geminiKeys.length : 0
     },
     services: {
-      mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      mongodb: mongoHealthy ? 'connected' : 'disconnected',
       queue: messageQueue ? 'active' : 'inactive'
-    }
+    },
+    models: modelProbeStatus
   };
 
-  res.json(health);
+  res.status(healthy ? 200 : 503).json(health);
 });
 
 // RAG monitoring endpoint — conversation counts, conversion rate, recent failures
@@ -3715,6 +3744,11 @@ app.listen(CONFIG.PORT, () => {
   console.log('🔄 Connecting to databases...');
   connectDatabase().catch(err => console.error('Database connection failed:', err));
   connectQueue().catch(err => console.error('Queue connection failed:', err));
+
+  // Model probe: a retired model id is the one failure /health never showed.
+  // Non-fatal at boot, re-checked hourly.
+  runModelProbe();
+  setInterval(runModelProbe, 60 * 60 * 1000).unref();
 });
 
 // FIX #5: Memory Cleanup (prevents memory leaks from old conversations)
