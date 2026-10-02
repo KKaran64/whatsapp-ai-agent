@@ -1,7 +1,16 @@
 module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.js'],
-  testPathIgnorePatterns: ['/node_modules/', 'critical-bugs'],
+  // '/\.claude/' excludes .claude/worktrees/* — stale worktree copies of the
+  // whole repo (including their own tests/) that Jest was otherwise sweeping
+  // up and running a second (and third...) time.
+  testPathIgnorePatterns: ['/node_modules/', '/\\.claude/', 'critical-bugs'],
+  // testPathIgnorePatterns only governs which *.test.js files run — Jest's
+  // haste-map still indexes every file (including __mocks__/fs.js inside
+  // each worktree) for module resolution, which is what actually produced
+  // the "duplicate manual mock" warning. This keeps the whole directory out
+  // of module resolution too.
+  modulePathIgnorePatterns: ['<rootDir>/\\.claude/'],
   collectCoverageFrom: [
     'input-sanitizer.js',
     'ai-provider-manager.js',
