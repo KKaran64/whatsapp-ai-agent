@@ -85,15 +85,21 @@ describe('previously-supported formats still parse', () => {
 });
 
 describe('the whole shipped corpus parses', () => {
-  test('data/past-chats yields thousands of messages, not hundreds', () => {
-    const fs = require('fs');
-    const path = require('path');
-    const dir = path.join(__dirname, '..', '..', 'data', 'past-chats');
-    if (!fs.existsSync(dir)) return; // corpus not present in this checkout
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', '..', 'data', 'past-chats');
+  // The directory itself is always present (data/past-chats/.gitkeep is
+  // tracked) but the exports are gitignored, so "dir exists" proves nothing.
+  // Gate on the files, and skip visibly rather than pass vacuously.
+  const corpus = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter(x => x.endsWith('.txt'))
+    : [];
+  const testWithCorpus = corpus.length ? test : test.skip;
 
+  testWithCorpus('data/past-chats yields thousands of messages, not hundreds', () => {
     let total = 0;
     let business = 0;
-    for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.txt'))) {
+    for (const f of corpus) {
       const msgs = parseChat(fs.readFileSync(path.join(dir, f), 'utf8'), BUSINESS);
       total += msgs.length;
       business += msgs.filter(m => m.role === 'business').length;
