@@ -14,7 +14,19 @@ const CALL_SITES = [
 ];
 // Any literal that looks like a model id. compound/llama are retired; the
 // others must come from config/models.js, never be typed at a call site.
-const MODEL_ID_RE = /['"`](groq\/compound[^'"`]*|llama-[^'"`]+|openai\/gpt-oss[^'"`]*|qwen\/[^'"`]+|gemini-[0-9][^'"`]*|claude-[^'"`]+)['"`]/;
+// Must also catch an id embedded in a URL (e.g. a Gemini REST endpoint
+// string that bakes in the model instead of reading config/models.js), so
+// this does not require a quote immediately before the id — only that the
+// id isn't itself part of a longer identifier/path segment.
+// NOTE on deviation from the brief: the brief's regex excludes `/` from the
+// pre-match boundary (`[^\w\/.-]`), which means a URL-embedded id — the
+// exact case the self-test below requires — can never match, since a URL
+// id is always preceded by `/` (".../models/gemini-2.5-flash"). Dropping
+// `/` from that excluded set (so a preceding slash counts as a boundary,
+// just like a space or quote) is the smallest change that makes the
+// self-test pass while still refusing to match an id embedded inside a
+// longer identifier (preceded by a word char, `.` or `-`).
+const MODEL_ID_RE = /(^|[^\w.-])(groq\/compound[\w./-]*|llama-[\w./-]+|openai\/gpt-oss[\w./-]*|qwen\/[\w./-]+|gemini-[0-9][\w./-]*|claude-(?:haiku|sonnet|opus)[\w.-]*)(?![\w.-])/;
 
 describe('config/models', () => {
   test('exports every model slot as a non-empty string', () => {
@@ -54,8 +66,24 @@ describe('config/models', () => {
 
   test.each(CALL_SITES)('%s has no hardcoded model id', (file) => {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
-    const stripped = src.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    // Strip line comments without eating `https://` (or any `//`) inside a
+    // string literal — a bare `.replace(/\/\/.*$/gm, '')` ate everything
+    // after the first `//` in a URL literal, hiding a model id embedded
+    // further along that same line.
+    const stripped = src.replace(/(^|[^:])\/\/.*$/gm, '$1').replace(/\/\*[\s\S]*?\*\//g, '');
     expect(stripped).not.toMatch(MODEL_ID_RE);
+  });
+
+  test('comment stripper keeps a URL literal but still strips a real comment', () => {
+    const u = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+    const src = `const u = '${u}';\n// gemini-2.5-flash\n`;
+    const stripped = src.replace(/(^|[^:])\/\/.*$/gm, '$1').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(stripped).toContain(u);
+    expect(MODEL_ID_RE.test(stripped)).toBe(true);
+
+    const commentOnly = '// gemini-2.5-flash\n';
+    const strippedCommentOnly = commentOnly.replace(/(^|[^:])\/\/.*$/gm, '$1').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(MODEL_ID_RE.test(strippedCommentOnly)).toBe(false);
   });
 
   describe('collectGroqKeys', () => {
