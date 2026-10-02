@@ -327,6 +327,7 @@ class AIProviderManager {
       const response = await this.anthropic.messages.create({
         model: MODELS.CLAUDE_FALLBACK,
         max_tokens: TOKEN_BUDGETS.CHAT,
+        temperature: 0.4, // matches Groq — a failover must not change the persona's temperature
         system: systemPrompt,
         messages: [
           ...conversationHistory,
@@ -416,8 +417,14 @@ class AIProviderManager {
       console.log('❌ Gemini failed:', error.message);
     }
 
-    // 5. Claude SKIPPED (removed to use only free providers: Groq + Gemini)
-    // If both Groq and Gemini fail, fallback to rule-based responses
+    // 5. Claude (third provider). Skipped only when no key is configured.
+    if (this.anthropic) {
+      try {
+        return await this.tryClaude(augmentedSystem, conversationHistory, userMessage, userId);
+      } catch (error) {
+        console.log('❌ Claude failed:', error.message);
+      }
+    }
 
     // 6. Fallback to rule-based
     const fallbackResponse = this.getFallbackResponse(userMessage);

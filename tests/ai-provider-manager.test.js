@@ -1,4 +1,5 @@
 const AIProviderManager = require('../ai-provider-manager');
+const { MODELS, TOKEN_BUDGETS } = require('../config/models');
 
 // Mock external dependencies
 jest.mock('groq-sdk', () => {
@@ -652,6 +653,86 @@ describe('AIProviderManager - getResponse Full Chain', () => {
     const result = await manager.getResponse('system', [], 'how much for 50 coasters with custom print?');
     expect(result.provider).toBe('fallback');
     expect(result.response).toContain('trouble processing');
+  });
+});
+
+// ─── getResponse provider chain (Groq → Gemini → Claude → fallback) ─────────
+
+describe('getResponse provider chain', () => {
+  test('falls through to Claude when Groq and Gemini both fail', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GEMINI_API_KEY: 'gem1',
+      ANTHROPIC_API_KEY: 'claude-key'
+    });
+
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(
+      Object.assign(new Error('rate_limit'), { response: { status: 429 } })
+    );
+    axios.post.mockRejectedValue(
+      Object.assign(new Error('Internal error'), { response: { status: 500 } })
+    );
+    manager.anthropic.messages.create.mockResolvedValue({
+      content: [{ text: 'Hello from Claude' }]
+    });
+
+    const r = await manager.getResponse('sys', [], 'how much for 50 coasters?', 'u1');
+    expect(r).toEqual({ provider: 'claude', response: 'Hello from Claude' });
+    expect(manager.stats.claude.success).toBe(1);
+  });
+
+  test('uses the rule-based fallback only when Claude also fails', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GEMINI_API_KEY: 'gem1',
+      ANTHROPIC_API_KEY: 'claude-key'
+    });
+
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(
+      Object.assign(new Error('rate_limit'), { response: { status: 429 } })
+    );
+    axios.post.mockRejectedValue(
+      Object.assign(new Error('Internal error'), { response: { status: 500 } })
+    );
+    manager.anthropic.messages.create.mockRejectedValue(new Error('Claude down'));
+
+    const r = await manager.getResponse('sys', [], 'what is cork', 'u1');
+    expect(r.provider).toBe('fallback');
+    expect(manager.stats.claude.failures).toBe(1);
+  });
+
+  test('Claude is skipped (not attempted) when no key is configured', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GEMINI_API_KEY: 'gem1'
+      // no ANTHROPIC_API_KEY
+    });
+
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(new Error('Groq down'));
+    axios.post.mockRejectedValue(new Error('Gemini down'));
+
+    const r = await manager.getResponse('sys', [], 'how much for 50 coasters with custom print?', 'u1');
+    expect(r.provider).toBe('fallback');
+    expect(manager.anthropic).toBeNull();
+    expect(manager.stats.claude.success).toBe(0);
+    expect(manager.stats.claude.failures).toBe(0);
+  });
+
+  test('Claude call uses the configured model, budget and temperature', async () => {
+    const manager = new AIProviderManager({ ANTHROPIC_API_KEY: 'claude-key' });
+    manager.anthropic.messages.create.mockResolvedValue({
+      content: [{ text: 'Hello from Claude' }]
+    });
+
+    await manager.tryClaude('sys', [], 'hi there');
+
+    expect(manager.anthropic.messages.create).toHaveBeenCalledWith({
+      model: MODELS.CLAUDE_FALLBACK,
+      max_tokens: TOKEN_BUDGETS.CHAT,
+      temperature: 0.4,
+      system: 'sys',
+      messages: [{ role: 'user', content: 'hi there' }]
+    });
   });
 });
 

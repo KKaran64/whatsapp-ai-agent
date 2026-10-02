@@ -459,14 +459,14 @@ function validateRequiredEnvVars() {
 
 validateRequiredEnvVars();
 
-// Initialize Multi-Provider AI Manager (NEW - with Groq + Gemini fallback)
-// UPDATED: Claude removed to use only free providers (Groq + Gemini)
+// Initialize Multi-Provider AI Manager (Groq -> Gemini -> Claude -> rule-based fallback)
 console.log('🔧 Initializing AI Manager with environment variables:');
 console.log(`  - GROQ_API_KEY: ${CONFIG.GROQ_API_KEY ? 'SET (key 1)' : 'NOT SET'}`);
 console.log(`  - GROQ_API_KEY_2: ${process.env.GROQ_API_KEY_2 ? 'SET (key 2)' : 'NOT SET'}`);
 console.log(`  - GROQ_API_KEY_3: ${process.env.GROQ_API_KEY_3 ? 'SET (key 3)' : 'NOT SET'}`);
 console.log(`  - GROQ_API_KEY_4: ${process.env.GROQ_API_KEY_4 ? 'SET (key 4)' : 'NOT SET'}`);
 console.log(`  - GEMINI_API_KEY: ${CONFIG.GEMINI_API_KEY ? 'SET' : 'NOT SET'}`);
+console.log(`  - ANTHROPIC_API_KEY: ${CONFIG.ANTHROPIC_API_KEY ? 'SET' : 'NOT SET'}`);
 
 const aiManager = new AIProviderManager({
   GROQ_API_KEY: CONFIG.GROQ_API_KEY,
@@ -483,7 +483,7 @@ const aiManager = new AIProviderManager({
   GEMINI_API_KEY_8: CONFIG.GEMINI_API_KEY_8,
   GEMINI_API_KEY_9: CONFIG.GEMINI_API_KEY_9,
   GEMINI_API_KEY_10: CONFIG.GEMINI_API_KEY_10,
-  ANTHROPIC_API_KEY: null // Disabled - using only free providers
+  ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY
 });
 
 console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
@@ -3267,7 +3267,8 @@ app.get('/health', monitoringLimiter, async (req, res) => {
     version: 'v35-GEMINI-MULTI-KEY',
     providers: {
       groq: aiManager.groqClients ? aiManager.groqClients.length : 0,
-      gemini: aiManager.geminiKeys ? aiManager.geminiKeys.length : 0
+      gemini: aiManager.geminiKeys ? aiManager.geminiKeys.length : 0,
+      claude: aiManager.anthropic ? 1 : 0
     },
     services: {
       mongodb: mongoHealthy ? 'connected' : 'disconnected',

@@ -10,10 +10,11 @@
 // reported a false outage. A provider is "reachable" if at least one of
 // its keys lists models; an invalid key is recorded in `errors` by index
 // only — the key itself is never logged or returned.
-const { MODELS, GROQ_MODELS_URL, GEMINI_MODELS_URL } = require('../config/models');
+const { MODELS, GROQ_MODELS_URL, GEMINI_MODELS_URL, ANTHROPIC_MODELS_URL } = require('../config/models');
 
 const GROQ_SLOTS = ['GROQ_CHAT', 'GROQ_FAST', 'GROQ_JSON', 'GROQ_WHISPER'];
 const GEMINI_SLOTS = ['GEMINI_CHAT', 'GEMINI_VISION', 'GEMINI_VISION_LITE'];
+const ANTHROPIC_SLOTS = ['CLAUDE_FALLBACK'];
 
 const MAX_ERROR_MESSAGE_LENGTH = 120;
 
@@ -45,11 +46,21 @@ async function listGeminiKey(fetchImpl, key) {
   return new Set((body.models || []).map(m => String(m.name).replace(/^models\//, '')));
 }
 
+async function listAnthropicKey(fetchImpl, key) {
+  const r = await fetchImpl(`${ANTHROPIC_MODELS_URL}?limit=1000`, {
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body?.error?.message || `HTTP ${r.status}`);
+  return new Set((body.data || []).map(m => m.id));
+}
+
 async function probeModels({ fetchImpl = globalThis.fetch, env = process.env } = {}) {
   const result = { ok: true, missing: [], checked: [], errors: [], keys: {} };
   const providers = [
     { name: 'groq', keys: collectKeys(env, 'GROQ_API_KEY', 10), slots: GROQ_SLOTS, list: listGroqKey },
     { name: 'gemini', keys: collectKeys(env, 'GEMINI_API_KEY', 20), slots: GEMINI_SLOTS, list: listGeminiKey },
+    { name: 'anthropic', keys: collectKeys(env, 'ANTHROPIC_API_KEY', 1), slots: ANTHROPIC_SLOTS, list: listAnthropicKey },
   ];
 
   for (const p of providers) {

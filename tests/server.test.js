@@ -689,6 +689,9 @@ describe('Server - Health Endpoint', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.version).toBeDefined();
     expect(res.body.providers).toBeDefined();
+    // mockAiManager has no `anthropic` property (no ANTHROPIC_API_KEY set in this
+    // test env), so aiManager.anthropic is falsy and providers.claude is 0.
+    expect(res.body.providers.claude).toBe(0);
     expect(res.body.services).toBeDefined();
     expect(res.body.services.mongodb).toBe('connected');
   });

@@ -73,4 +73,26 @@ describe('probeModels', () => {
     expect(r.keys.groq).toEqual({ total: 2, valid: 0 });
     expect(r.errors).toHaveLength(2);
   });
+
+  test('checks the Anthropic model when a key is configured and reports it missing', async () => {
+    const f = fakeFetch({
+      'https://api.groq.com': { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }, { id: 'whisper-large-v3-turbo' }] },
+      'https://generativelanguage': { models: [{ name: 'models/gemini-3.6-flash' }, { name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-2.5-flash-lite' }] },
+      'https://api.anthropic.com': { data: [{ id: 'claude-sonnet-5' }], has_more: false },
+    });
+    const r = await probeModels({ fetchImpl: f, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'x', ANTHROPIC_API_KEY: 'a' } });
+    expect(r.ok).toBe(false);
+    expect(r.missing).toEqual(['anthropic:CLAUDE_FALLBACK=claude-haiku-4-5']);
+    expect(r.keys.anthropic).toEqual({ total: 1, valid: 1 });
+  });
+
+  test('skips Anthropic when no key is configured', async () => {
+    const f = fakeFetch({
+      'https://api.groq.com': { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }, { id: 'whisper-large-v3-turbo' }] },
+      'https://generativelanguage': { models: [{ name: 'models/gemini-3.6-flash' }, { name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-2.5-flash-lite' }] },
+    });
+    const r = await probeModels({ fetchImpl: f, env });
+    expect(r.checked.some(c => c.startsWith('anthropic'))).toBe(false);
+    expect(r.keys.anthropic).toEqual({ total: 0, valid: 0 });
+  });
 });
