@@ -66,20 +66,54 @@ const { RedisSentImagesTracker } = require('./utils/redis-state');
 const { probeModels } = require('./scripts/probe-models');
 let modelProbeStatus = { ok: null, note: 'not yet probed' };
 
+// /health must 503 only when NO chat path works. A probe's `ok` flips false
+// when ANY provider with keys has zero valid keys, ANY slot (including
+// vision-only slots) is missing, or the probe itself throws — e.g. a
+// transient outage on Anthropic's single key used to 503 the whole bot for
+// an hour even though Groq/Gemini chat kept working. This checks the thing
+// that actually matters for serving a chat reply: at least one chat
+// provider has a valid key AND its chat slot is present at that provider.
+const CHAT_SLOT = { groq: 'GROQ_CHAT', gemini: 'GEMINI_CHAT', anthropic: 'CLAUDE_FALLBACK' };
+function chatPathUsable(probe) {
+  if (!probe || probe.ok !== false) return true;          // never probed / healthy
+  const missing = probe.missing || [];
+  return Object.entries(CHAT_SLOT).some(([p, slot]) =>
+    (probe.keys?.[p]?.valid || 0) > 0 && !missing.some(m => m.startsWith(`${p}:${slot}=`)));
+}
+
+// Guards the 5-minute retry below so a second failed probe (or the hourly
+// interval landing mid-retry) never stacks a second pending timer.
+let modelProbeRetryScheduled = false;
+function scheduleModelProbeRetry() {
+  if (modelProbeRetryScheduled) return;
+  modelProbeRetryScheduled = true;
+  setTimeout(() => {
+    modelProbeRetryScheduled = false;
+    runModelProbe();
+  }, 5 * 60 * 1000).unref();
+}
+
 // Non-fatal at boot (the bot can still fall back between providers), but
-// /health reports the result and it is re-checked hourly. Guarded only for
-// pre-fetch Node (no polyfill); tests/server.test.js mocks ./scripts/probe-models
-// directly so this never fires a real network call under Jest.
+// /health reports the result and it is re-checked hourly (plus one 5-minute
+// retry after a failure, so a transient blip doesn't wait a full hour to
+// clear). Guarded only for pre-fetch Node (no polyfill); tests/server.test.js
+// mocks ./scripts/probe-models directly so this never fires a real network
+// call under Jest.
 const runModelProbe = () => {
   if (typeof fetch !== 'function') {
     return Promise.resolve();
   }
   return probeModels().then(r => {
     modelProbeStatus = r;
-    if (!r.ok) console.error('❌ MODEL PROBE FAILED:', JSON.stringify(r));
-    else console.log(`✅ Model probe ok (${r.checked.length} ids)`);
+    if (!r.ok) {
+      console.error('❌ MODEL PROBE FAILED:', JSON.stringify(r));
+      scheduleModelProbeRetry();
+    } else {
+      console.log(`✅ Model probe ok (${r.checked.length} ids)`);
+    }
   }).catch(err => {
-    modelProbeStatus = { ok: false, missing: [], checked: [], errors: [err.message], checkedAt: new Date().toISOString() };
+    modelProbeStatus = { ok: false, missing: [], checked: [], errors: [err.message], keys: {}, checkedAt: new Date().toISOString() };
+    scheduleModelProbeRetry();
   });
 };
 
@@ -3258,11 +3292,16 @@ async function sendTypingIndicator(to) {
 // Health check endpoint (SECURITY: Rate limited to 60 req/min)
 app.get('/health', monitoringLimiter, async (req, res) => {
   // A retired model id used to pass /health (it only reported key counts).
-  // modelProbeStatus.ok === false degrades the response to 503.
+  // Only a probe that leaves NO chat provider usable degrades the response
+  // to 503 — see chatPathUsable() above. `status` still flips to 'degraded'
+  // even on a 200 when the probe found something wrong (e.g. vision-only or
+  // a single-key provider down) so monitors can keyword-alert on "ok":false
+  // without the bot actually going down for that.
   const mongoHealthy = mongoose.connection.readyState === 1;
-  const healthy = mongoHealthy && modelProbeStatus.ok !== false;
+  const healthy = mongoHealthy && chatPathUsable(modelProbeStatus);
+  const status = healthy && modelProbeStatus.ok !== false ? 'ok' : 'degraded';
   const health = {
-    status: healthy ? 'ok' : 'degraded',
+    status,
     timestamp: new Date().toISOString(),
     version: 'v35-GEMINI-MULTI-KEY',
     providers: {
@@ -3969,5 +4008,6 @@ module.exports = {
   // MessageDeduplicator class (for testing)
   MessageDeduplicator,
   // Model probe (for testing)
-  runModelProbe
+  runModelProbe,
+  chatPathUsable
 };

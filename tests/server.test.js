@@ -722,6 +722,92 @@ describe('Server - Health Endpoint', () => {
     expect(healthy.body.status).toBe('ok');
   });
 
+  test('GET /health stays 200/degraded when only a single-key provider (anthropic) is down', async () => {
+    mockProbeModels.mockResolvedValueOnce({
+      ok: false,
+      missing: ['anthropic:CLAUDE_FALLBACK=claude-haiku-4-5'],
+      checked: [],
+      errors: [],
+      keys: { groq: { total: 4, valid: 4 }, gemini: { total: 8, valid: 8 }, anthropic: { total: 1, valid: 0 } },
+      checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+
+    const res = await supertest(server.app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('degraded');
+
+    // Restore a passing probe result so later tests see a healthy /health.
+    mockProbeModels.mockResolvedValueOnce({
+      ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+  });
+
+  test('GET /health 503s when groq/gemini/anthropic all have zero valid keys', async () => {
+    mockProbeModels.mockResolvedValueOnce({
+      ok: false,
+      missing: ['groq:GROQ_CHAT=openai/gpt-oss-120b', 'gemini:GEMINI_CHAT=gemini-3.6-flash', 'anthropic:CLAUDE_FALLBACK=claude-haiku-4-5'],
+      checked: [],
+      errors: [],
+      keys: { groq: { total: 4, valid: 0 }, gemini: { total: 8, valid: 0 }, anthropic: { total: 1, valid: 0 } },
+      checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+
+    const res = await supertest(server.app).get('/health');
+    expect(res.status).toBe(503);
+
+    mockProbeModels.mockResolvedValueOnce({
+      ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+  });
+
+  test('GET /health 503s when every chat slot is missing even though keys are valid', async () => {
+    mockProbeModels.mockResolvedValueOnce({
+      ok: false,
+      missing: [
+        'groq:GROQ_CHAT=openai/gpt-oss-120b',
+        'gemini:GEMINI_CHAT=gemini-3.6-flash',
+        'anthropic:CLAUDE_FALLBACK=claude-haiku-4-5'
+      ],
+      checked: [],
+      errors: [],
+      keys: { groq: { total: 4, valid: 4 }, gemini: { total: 8, valid: 8 }, anthropic: { total: 1, valid: 1 } },
+      checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+
+    const res = await supertest(server.app).get('/health');
+    expect(res.status).toBe(503);
+
+    mockProbeModels.mockResolvedValueOnce({
+      ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+  });
+
+  test('GET /health stays 200/ok when only a vision-only slot is missing', async () => {
+    mockProbeModels.mockResolvedValueOnce({
+      ok: false,
+      missing: ['gemini:GEMINI_VISION_LITE=gemini-2.5-flash-lite'],
+      checked: [],
+      errors: [],
+      keys: { groq: { total: 4, valid: 4 }, gemini: { total: 8, valid: 8 }, anthropic: { total: 1, valid: 1 } },
+      checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+
+    const res = await supertest(server.app).get('/health');
+    expect(res.status).toBe(200);
+
+    mockProbeModels.mockResolvedValueOnce({
+      ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+  });
+
   test('GET /health/vision returns vision health', async () => {
     const res = await supertest(server.app).get('/health/vision');
 
