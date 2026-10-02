@@ -21,6 +21,7 @@ const MODELS = Object.freeze({
   GROQ_WHISPER:    env('GROQ_MODEL_WHISPER', 'whisper-large-v3-turbo'),
   GEMINI_CHAT:     env('GEMINI_MODEL_CHAT',  'gemini-3.6-flash'),
   GEMINI_VISION:   env('GEMINI_MODEL_VISION','gemini-2.5-flash'),
+  GEMINI_VISION_LITE: env('GEMINI_MODEL_VISION_LITE', 'gemini-2.5-flash-lite'),
   CLAUDE_FALLBACK: env('CLAUDE_MODEL',       'claude-haiku-4-5'),
 });
 

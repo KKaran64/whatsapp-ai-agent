@@ -4,7 +4,7 @@ const axios = require('axios');
 const Groq = require('groq-sdk');
 const Conversation = require('../models/Conversation');
 const { detectOutcome } = require('../rag/outcome-detector');
-const { MODELS } = require('../config/models');
+const { MODELS, reasoningParams } = require('../config/models');
 
 const ANALYSIS_PROMPT = `You are a sales operations analyst for 9 Cork Sustainable Products WhatsApp bot.
 Analyze the conversations below and return ONLY valid JSON:
@@ -63,7 +63,8 @@ async function runWeeklyAnalysis(config) {
       ],
       temperature: 0.3,
       max_tokens: 2000,
-      response_format: { type: 'json_object' }
+      response_format: { type: 'json_object' },
+      ...reasoningParams(MODELS.GROQ_JSON)
     });
     report = JSON.parse(response.choices[0].message.content);
   } catch (err) {

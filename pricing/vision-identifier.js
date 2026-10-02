@@ -18,13 +18,14 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { MODELS } = require('../config/models');
 
 // v60.1: Switched from gemini-2.0-flash (no free tier — 429 RESOURCE_EXHAUSTED)
 // to gemini-2.5-flash, which has a working free tier and better vision accuracy.
 // Verified by hitting both models with a test image — 2.0-flash returns 429,
 // 2.5-flash returns valid JSON.
-const GEMINI_VISION_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-const FALLBACK_VISION_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
+const GEMINI_VISION_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_VISION}:generateContent`;
+const FALLBACK_VISION_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_VISION_LITE}:generateContent`;
 const PRICING_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
 
 function collectGeminiKeys() {

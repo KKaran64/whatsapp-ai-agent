@@ -9,6 +9,8 @@ const CALL_SITES = [
   'pricing/groq-client.js',
   'rag/classifier.js',
   'scripts/weekly-cron.js',
+  'pricing/vision-identifier.js',
+  'audio-handler.js',
 ];
 // Any literal that looks like a model id. compound/llama are retired; the
 // others must come from config/models.js, never be typed at a call site.
@@ -16,7 +18,7 @@ const MODEL_ID_RE = /['"`](groq\/compound[^'"`]*|llama-[^'"`]+|openai\/gpt-oss[^
 
 describe('config/models', () => {
   test('exports every model slot as a non-empty string', () => {
-    for (const k of ['GROQ_CHAT', 'GROQ_FAST', 'GROQ_JSON', 'GEMINI_CHAT', 'GEMINI_VISION', 'GROQ_WHISPER', 'CLAUDE_FALLBACK']) {
+    for (const k of ['GROQ_CHAT', 'GROQ_FAST', 'GROQ_JSON', 'GEMINI_CHAT', 'GEMINI_VISION', 'GEMINI_VISION_LITE', 'GROQ_WHISPER', 'CLAUDE_FALLBACK']) {
       expect(typeof MODELS[k]).toBe('string');
       expect(MODELS[k].length).toBeGreaterThan(3);
     }

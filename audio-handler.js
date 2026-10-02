@@ -12,9 +12,10 @@
 
 const axios = require('axios');
 const FormData = require('form-data');
+const { MODELS } = require('./config/models');
 
 const GROQ_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
-const WHISPER_MODEL = 'whisper-large-v3-turbo';
+const WHISPER_MODEL = MODELS.GROQ_WHISPER;
 
 // Collect all configured Groq API keys for failover (same pattern as embed.js)
 function collectGroqKeys() {
