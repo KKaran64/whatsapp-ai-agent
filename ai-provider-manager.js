@@ -5,6 +5,7 @@ const Groq = require('groq-sdk');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 const crypto = require('crypto');
+const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('./config/models');
 
 
 // An empty completion is a FAILURE, not an answer.
@@ -168,11 +169,12 @@ class AIProviderManager {
 
         const completion = await groqClient.chat.completions.create({
           messages,
-          model: 'groq/compound-mini', // llama-3.3 retired by Groq 2026-09 (404)
+          model: MODELS.GROQ_CHAT,
           temperature: 0.4,
-          max_tokens: 500,
+          max_tokens: TOKEN_BUDGETS.CHAT,
           top_p: 1,
-          stream: false
+          stream: false,
+          ...reasoningParams(MODELS.GROQ_CHAT)
         });
 
         const response = requireNonEmpty(completion.choices[0]?.message?.content, 'Groq');
@@ -247,7 +249,7 @@ class AIProviderManager {
         console.log(`🟢 Trying Gemini (key ${this.currentGeminiIndex || this.geminiKeys.length}/${this.geminiKeys.length})...`);
 
         const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_CHAT}:generateContent?key=${geminiKey}`,
           {
             contents: [{
               parts: [{ text: fullPrompt }]
@@ -298,8 +300,8 @@ class AIProviderManager {
       console.log('🟣 Trying Claude...');
 
       const response = await this.anthropic.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 500,
+        model: MODELS.CLAUDE_FALLBACK,
+        max_tokens: TOKEN_BUDGETS.CHAT,
         system: systemPrompt,
         messages: [
           ...conversationHistory,

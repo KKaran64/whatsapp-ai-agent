@@ -4,6 +4,7 @@ const axios = require('axios');
 const Groq = require('groq-sdk');
 const Conversation = require('../models/Conversation');
 const { detectOutcome } = require('../rag/outcome-detector');
+const { MODELS } = require('../config/models');
 
 const ANALYSIS_PROMPT = `You are a sales operations analyst for 9 Cork Sustainable Products WhatsApp bot.
 Analyze the conversations below and return ONLY valid JSON:
@@ -55,7 +56,7 @@ async function runWeeklyAnalysis(config) {
   let report;
   try {
     const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: MODELS.GROQ_JSON,
       messages: [
         { role: 'system', content: ANALYSIS_PROMPT },
         { role: 'user', content: JSON.stringify(sample) }

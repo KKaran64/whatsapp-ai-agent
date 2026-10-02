@@ -19,6 +19,7 @@
  */
 
 const Groq = require('groq-sdk');
+const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
 
 // Classification prompt (~80 tokens)
 const ROUTER_PROMPT = `Classify this WhatsApp message for cork products store.
@@ -150,10 +151,11 @@ class RouterAgent {
             { role: 'system', content: ROUTER_PROMPT },
             { role: 'user', content: message }
           ],
-          model: 'groq/compound-mini', // llama-3.1 retired by Groq 2026-09; non-reasoning so it fits max_tokens:10
+          model: MODELS.GROQ_FAST,
           temperature: 0.1, // Low temp for consistent classification
-          max_tokens: 10, // Only need node name
-          top_p: 1
+          max_tokens: TOKEN_BUDGETS.ROUTER,
+          top_p: 1,
+          ...reasoningParams(MODELS.GROQ_FAST)
         });
 
         const response = completion.choices[0]?.message?.content?.trim().toUpperCase();

@@ -12,6 +12,7 @@
  */
 
 const Groq = require('groq-sdk');
+const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
 
 // Node-specific response templates and prompts
 const NODE_TEMPLATES = {
@@ -214,10 +215,11 @@ ${template.prompt}`;
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          model: 'groq/compound-mini', // llama-3.3 retired by Groq 2026-09 (404)
+          model: MODELS.GROQ_CHAT,
           temperature: 0.4,
-          max_tokens: 80, // ~30 words max
-          top_p: 1
+          max_tokens: TOKEN_BUDGETS.RESPONDER,
+          top_p: 1,
+          ...reasoningParams(MODELS.GROQ_CHAT)
         });
 
         let response = completion.choices[0]?.message?.content?.trim() || "How can I help you?";

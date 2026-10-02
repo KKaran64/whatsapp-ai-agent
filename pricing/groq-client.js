@@ -10,9 +10,8 @@
 const axios = require('axios');
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-// llama-3.3 retired by Groq 2026-09 (404). compound-mini verified to support
-// response_format json_object, which this client requires.
-const MODEL = 'groq/compound-mini';
+const { MODELS, reasoningParams } = require('../config/models');
+const MODEL = MODELS.GROQ_JSON;
 
 // Total wall-clock across ALL key attempts. A customer is waiting on the
 // interactive path, so failed keys must never stack their timeouts.
@@ -36,7 +35,8 @@ async function callOnce(messages, apiKey, timeoutMs, maxTokens, temperature) {
     messages,
     temperature,
     max_tokens: maxTokens,
-    response_format: { type: 'json_object' }
+    response_format: { type: 'json_object' },
+    ...reasoningParams(MODEL)
   }, {
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     timeout: timeoutMs

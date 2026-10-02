@@ -1,6 +1,7 @@
 // Uses Groq to classify a conversation into outcome + metadata.
 
 const Groq = require('groq-sdk');
+const { MODELS } = require('../config/models');
 
 const SYSTEM_PROMPT = `You are an expert sales analyst for 9 Cork Sustainable Products.
 Analyze the conversation and return ONLY valid JSON with this exact shape:
@@ -32,7 +33,7 @@ async function classifyConversation(messages) {
 
   try {
     const response = await groq.chat.completions.create({
-      model: 'groq/compound-mini', // llama-3.3 retired by Groq 2026-09 (404)
+      model: MODELS.GROQ_JSON,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: conversationText }
