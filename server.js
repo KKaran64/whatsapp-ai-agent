@@ -67,20 +67,20 @@ const { probeModels } = require('./scripts/probe-models');
 let modelProbeStatus = { ok: null, note: 'not yet probed' };
 
 // Non-fatal at boot (the bot can still fall back between providers), but
-// /health reports the result and it is re-checked hourly. Guarded against
-// firing real network calls when required under Jest (tests/server.test.js
-// requires this module with a real GROQ_API_KEY-shaped env var and native
-// fetch available) — the CLI (scripts/probe-models.js) and production boot
-// are unaffected.
+// /health reports the result and it is re-checked hourly. Guarded only for
+// pre-fetch Node (no polyfill); tests/server.test.js mocks ./scripts/probe-models
+// directly so this never fires a real network call under Jest.
 const runModelProbe = () => {
-  if (process.env.JEST_WORKER_ID || typeof fetch !== 'function') {
+  if (typeof fetch !== 'function') {
     return Promise.resolve();
   }
   return probeModels().then(r => {
     modelProbeStatus = r;
     if (!r.ok) console.error('❌ MODEL PROBE FAILED:', JSON.stringify(r));
     else console.log(`✅ Model probe ok (${r.checked.length} ids)`);
-  }).catch(err => { modelProbeStatus = { ok: false, errors: [err.message] }; });
+  }).catch(err => {
+    modelProbeStatus = { ok: false, missing: [], checked: [], errors: [err.message], checkedAt: new Date().toISOString() };
+  });
 };
 
 // Track sent images per conversation to avoid duplicates
@@ -3966,5 +3966,7 @@ module.exports = {
   conversationMemory,
   phoneRateLimits,
   // MessageDeduplicator class (for testing)
-  MessageDeduplicator
+  MessageDeduplicator,
+  // Model probe (for testing)
+  runModelProbe
 };

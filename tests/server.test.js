@@ -212,6 +212,12 @@ jest.mock('../scripts/products-data.json', () => [
   { name: 'Test Coaster', category: 'COASTER', images: ['https://example.com/coaster.jpg'] }
 ], { virtual: true });
 
+// ─── Mock scripts/probe-models (prevents real network calls to Groq/Gemini) ─
+const mockProbeModels = jest.fn().mockResolvedValue({
+  ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()
+});
+jest.mock('../scripts/probe-models', () => ({ probeModels: mockProbeModels }));
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NOW require server.js (with all mocks in place)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -685,6 +691,32 @@ describe('Server - Health Endpoint', () => {
     expect(res.body.providers).toBeDefined();
     expect(res.body.services).toBeDefined();
     expect(res.body.services.mongodb).toBe('connected');
+  });
+
+  test('GET /health degrades to 503 when the model probe finds a missing id', async () => {
+    mockProbeModels.mockResolvedValueOnce({
+      ok: false,
+      missing: ['groq:GROQ_JSON=qwen/qwen3.8-27b'],
+      checked: [],
+      errors: [],
+      checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+
+    const degraded = await supertest(server.app).get('/health');
+    expect(degraded.status).toBe(503);
+    expect(degraded.body.status).toBe('degraded');
+    expect(degraded.body.models.missing).toContain('groq:GROQ_JSON=qwen/qwen3.8-27b');
+
+    // Restore a passing probe result so later tests see a healthy /health.
+    mockProbeModels.mockResolvedValueOnce({
+      ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()
+    });
+    await server.runModelProbe();
+
+    const healthy = await supertest(server.app).get('/health');
+    expect(healthy.status).toBe(200);
+    expect(healthy.body.status).toBe('ok');
   });
 
   test('GET /health/vision returns vision health', async () => {
