@@ -1,7 +1,7 @@
 // Uses Groq to classify a conversation into outcome + metadata.
 
 const Groq = require('groq-sdk');
-const { MODELS, reasoningParams } = require('../config/models');
+const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
 
 const SYSTEM_PROMPT = `You are an expert sales analyst for 9 Cork Sustainable Products.
 Analyze the conversation and return ONLY valid JSON with this exact shape:
@@ -39,7 +39,7 @@ async function classifyConversation(messages) {
         { role: 'user', content: conversationText }
       ],
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: TOKEN_BUDGETS.JSON,
       response_format: { type: 'json_object' },
       ...reasoningParams(MODELS.GROQ_JSON)
     });

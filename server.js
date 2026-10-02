@@ -410,6 +410,23 @@ app.use(express.json({
 app.use(requestIdMiddleware);
 
 // Configuration
+// AIProviderManager/RouterAgent/ResponderAgent all read Groq keys via
+// config/models.js::collectGroqKeys() (GROQ_API_KEY + _2.._10) and Gemini
+// keys via ai-provider-manager.js's own GEMINI_API_KEY_2.._20 loop. CONFIG
+// used to hand-write only GROQ_API_KEY.._4 and GEMINI_API_KEY.._10, so keys
+// beyond that were silently dropped no matter how many Render actually had
+// configured. Build the full ranges here, once, with the same env+trim
+// treatment as every other CONFIG entry, so every call site that reads
+// CONFIG gets the complete set.
+const EXTRA_GROQ_KEYS = {};
+for (let i = 2; i <= 10; i++) {
+  EXTRA_GROQ_KEYS[`GROQ_API_KEY_${i}`] = (process.env[`GROQ_API_KEY_${i}`] || '').trim();
+}
+const EXTRA_GEMINI_KEYS = {};
+for (let i = 2; i <= 20; i++) {
+  EXTRA_GEMINI_KEYS[`GEMINI_API_KEY_${i}`] = (process.env[`GEMINI_API_KEY_${i}`] || '').trim();
+}
+
 const CONFIG = {
   WHATSAPP_TOKEN: (process.env.WHATSAPP_TOKEN || 'your_whatsapp_access_token').trim(),
   WHATSAPP_PHONE_NUMBER_ID: (process.env.WHATSAPP_PHONE_NUMBER_ID || 'your_phone_number_id').trim(),
@@ -417,22 +434,12 @@ const CONFIG = {
   ADMIN_SECRET: (process.env.ADMIN_SECRET || '').trim(),
   WHATSAPP_APP_SECRET: (process.env.WHATSAPP_APP_SECRET || '').trim(),
   PORT: process.env.PORT || 3000,
-  // Groq API keys (up to 4)
+  // Groq API keys (up to 10 — see EXTRA_GROQ_KEYS above)
   GROQ_API_KEY: (process.env.GROQ_API_KEY || 'your_groq_api_key').trim(),
-  GROQ_API_KEY_2: (process.env.GROQ_API_KEY_2 || '').trim(),
-  GROQ_API_KEY_3: (process.env.GROQ_API_KEY_3 || '').trim(),
-  GROQ_API_KEY_4: (process.env.GROQ_API_KEY_4 || '').trim(),
-  // Gemini API keys (up to 20)
+  ...EXTRA_GROQ_KEYS,
+  // Gemini API keys (up to 20 — see EXTRA_GEMINI_KEYS above)
   GEMINI_API_KEY: (process.env.GEMINI_API_KEY || '').trim(),
-  GEMINI_API_KEY_2: (process.env.GEMINI_API_KEY_2 || '').trim(),
-  GEMINI_API_KEY_3: (process.env.GEMINI_API_KEY_3 || '').trim(),
-  GEMINI_API_KEY_4: (process.env.GEMINI_API_KEY_4 || '').trim(),
-  GEMINI_API_KEY_5: (process.env.GEMINI_API_KEY_5 || '').trim(),
-  GEMINI_API_KEY_6: (process.env.GEMINI_API_KEY_6 || '').trim(),
-  GEMINI_API_KEY_7: (process.env.GEMINI_API_KEY_7 || '').trim(),
-  GEMINI_API_KEY_8: (process.env.GEMINI_API_KEY_8 || '').trim(),
-  GEMINI_API_KEY_9: (process.env.GEMINI_API_KEY_9 || '').trim(),
-  GEMINI_API_KEY_10: (process.env.GEMINI_API_KEY_10 || '').trim(),
+  ...EXTRA_GEMINI_KEYS,
   ANTHROPIC_API_KEY: (process.env.ANTHROPIC_API_KEY || '').trim(),
   GOOGLE_CLOUD_VISION_KEY: (process.env.GOOGLE_CLOUD_VISION_KEY || '').trim(),
   HUGGINGFACE_TOKEN: (process.env.HUGGINGFACE_TOKEN || '').trim(),
@@ -502,23 +509,11 @@ console.log(`  - GROQ_API_KEY_4: ${process.env.GROQ_API_KEY_4 ? 'SET (key 4)' : 
 console.log(`  - GEMINI_API_KEY: ${CONFIG.GEMINI_API_KEY ? 'SET' : 'NOT SET'}`);
 console.log(`  - ANTHROPIC_API_KEY: ${CONFIG.ANTHROPIC_API_KEY ? 'SET' : 'NOT SET'}`);
 
-const aiManager = new AIProviderManager({
-  GROQ_API_KEY: CONFIG.GROQ_API_KEY,
-  GROQ_API_KEY_2: CONFIG.GROQ_API_KEY_2,
-  GROQ_API_KEY_3: CONFIG.GROQ_API_KEY_3,
-  GROQ_API_KEY_4: CONFIG.GROQ_API_KEY_4,
-  GEMINI_API_KEY: CONFIG.GEMINI_API_KEY,
-  GEMINI_API_KEY_2: CONFIG.GEMINI_API_KEY_2,
-  GEMINI_API_KEY_3: CONFIG.GEMINI_API_KEY_3,
-  GEMINI_API_KEY_4: CONFIG.GEMINI_API_KEY_4,
-  GEMINI_API_KEY_5: CONFIG.GEMINI_API_KEY_5,
-  GEMINI_API_KEY_6: CONFIG.GEMINI_API_KEY_6,
-  GEMINI_API_KEY_7: CONFIG.GEMINI_API_KEY_7,
-  GEMINI_API_KEY_8: CONFIG.GEMINI_API_KEY_8,
-  GEMINI_API_KEY_9: CONFIG.GEMINI_API_KEY_9,
-  GEMINI_API_KEY_10: CONFIG.GEMINI_API_KEY_10,
-  ANTHROPIC_API_KEY: CONFIG.ANTHROPIC_API_KEY
-});
+// Pass CONFIG through directly — it now carries GROQ_API_KEY.._10 and
+// GEMINI_API_KEY.._20 (see EXTRA_GROQ_KEYS/EXTRA_GEMINI_KEYS above), so
+// collectGroqKeys() and AIProviderManager's own Gemini-key loop see every
+// configured key instead of only the first four/ten.
+const aiManager = new AIProviderManager(CONFIG);
 
 console.log(`✅ AI Manager initialized with ${aiManager.groqClients ? aiManager.groqClients.length : 0} Groq keys`);
 
@@ -2143,17 +2138,9 @@ let optimizedBot = null;
 
 async function getOrInitOptimizedBot() {
   if (!optimizedBot) {
-    optimizedBot = getOptimizedBot({
-      GROQ_API_KEY: CONFIG.GROQ_API_KEY,
-      GROQ_API_KEY_2: CONFIG.GROQ_API_KEY_2,
-      GROQ_API_KEY_3: CONFIG.GROQ_API_KEY_3,
-      GROQ_API_KEY_4: CONFIG.GROQ_API_KEY_4,
-      WHATSAPP_TOKEN: CONFIG.WHATSAPP_TOKEN,
-      WHATSAPP_PHONE_NUMBER_ID: CONFIG.WHATSAPP_PHONE_NUMBER_ID,
-      PDF_CATALOG_HORECA: CONFIG.PDF_CATALOG_HORECA,
-      PDF_CATALOG_PRODUCTS: CONFIG.PDF_CATALOG_PRODUCTS,
-      PDF_CATALOG_COMBOS: CONFIG.PDF_CATALOG_COMBOS
-    });
+    // Pass CONFIG through directly so RouterAgent/ResponderAgent's
+    // collectGroqKeys() sees GROQ_API_KEY_5.._10 too, not just keys 1-4.
+    optimizedBot = getOptimizedBot(CONFIG);
 
     // Set send message function
     optimizedBot.setSendMessageFunction(sendWhatsAppMessage);

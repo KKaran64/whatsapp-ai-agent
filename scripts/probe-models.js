@@ -48,23 +48,36 @@ function collectKeys(env, baseName, maxIndex) {
 // Lists models for a single key. Throws on a non-200 response with the
 // provider's error message (never the key) so the caller can record
 // "<provider> key#<n>: <message>" without echoing key material.
+// Each fetch gets its own 10s timeout so one hung provider can't stall the
+// whole probe (and, at boot, the request that's handling it).
+const PROBE_TIMEOUT_MS = 10_000;
+
 async function listGroqKey(fetchImpl, key) {
-  const r = await fetchImpl(GROQ_MODELS_URL, { headers: { Authorization: `Bearer ${key}` } });
+  const r = await fetchImpl(GROQ_MODELS_URL, {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+  });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body?.error?.message || `HTTP ${r.status}`);
   return new Set((body.data || []).map(m => m.id));
 }
 
 async function listGeminiKey(fetchImpl, key) {
-  const r = await fetchImpl(`${GEMINI_MODELS_URL}?key=${key}&pageSize=200`);
+  const r = await fetchImpl(`${GEMINI_MODELS_URL}?key=${key}&pageSize=200`, {
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+  });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body?.error?.message || `HTTP ${r.status}`);
   return new Set((body.models || []).map(m => String(m.name).replace(/^models\//, '')));
 }
 
 async function listAnthropicKey(fetchImpl, key) {
+  // limit=1000 is the Anthropic API's maximum page size, not a guess at the
+  // catalogue size — the actual catalogue is far smaller, so `has_more` on
+  // the response is intentionally never followed into a second page.
   const r = await fetchImpl(`${ANTHROPIC_MODELS_URL}?limit=1000`, {
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
   });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body?.error?.message || `HTTP ${r.status}`);

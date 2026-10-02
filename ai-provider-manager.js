@@ -163,7 +163,6 @@ class AIProviderManager {
     }
 
     const maxRetries = this.groqClients.length;
-    let lastError = null;
     let lastKeyError = null; // reason the MOST RECENT key failed ('invalid' | 'rate' | 'empty'); decides the final error below
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -193,13 +192,14 @@ class AIProviderManager {
 
         return { provider: 'groq', response };
       } catch (error) {
-        lastError = error;
-
-        // DETAILED ERROR LOGGING
+        // DETAILED ERROR LOGGING — status + data only, never the whole
+        // response object or error.config (a Gemini-shaped config.url
+        // carries the API key as a ?key= query param; logging the raw
+        // response/config risks shipping that key to the logs).
         console.error(`❌ Groq Error (key ${this.currentGroqIndex || this.groqClients.length}):`);
         console.error('Error message:', error.message);
-        console.error('Error response:', error.response?.data || error.response || 'No response data');
         console.error('Error status:', error.response?.status || 'No status');
+        console.error('Error response:', error.response?.data);
         console.error('Error stack:', error.stack);
 
         if (error.isEmptyCompletion) {
@@ -227,7 +227,7 @@ class AIProviderManager {
     // All keys exhausted
     this.stats.groq.failures++;
     this.stats.groq.lastFailure = new Date();
-    console.log('⚠️ All Groq keys rate limited');
+    console.log(lastKeyError === 'invalid' ? '⚠️ All Groq keys invalid' : '⚠️ All Groq keys rate limited');
     throw new Error(lastKeyError === 'invalid' ? 'ALL_KEYS_INVALID' : 'RATE_LIMIT');
   }
 
@@ -249,8 +249,7 @@ class AIProviderManager {
     }
 
     const maxRetries = this.geminiKeys.length;
-    let lastError = null;
-    let lastKeyError = null; // reason the MOST RECENT key failed ('invalid' | 'rate'); decides the final error below
+    let lastKeyError = null; // reason the MOST RECENT key failed ('invalid' | 'rate' | 'empty'); decides the final error below
 
     // Build conversation for Gemini (once, reuse for retries)
     const conversationText = conversationHistory
@@ -272,7 +271,11 @@ class AIProviderManager {
           {
             contents: [{
               parts: [{ text: fullPrompt }]
-            }]
+            }],
+            // Matches tryGroq's temperature/max_tokens so a Groq->Gemini
+            // failover doesn't silently change the persona's temperature or
+            // let Gemini run unbounded on an unrelated token budget.
+            generationConfig: { temperature: 0.4, maxOutputTokens: TOKEN_BUDGETS.CHAT }
           },
           { timeout: 30000 } // hung call would stall the per-phone lock
         );
@@ -282,15 +285,19 @@ class AIProviderManager {
 
         return { provider: 'gemini', response: aiResponse };
       } catch (error) {
-        lastError = error;
-
-        // DETAILED ERROR LOGGING
+        // DETAILED ERROR LOGGING — status + data only, never the whole
+        // response object or error.config (its config.url is the Gemini
+        // endpoint with the API key as a ?key= query param).
         console.error(`❌ Gemini Error (key ${this.currentGeminiIndex || this.geminiKeys.length}):`);
         console.error('Error message:', error.message);
-        console.error('Error response:', error.response?.data || error.response || 'No response data');
         console.error('Error status:', error.response?.status || 'No status');
+        console.error('Error response:', error.response?.data);
 
-        if (isInvalidKeyError(error)) {
+        if (error.isEmptyCompletion) {
+          console.log(`⚠️ Gemini key returned empty content, trying next key...`);
+          lastKeyError = 'empty';
+          continue; // Try next key
+        } else if (isInvalidKeyError(error)) {
           console.warn(`⚠️ Gemini key ${this.currentGeminiIndex || this.geminiKeys.length} rejected (invalid key) — rotating`);
           this.stats.gemini.keyRotations++;
           lastKeyError = 'invalid';
@@ -311,7 +318,7 @@ class AIProviderManager {
     // All keys exhausted
     this.stats.gemini.failures++;
     this.stats.gemini.lastFailure = new Date();
-    console.log('⚠️ All Gemini keys rate limited');
+    console.log(lastKeyError === 'invalid' ? '⚠️ All Gemini keys invalid' : '⚠️ All Gemini keys rate limited');
     throw new Error(lastKeyError === 'invalid' ? 'ALL_KEYS_INVALID' : 'RATE_LIMIT');
   }
 
@@ -343,11 +350,14 @@ class AIProviderManager {
       this.stats.claude.failures++;
       this.stats.claude.lastFailure = new Date();
 
-      // DETAILED ERROR LOGGING
+      // DETAILED ERROR LOGGING — status + data only, never the whole
+      // response object or error.config, same reasoning as tryGroq/tryGemini
+      // above (not brief-mandated for Claude specifically, but the exact
+      // same anti-pattern, so fixed at the root rather than left in place).
       console.error('❌ Claude Error:');
       console.error('Error message:', error.message);
-      console.error('Error response:', error.response?.data || error.response || 'No response data');
       console.error('Error status:', error.response?.status || 'No status');
+      console.error('Error response:', error.response?.data);
       console.error('Error type:', error.error?.type || 'No type');
 
       throw error;

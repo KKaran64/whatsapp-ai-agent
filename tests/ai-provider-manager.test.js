@@ -548,6 +548,57 @@ describe('AIProviderManager - tryGemini', () => {
     expect(url).not.toContain('-exp');
     expect(url).toContain('gemini');
   });
+
+  test('sends generationConfig with chat temperature and token budget', async () => {
+    const manager = new AIProviderManager({ GEMINI_API_KEY: 'test-key' });
+    axios.post.mockResolvedValue({
+      data: { candidates: [{ content: { parts: [{ text: 'ok' }] } }] }
+    });
+    await manager.tryGemini('sys', [], 'hello');
+    const body = axios.post.mock.calls[axios.post.mock.calls.length - 1][1];
+    expect(body.generationConfig).toEqual({ temperature: 0.4, maxOutputTokens: TOKEN_BUDGETS.CHAT });
+  });
+
+  test('rotates to next key on an empty completion, mirroring tryGroq', async () => {
+    const manager = new AIProviderManager({
+      GEMINI_API_KEY: 'gem1',
+      GEMINI_API_KEY_2: 'gem2'
+    });
+
+    axios.post
+      .mockResolvedValueOnce({ data: { candidates: [{ content: { parts: [{ text: '   ' }] } }] } })
+      .mockResolvedValueOnce({ data: { candidates: [{ content: { parts: [{ text: 'From key2' }] } }] } });
+
+    const result = await manager.tryGemini('sys', [], 'hello');
+    expect(result.response).toBe('From key2');
+  });
+
+  // Covers the brief's security item: an axios error whose `response.config.url`
+  // carries the Gemini API key as a `?key=...` query param must never reach
+  // console.error (the manager used to fall back to the whole response
+  // object — and error.config — when response.data was empty/undefined).
+  test('never logs a Gemini URL (or any ?key= secret) on error', async () => {
+    const manager = new AIProviderManager({ GEMINI_API_KEY: 'gem1' });
+    const secretError = {
+      response: { status: 400, data: undefined, config: { url: 'https://x?key=SECRET' } },
+      message: 'Request failed'
+    };
+    axios.post.mockRejectedValue(secretError);
+
+    const callsBefore = console.error.mock.calls.length;
+    // secretError is a plain object (not an Error instance) by design — it's
+    // the exact axios-error shape described in the brief. `.rejects.toThrow()`
+    // expects an Error instance, so assert the rejection directly instead.
+    await expect(manager.tryGemini('sys', [], 'hi')).rejects.toBe(secretError);
+
+    const loggedThisCall = console.error.mock.calls.slice(callsBefore);
+    for (const call of loggedThisCall) {
+      for (const arg of call) {
+        const serialized = typeof arg === 'string' ? arg : JSON.stringify(arg);
+        expect(serialized || '').not.toContain('SECRET');
+      }
+    }
+  });
 });
 
 // ─── tryClaude ───────────────────────────────────────────────────────────────
