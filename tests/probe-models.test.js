@@ -45,4 +45,32 @@ describe('probeModels', () => {
     expect(r.ok).toBe(true);
     expect(r.checked.some(c => c.startsWith('gemini'))).toBe(false);
   });
+
+  test('an invalid first key does not fail the probe when a later key works', async () => {
+    const byKey = {
+      bad: { status: 400, body: { error: { message: 'API key not valid. Please pass a valid API key.' } } },
+      good: { status: 200, body: { models: [{ name: 'models/gemini-3.6-flash' }, { name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-2.5-flash-lite' }] } },
+    };
+    const f = async (url) => {
+      if (url.startsWith('https://api.groq.com')) return { ok: true, status: 200, json: async () => ({ data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }, { id: 'whisper-large-v3-turbo' }] }) };
+      const k = new URL(url).searchParams.get('key');
+      const r = byKey[k];
+      return { ok: r.status === 200, status: r.status, json: async () => r.body };
+    };
+    const r = await probeModels({ fetchImpl: f, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'bad', GEMINI_API_KEY_2: 'good' } });
+    expect(r.ok).toBe(true);
+    expect(r.keys.gemini).toEqual({ total: 2, valid: 1 });
+    expect(r.errors).toEqual(['gemini key#1: API key not valid. Please pass a valid API key.']);
+    expect(JSON.stringify(r)).not.toMatch(/bad|good/);   // never echoes key material
+  });
+
+  test('all keys invalid for a provider fails the probe', async () => {
+    const f = async (url) => url.startsWith('https://api.groq.com')
+      ? { ok: false, status: 401, json: async () => ({ error: { message: 'Invalid API Key' } }) }
+      : { ok: true, status: 200, json: async () => ({ models: [] }) };
+    const r = await probeModels({ fetchImpl: f, env: { GROQ_API_KEY: 'g1', GROQ_API_KEY_2: 'g2' } });
+    expect(r.ok).toBe(false);
+    expect(r.keys.groq).toEqual({ total: 2, valid: 0 });
+    expect(r.errors).toHaveLength(2);
+  });
 });

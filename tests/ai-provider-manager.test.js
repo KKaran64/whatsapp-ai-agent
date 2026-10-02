@@ -363,6 +363,38 @@ describe('AIProviderManager - tryGroq', () => {
     const manager = new AIProviderManager({});
     await expect(manager.tryGroq('system', [], 'hello')).rejects.toThrow('No Groq API keys configured');
   });
+
+  test('rotates to next key on invalid-key error (groq-sdk error.status shape)', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GROQ_API_KEY_2: 'key2'
+    });
+
+    // groq-sdk exposes the HTTP status at error.status, not error.response.status
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(
+      Object.assign(new Error('Invalid API Key'), { status: 401 })
+    );
+    manager.groqClients[1].chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: 'Rotated response' } }]
+    });
+
+    const result = await manager.tryGroq('system', [], 'hello');
+    expect(result.response).toBe('Rotated response');
+    expect(manager.stats.groq.keyRotations).toBeGreaterThanOrEqual(1);
+  });
+
+  test('throws ALL_KEYS_INVALID when every key is rejected as invalid', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GROQ_API_KEY_2: 'key2'
+    });
+
+    const invalidKeyError = Object.assign(new Error('Invalid API Key'), { status: 401 });
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(invalidKeyError);
+    manager.groqClients[1].chat.completions.create.mockRejectedValue(invalidKeyError);
+
+    await expect(manager.tryGroq('system', [], 'hello')).rejects.toThrow('ALL_KEYS_INVALID');
+  });
 });
 
 // ─── tryGemini ───────────────────────────────────────────────────────────────
@@ -410,6 +442,34 @@ describe('AIProviderManager - tryGemini', () => {
   test('throws when no Gemini keys configured', async () => {
     const manager = new AIProviderManager({});
     await expect(manager.tryGemini('system', [], 'hello')).rejects.toThrow('No Gemini API keys configured');
+  });
+
+  test('rotates past an invalid first key (Render production scenario)', async () => {
+    const manager = new AIProviderManager({
+      GEMINI_API_KEY: 'bad',
+      GEMINI_API_KEY_2: 'good'
+    });
+
+    axios.post
+      .mockRejectedValueOnce({ response: { status: 400, data: { error: { message: 'API key not valid' } } } })
+      .mockResolvedValueOnce({
+        data: { candidates: [{ content: { parts: [{ text: 'OK' }] } }] }
+      });
+
+    const result = await manager.tryGemini('sys', [], 'hi');
+    expect(result).toEqual({ provider: 'gemini', response: 'OK' });
+    expect(manager.stats.gemini.keyRotations).toBeGreaterThanOrEqual(1);
+  });
+
+  test('throws ALL_KEYS_INVALID when every Gemini key is rejected as invalid', async () => {
+    const manager = new AIProviderManager({
+      GEMINI_API_KEY: 'bad1',
+      GEMINI_API_KEY_2: 'bad2'
+    });
+
+    axios.post.mockRejectedValue({ response: { status: 400, data: { error: { message: 'API key not valid' } } } });
+
+    await expect(manager.tryGemini('sys', [], 'hi')).rejects.toThrow('ALL_KEYS_INVALID');
   });
 
   it('uses stable gemini model, not experimental', async () => {

@@ -29,6 +29,19 @@ function requireNonEmpty(text, provider) {
   return t;
 }
 
+// Shared by tryGroq and tryGemini. A 400/401/403 whose message blames the
+// key itself (not a transient rate limit) means THIS key is dead — e.g.
+// Render's first GEMINI_API_KEY returned "API key not valid" on every
+// request while keys 2-9 worked. That used to `throw` on key #1 and never
+// try the rest. Treat it like a rate limit: rotate, don't abort.
+// groq-sdk puts the HTTP status at error.status; axios (Gemini) puts it at
+// error.response.status and the message at error.response.data.error.message.
+function isInvalidKeyError(error) {
+  const status = error.status || error.response?.status;
+  const msg = String(error.response?.data?.error?.message || error.message || '');
+  return [400, 401, 403].includes(status) && /api key|invalid.*key|unauthori[sz]ed|permission/i.test(msg);
+}
+
 class AIProviderManager {
   constructor(config) {
     this.config = config;
@@ -154,6 +167,7 @@ class AIProviderManager {
 
     const maxRetries = this.groqClients.length;
     let lastError = null;
+    let lastKeyError = null; // 'invalid' once an invalid-key rotation happens; decides the final error below
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const groqClient = this.getNextGroqClient();
@@ -194,6 +208,11 @@ class AIProviderManager {
         if (error.isEmptyCompletion) {
           console.log(`⚠️ Groq key returned empty content, trying next key...`);
           continue; // Try next key
+        } else if (isInvalidKeyError(error)) {
+          console.warn(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rejected (invalid key) — rotating`);
+          this.stats.groq.keyRotations++;
+          lastKeyError = 'invalid';
+          continue; // Try next key
         } else if (error.message?.includes('rate_limit') || error.response?.status === 429) {
           console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rate limit hit, trying next key...`);
           continue; // Try next key
@@ -210,7 +229,7 @@ class AIProviderManager {
     this.stats.groq.failures++;
     this.stats.groq.lastFailure = new Date();
     console.log('⚠️ All Groq keys rate limited');
-    throw new Error('RATE_LIMIT');
+    throw new Error(lastKeyError === 'invalid' ? 'ALL_KEYS_INVALID' : 'RATE_LIMIT');
   }
 
   // Get next Gemini key (round-robin rotation)
@@ -232,6 +251,7 @@ class AIProviderManager {
 
     const maxRetries = this.geminiKeys.length;
     let lastError = null;
+    let lastKeyError = null; // 'invalid' once an invalid-key rotation happens; decides the final error below
 
     // Build conversation for Gemini (once, reuse for retries)
     const conversationText = conversationHistory
@@ -271,7 +291,12 @@ class AIProviderManager {
         console.error('Error response:', error.response?.data || error.response || 'No response data');
         console.error('Error status:', error.response?.status || 'No status');
 
-        if (error.response?.status === 429) {
+        if (isInvalidKeyError(error)) {
+          console.warn(`⚠️ Gemini key ${this.currentGeminiIndex || this.geminiKeys.length} rejected (invalid key) — rotating`);
+          this.stats.gemini.keyRotations++;
+          lastKeyError = 'invalid';
+          continue; // Try next key
+        } else if (error.response?.status === 429) {
           console.log(`⚠️ Gemini key ${this.currentGeminiIndex || this.geminiKeys.length} rate limit hit, trying next key...`);
           continue; // Try next key
         } else {
@@ -287,7 +312,7 @@ class AIProviderManager {
     this.stats.gemini.failures++;
     this.stats.gemini.lastFailure = new Date();
     console.log('⚠️ All Gemini keys rate limited');
-    throw new Error('RATE_LIMIT');
+    throw new Error(lastKeyError === 'invalid' ? 'ALL_KEYS_INVALID' : 'RATE_LIMIT');
   }
 
   // Try Anthropic Claude (TERTIARY - Paid but most reliable)
