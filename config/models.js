@@ -45,11 +45,29 @@ function reasoningParams(modelId) {
   return supportsReasoningEffort(modelId) ? { reasoning_effort: 'low' } : {};
 }
 
+// Single source of truth for which Groq key env vars exist. Render can carry
+// up to 10 (pricing/groq-client.js::collectGroqKeys() already scans this
+// range from process.env); ai-provider-manager.js, router-agent.js and
+// responder-agent.js each used to hardcode only GROQ_API_KEY.._4, silently
+// ignoring keys 5-10 that scripts/probe-models.js already checks. Takes a
+// config object (not process.env) so callers that build keys from a passed-in
+// config (and tests that inject fake keys) keep working unchanged.
+function collectGroqKeys(config) {
+  const keys = [];
+  if (config.GROQ_API_KEY) keys.push(config.GROQ_API_KEY);
+  for (let i = 2; i <= 10; i++) {
+    const key = config[`GROQ_API_KEY_${i}`];
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
 module.exports = {
   MODELS,
   TOKEN_BUDGETS,
   reasoningParams,
   supportsReasoningEffort,
+  collectGroqKeys,
   GROQ_MODELS_URL: 'https://api.groq.com/openai/v1/models',
   GEMINI_MODELS_URL: 'https://generativelanguage.googleapis.com/v1beta/models',
   ANTHROPIC_MODELS_URL: 'https://api.anthropic.com/v1/models',

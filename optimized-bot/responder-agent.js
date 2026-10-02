@@ -12,7 +12,7 @@
  */
 
 const Groq = require('groq-sdk');
-const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('../config/models');
+const { MODELS, TOKEN_BUDGETS, reasoningParams, collectGroqKeys } = require('../config/models');
 
 // Node-specific response templates and prompts
 const NODE_TEMPLATES = {
@@ -84,12 +84,9 @@ Current context:`;
 
 class ResponderAgent {
   constructor(config) {
-    // Initialize Groq clients
-    this.groqKeys = [];
-    if (config.GROQ_API_KEY) this.groqKeys.push(config.GROQ_API_KEY);
-    if (config.GROQ_API_KEY_2) this.groqKeys.push(config.GROQ_API_KEY_2);
-    if (config.GROQ_API_KEY_3) this.groqKeys.push(config.GROQ_API_KEY_3);
-    if (config.GROQ_API_KEY_4) this.groqKeys.push(config.GROQ_API_KEY_4);
+    // Initialize Groq clients (up to 10 keys — see
+    // config/models.js::collectGroqKeys)
+    this.groqKeys = collectGroqKeys(config);
 
     this.groqClients = this.groqKeys.map(key => new Groq({ apiKey: key }));
     this.currentKeyIndex = 0;

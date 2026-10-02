@@ -395,6 +395,37 @@ describe('AIProviderManager - tryGroq', () => {
 
     await expect(manager.tryGroq('system', [], 'hello')).rejects.toThrow('ALL_KEYS_INVALID');
   });
+
+  test('key #1 invalid then key #2 (last) rate-limited rejects with RATE_LIMIT, not ALL_KEYS_INVALID', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GROQ_API_KEY_2: 'key2'
+    });
+
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(
+      Object.assign(new Error('Invalid API Key'), { status: 401 })
+    );
+    manager.groqClients[1].chat.completions.create.mockRejectedValue(
+      Object.assign(new Error('rate_limit'), { response: { status: 429 } })
+    );
+
+    await expect(manager.tryGroq('system', [], 'hello')).rejects.toThrow('RATE_LIMIT');
+  });
+
+  test('a 400 whose message does not blame the key throws immediately, no rotation', async () => {
+    const manager = new AIProviderManager({
+      GROQ_API_KEY: 'key1',
+      GROQ_API_KEY_2: 'key2'
+    });
+
+    manager.groqClients[0].chat.completions.create.mockRejectedValue(
+      Object.assign(new Error('Bad request: messages must not be empty'), { status: 400 })
+    );
+
+    await expect(manager.tryGroq('system', [], 'hello')).rejects.toThrow('Bad request: messages must not be empty');
+    expect(manager.groqClients[1].chat.completions.create).not.toHaveBeenCalled();
+    expect(manager.stats.groq.keyRotations).toBe(0);
+  });
 });
 
 // ─── tryGemini ───────────────────────────────────────────────────────────────
@@ -470,6 +501,40 @@ describe('AIProviderManager - tryGemini', () => {
     axios.post.mockRejectedValue({ response: { status: 400, data: { error: { message: 'API key not valid' } } } });
 
     await expect(manager.tryGemini('sys', [], 'hi')).rejects.toThrow('ALL_KEYS_INVALID');
+  });
+
+  test('key #1 invalid then key #2 (last) rate-limited rejects with RATE_LIMIT, not ALL_KEYS_INVALID', async () => {
+    const manager = new AIProviderManager({
+      GEMINI_API_KEY: 'bad',
+      GEMINI_API_KEY_2: 'gem2'
+    });
+
+    axios.post
+      .mockRejectedValueOnce({ response: { status: 400, data: { error: { message: 'API key not valid' } } } })
+      .mockRejectedValueOnce({ response: { status: 429 }, message: 'rate limit' });
+
+    await expect(manager.tryGemini('sys', [], 'hi')).rejects.toThrow('RATE_LIMIT');
+  });
+
+  test('a 400 whose message does not blame the key throws immediately, no rotation', async () => {
+    const manager = new AIProviderManager({
+      GEMINI_API_KEY: 'gem1',
+      GEMINI_API_KEY_2: 'gem2'
+    });
+
+    axios.post.mockRejectedValueOnce({
+      response: { status: 400, data: { error: { message: 'Bad request: messages must not be empty' } } }
+    });
+    const callsBefore = axios.post.mock.calls.length;
+
+    await expect(manager.tryGemini('sys', [], 'hi')).rejects.toMatchObject({
+      response: { data: { error: { message: 'Bad request: messages must not be empty' } } }
+    });
+    // axios.post is a module-level mock shared across every test in this file
+    // (no clearMocks), so assert the call count RELATIVE to this test's start
+    // rather than an absolute total.
+    expect(axios.post.mock.calls.length - callsBefore).toBe(1);
+    expect(manager.stats.gemini.keyRotations).toBe(0);
   });
 
   it('uses stable gemini model, not experimental', async () => {

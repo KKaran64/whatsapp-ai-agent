@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { MODELS, TOKEN_BUDGETS, reasoningParams, supportsReasoningEffort } = require('../config/models');
+const { MODELS, TOKEN_BUDGETS, reasoningParams, supportsReasoningEffort, collectGroqKeys } = require('../config/models');
 
 const CALL_SITES = [
   'ai-provider-manager.js',
@@ -56,5 +56,30 @@ describe('config/models', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     const stripped = src.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
     expect(stripped).not.toMatch(MODEL_ID_RE);
+  });
+
+  describe('collectGroqKeys', () => {
+    test('collects GROQ_API_KEY alone', () => {
+      expect(collectGroqKeys({ GROQ_API_KEY: 'k1' })).toEqual(['k1']);
+    });
+
+    test('collects GROQ_API_KEY through GROQ_API_KEY_10', () => {
+      const config = { GROQ_API_KEY: 'k1' };
+      for (let i = 2; i <= 10; i++) config[`GROQ_API_KEY_${i}`] = `k${i}`;
+      expect(collectGroqKeys(config)).toEqual(['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9', 'k10']);
+    });
+
+    test('ignores GROQ_API_KEY_11 and beyond', () => {
+      const config = { GROQ_API_KEY: 'k1', GROQ_API_KEY_11: 'k11' };
+      expect(collectGroqKeys(config)).toEqual(['k1']);
+    });
+
+    test('returns empty array when no keys configured', () => {
+      expect(collectGroqKeys({})).toEqual([]);
+    });
+
+    test('skips gaps (e.g. no GROQ_API_KEY_2 but a GROQ_API_KEY_3)', () => {
+      expect(collectGroqKeys({ GROQ_API_KEY: 'k1', GROQ_API_KEY_3: 'k3' })).toEqual(['k1', 'k3']);
+    });
   });
 });

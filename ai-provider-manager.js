@@ -5,7 +5,7 @@ const Groq = require('groq-sdk');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 const crypto = require('crypto');
-const { MODELS, TOKEN_BUDGETS, reasoningParams } = require('./config/models');
+const { MODELS, TOKEN_BUDGETS, reasoningParams, collectGroqKeys } = require('./config/models');
 
 
 // An empty completion is a FAILURE, not an answer.
@@ -46,12 +46,9 @@ class AIProviderManager {
   constructor(config) {
     this.config = config;
 
-    // Initialize Groq with multiple keys support (up to 4 keys)
-    this.groqKeys = [];
-    if (config.GROQ_API_KEY) this.groqKeys.push(config.GROQ_API_KEY);
-    if (config.GROQ_API_KEY_2) this.groqKeys.push(config.GROQ_API_KEY_2);
-    if (config.GROQ_API_KEY_3) this.groqKeys.push(config.GROQ_API_KEY_3);
-    if (config.GROQ_API_KEY_4) this.groqKeys.push(config.GROQ_API_KEY_4);
+    // Initialize Groq with multiple keys support (up to 10 keys, same range
+    // scripts/probe-models.js checks and pricing/groq-client.js already uses)
+    this.groqKeys = collectGroqKeys(config);
 
     // 30s timeout: a hung provider call holds the per-phone processing lock
     // and stalls that customer's entire message queue. maxRetries 0 because
@@ -167,7 +164,7 @@ class AIProviderManager {
 
     const maxRetries = this.groqClients.length;
     let lastError = null;
-    let lastKeyError = null; // 'invalid' once an invalid-key rotation happens; decides the final error below
+    let lastKeyError = null; // reason the MOST RECENT key failed ('invalid' | 'rate' | 'empty'); decides the final error below
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const groqClient = this.getNextGroqClient();
@@ -207,6 +204,7 @@ class AIProviderManager {
 
         if (error.isEmptyCompletion) {
           console.log(`⚠️ Groq key returned empty content, trying next key...`);
+          lastKeyError = 'empty';
           continue; // Try next key
         } else if (isInvalidKeyError(error)) {
           console.warn(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rejected (invalid key) — rotating`);
@@ -215,6 +213,7 @@ class AIProviderManager {
           continue; // Try next key
         } else if (error.message?.includes('rate_limit') || error.response?.status === 429) {
           console.log(`⚠️ Groq key ${this.currentGroqIndex || this.groqClients.length} rate limit hit, trying next key...`);
+          lastKeyError = 'rate';
           continue; // Try next key
         } else {
           // Non-rate-limit error, don't retry
@@ -251,7 +250,7 @@ class AIProviderManager {
 
     const maxRetries = this.geminiKeys.length;
     let lastError = null;
-    let lastKeyError = null; // 'invalid' once an invalid-key rotation happens; decides the final error below
+    let lastKeyError = null; // reason the MOST RECENT key failed ('invalid' | 'rate'); decides the final error below
 
     // Build conversation for Gemini (once, reuse for retries)
     const conversationText = conversationHistory
@@ -298,6 +297,7 @@ class AIProviderManager {
           continue; // Try next key
         } else if (error.response?.status === 429) {
           console.log(`⚠️ Gemini key ${this.currentGeminiIndex || this.geminiKeys.length} rate limit hit, trying next key...`);
+          lastKeyError = 'rate';
           continue; // Try next key
         } else {
           // Non-rate-limit error, don't retry
