@@ -2,16 +2,37 @@ const fs = require('fs');
 const path = require('path');
 const { MODELS, TOKEN_BUDGETS, reasoningParams, supportsReasoningEffort, collectGroqKeys } = require('../config/models');
 
-const CALL_SITES = [
-  'ai-provider-manager.js',
-  'optimized-bot/router-agent.js',
-  'optimized-bot/responder-agent.js',
-  'pricing/groq-client.js',
-  'rag/classifier.js',
-  'scripts/weekly-cron.js',
-  'pricing/vision-identifier.js',
-  'audio-handler.js',
-];
+// Walk the whole repo instead of a hand-maintained call-site list. A
+// hand-maintained list silently stops covering new files — that's exactly
+// how 8 root-level dev scripts (test-ai-providers.js, rotate-keys.js, etc.)
+// drifted to retired model ids unnoticed: none of them were ever added to
+// this list. Excluded: node_modules/.claude/coverage/.git (not source we
+// own), config/models.js itself (the one legitimate home for a literal
+// model id), and tests/ (fixtures and mocks legitimately embed real-looking
+// ids — e.g. logger.test.js logs an arbitrary model string, and
+// probe-models.test.js/server.test.js mirror current MODELS values inside
+// mock HTTP responses; neither ever makes a real API call, so neither can
+// 404 on a retired id).
+const ROOT_DIR = path.join(__dirname, '..');
+const EXCLUDED_DIR_NAMES = new Set(['node_modules', '.claude', 'coverage', '.git', 'tests']);
+const MODELS_JS_PATH = path.join(ROOT_DIR, 'config', 'models.js');
+
+function collectJsFiles(dir, acc = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectJsFiles(full, acc);
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      acc.push(full);
+    }
+  }
+  return acc;
+}
+
+const CALL_SITES = collectJsFiles(ROOT_DIR)
+  .filter((f) => f !== MODELS_JS_PATH)
+  .map((f) => path.relative(ROOT_DIR, f));
 // Any literal that looks like a model id. compound/llama are retired; the
 // others must come from config/models.js, never be typed at a call site.
 // Must also catch an id embedded in a URL (e.g. a Gemini REST endpoint
@@ -30,7 +51,7 @@ const MODEL_ID_RE = /(^|[^\w.-])(groq\/compound[\w./-]*|llama-[\w./-]+|openai\/g
 
 describe('config/models', () => {
   test('exports every model slot as a non-empty string', () => {
-    for (const k of ['GROQ_CHAT', 'GROQ_FAST', 'GROQ_JSON', 'GEMINI_CHAT', 'GEMINI_VISION', 'GEMINI_VISION_LITE', 'GROQ_WHISPER', 'CLAUDE_FALLBACK']) {
+    for (const k of Object.keys(MODELS)) {
       expect(typeof MODELS[k]).toBe('string');
       expect(MODELS[k].length).toBeGreaterThan(3);
     }
@@ -65,7 +86,7 @@ describe('config/models', () => {
   });
 
   test.each(CALL_SITES)('%s has no hardcoded model id', (file) => {
-    const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    const src = fs.readFileSync(path.join(ROOT_DIR, file), 'utf8');
     // Strip line comments without eating `https://` (or any `//`) inside a
     // string literal — a bare `.replace(/\/\/.*$/gm, '')` ate everything
     // after the first `//` in a URL literal, hiding a model id embedded

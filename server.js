@@ -501,12 +501,19 @@ function validateRequiredEnvVars() {
 validateRequiredEnvVars();
 
 // Initialize Multi-Provider AI Manager (Groq -> Gemini -> Claude -> rule-based fallback)
+// Counts, not a per-key SET/NOT-SET map — CONFIG now carries GROQ_API_KEY_2.._10
+// and GEMINI_API_KEY_2.._20 (see EXTRA_GROQ_KEYS/EXTRA_GEMINI_KEYS above), and a
+// per-slot map would leak exactly which numbered slots hold a value.
+function countConfiguredKeys(baseKey, maxSuffix) {
+  let count = CONFIG[baseKey] ? 1 : 0;
+  for (let i = 2; i <= maxSuffix; i++) {
+    if (CONFIG[`${baseKey}_${i}`]) count++;
+  }
+  return count;
+}
 console.log('🔧 Initializing AI Manager with environment variables:');
-console.log(`  - GROQ_API_KEY: ${CONFIG.GROQ_API_KEY ? 'SET (key 1)' : 'NOT SET'}`);
-console.log(`  - GROQ_API_KEY_2: ${process.env.GROQ_API_KEY_2 ? 'SET (key 2)' : 'NOT SET'}`);
-console.log(`  - GROQ_API_KEY_3: ${process.env.GROQ_API_KEY_3 ? 'SET (key 3)' : 'NOT SET'}`);
-console.log(`  - GROQ_API_KEY_4: ${process.env.GROQ_API_KEY_4 ? 'SET (key 4)' : 'NOT SET'}`);
-console.log(`  - GEMINI_API_KEY: ${CONFIG.GEMINI_API_KEY ? 'SET' : 'NOT SET'}`);
+console.log(`  - Groq keys configured: ${countConfiguredKeys('GROQ_API_KEY', 10)} (of GROQ_API_KEY, _2.._10)`);
+console.log(`  - Gemini keys configured: ${countConfiguredKeys('GEMINI_API_KEY', 20)} (of GEMINI_API_KEY, _2.._20)`);
 console.log(`  - ANTHROPIC_API_KEY: ${CONFIG.ANTHROPIC_API_KEY ? 'SET' : 'NOT SET'}`);
 
 // Pass CONFIG through directly — it now carries GROQ_API_KEY.._10 and

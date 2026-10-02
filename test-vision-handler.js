@@ -1,5 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
+const { MODELS } = require('./config/models');
 
 // Test the vision handler fixes (v53.38)
 async function testVisionHandler() {
@@ -55,17 +56,14 @@ async function testVisionHandler() {
   }
 
   // Test 3: Check Gemini API endpoint is correct (stable model)
-  console.log('\n📋 Test 3: Gemini uses stable model (gemini-1.5-flash)');
+  console.log(`\n📋 Test 3: Gemini uses stable model (${MODELS.GEMINI_VISION})`);
   try {
     const fs = require('fs');
     const visionCode = fs.readFileSync('./vision-handler.js', 'utf8');
 
-    if (visionCode.includes('gemini-2.0-flash:generateContent')) {
-      console.log('   ✅ Using stable gemini-2.0-flash model');
+    if (visionCode.includes(`${MODELS.GEMINI_VISION}:generateContent`)) {
+      console.log(`   ✅ Using stable ${MODELS.GEMINI_VISION} model`);
       results.passed++;
-    } else if (visionCode.includes('gemini-2.0-flash-exp')) {
-      console.log('   ❌ Still using experimental model');
-      results.failed++;
     } else {
       console.log('   ⚠️  Model endpoint not found');
       results.failed++;
@@ -135,7 +133,7 @@ async function testVisionHandler() {
       console.log('   🔄 Testing Gemini Vision with tiny test image...');
 
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1/models/${MODELS.GEMINI_VISION}:generateContent?key=${geminiKey}`,
         {
           contents: [{
             parts: [

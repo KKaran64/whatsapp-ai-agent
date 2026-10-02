@@ -2,6 +2,7 @@
 require('dotenv').config();
 const Groq = require('groq-sdk');
 const axios = require('axios');
+const { MODELS } = require('./config/models');
 
 async function testGroq() {
   console.log('\n🔵 Testing Groq API...');
@@ -10,7 +11,7 @@ async function testGroq() {
   try {
     const completion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: 'Say "Groq works!"' }],
-      model: 'llama-3.3-70b-versatile',
+      model: MODELS.GROQ_CHAT,
       max_tokens: 10
     });
     console.log('✅ Groq Response:', completion.choices[0].message.content);
@@ -27,7 +28,7 @@ async function testGemini() {
 
   try {
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_CHAT}:generateContent?key=${apiKey}`,
       {
         contents: [{
           parts: [{ text: 'Say "Gemini works!"' }]

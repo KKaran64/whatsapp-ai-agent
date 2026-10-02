@@ -788,7 +788,13 @@ describe('Server - Health Endpoint', () => {
     await server.runModelProbe();
   });
 
-  test('GET /health stays 200/ok when only a vision-only slot is missing', async () => {
+  // Pins the chatPathUsable gate against vision-only regressions: `missing`
+  // contains ONLY a vision slot (gemini:GEMINI_VISION_LITE) while every chat
+  // slot is present and every provider's keys are valid, so the bot can
+  // still serve a chat reply. /health must stay a 200 (never 503 — the
+  // gate's whole point), but modelProbeStatus.ok is still false, so the
+  // body's `status` is 'degraded', not 'ok'.
+  test('GET /health stays 200/degraded when only a vision-only slot is missing', async () => {
     mockProbeModels.mockResolvedValueOnce({
       ok: false,
       missing: ['gemini:GEMINI_VISION_LITE=gemini-2.5-flash-lite'],
@@ -801,6 +807,8 @@ describe('Server - Health Endpoint', () => {
 
     const res = await supertest(server.app).get('/health');
     expect(res.status).toBe(200);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.models.missing).toEqual(['gemini:GEMINI_VISION_LITE=gemini-2.5-flash-lite']);
 
     mockProbeModels.mockResolvedValueOnce({
       ok: true, missing: [], checked: [], errors: [], checkedAt: new Date().toISOString()

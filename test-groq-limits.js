@@ -1,6 +1,7 @@
 // Test script to verify Groq API tier and token limits
 require('dotenv').config();
 const Groq = require('groq-sdk');
+const { MODELS } = require('./config/models');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -15,7 +16,7 @@ async function testTokenLimits() {
         { role: 'system', content: 'You are a helpful assistant.' },
         { role: 'user', content: 'Say hello' }
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: MODELS.GROQ_CHAT,
       max_tokens: 100
     });
     console.log('✅ Small request succeeded');
@@ -68,7 +69,7 @@ Respond with a greeting.`.repeat(4); // Repeat to make it larger
         { role: 'system', content: mediumPrompt },
         { role: 'user', content: 'Hi' }
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: MODELS.GROQ_CHAT,
       max_tokens: 100
     });
     console.log('✅ Medium request succeeded (~8k tokens)');
@@ -93,7 +94,7 @@ Respond with a greeting.`.repeat(4); // Repeat to make it larger
         { role: 'system', content: largePrompt },
         { role: 'user', content: 'Hi' }
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: MODELS.GROQ_CHAT,
       max_tokens: 100
     });
     console.log('✅ Large request succeeded (~20k tokens)');

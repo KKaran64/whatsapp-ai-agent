@@ -1,5 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
+const { MODELS } = require('./config/models');
 
 const testGemini = async () => {
   console.log('🧪 Testing Gemini API directly...\n');
@@ -9,7 +10,7 @@ const testGemini = async () => {
 
   try {
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1/models/${MODELS.GEMINI_CHAT}:generateContent?key=${apiKey}`,
       {
         contents: [{
           parts: [{

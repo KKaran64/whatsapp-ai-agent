@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const axios = require('axios');
+const { MODELS } = require('./config/models');
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -99,7 +100,7 @@ async function validateGroqKey(apiKey) {
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
-        model: 'llama-3.3-70b-versatile',
+        model: MODELS.GROQ_CHAT,
         messages: [{ role: 'user', content: 'test' }],
         max_tokens: 1
       },

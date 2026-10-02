@@ -1,5 +1,6 @@
 require('dotenv').config();
 const Anthropic = require('@anthropic-ai/sdk');
+const { MODELS } = require('./config/models');
 
 const testClaudeAPI = async () => {
   console.log('🧪 Testing Claude API...\n');
@@ -8,7 +9,7 @@ const testClaudeAPI = async () => {
 
   try {
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+      model: MODELS.CLAUDE_FALLBACK,
       max_tokens: 100,
       messages: [{
         role: 'user',

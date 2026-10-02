@@ -10,6 +10,7 @@
 require('dotenv').config();
 const Groq = require('groq-sdk');
 const readline = require('readline');
+const { MODELS } = require('./config/models');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -402,7 +403,7 @@ async function getAIResponse(userMessage) {
 
     // Call Groq API
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: MODELS.GROQ_CHAT,
       messages: messages,
       temperature: 0.7,
       max_tokens: 500,
