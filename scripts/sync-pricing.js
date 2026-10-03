@@ -117,8 +117,16 @@ function parseHoreca(rows) {
   return products;
 }
 
-// Parse general catalogue sheet
-// Columns: PRODUCT NAME, DIMENSION, PRICE FOR 100-200 MOQ
+// Parse general catalogue sheet.
+// Columns: PRODUCT NAME | DIMENSION | col C | col D
+//
+// Both price columns carry the identical header ("PRICE FOR 100 - 200 MOQ"),
+// which is why this read the wrong one for so long. Owner confirmed 2026-10-03:
+//   col C = the 40%-discounted trade rate   (consistently 0.60 x col D)
+//   col D = THE LIST PRICE                  <- the only price the system takes
+// Discounts are applied downstream by the reseller slabs in pricing/
+// quote-engine.js, so feeding the pre-discounted column in meant discounting
+// twice and quoting ~60% of list to every customer, retail included.
 function parseCatalogue(rows) {
   const products = [];
   let currentCategory = '';
@@ -128,18 +136,21 @@ function parseCatalogue(rows) {
       if (row[0] && row[0].toLowerCase().includes('product name')) headerSeen = true;
       continue;
     }
-    const [name, dimension, price] = row;
+    const [name, dimension, tradePrice, listPrice] = row;
     if (!name) continue;
     // Category headers have no dimension or price
-    if (!dimension && !price && name) {
+    if (!dimension && !tradePrice && !listPrice && name) {
       currentCategory = name.trim();
       continue;
     }
+    // List price only. Fall back to col C if col D is blank so a half-filled
+    // row still yields a product rather than vanishing, but never prefer it.
+    const list = parsePrice(listPrice);
     products.push({
       name: name.trim(),
       dimension: (dimension || '').trim(),
       category: currentCategory,
-      price: parsePrice(price)
+      price: list != null ? list : parsePrice(tradePrice)
     });
   }
   return products;
