@@ -73,14 +73,14 @@ function buildCatalogSection() {
     data.horeca,
     p => p.name,
     p => p.category,
-    '🍽️ HORECA & wholesale catalog products:'
+    '🟤 Gifting catalogue products:'
   );
 
   const catalogue = formatNamesByCategory(
     data.catalogue,
     p => p.name,
     p => p.category,
-    '🟤 Gifting catalogue products:'
+    '🍽️ HORECA & wholesale catalog products:'
   );
 
   const trophies = (data.trophies || []).length > 0

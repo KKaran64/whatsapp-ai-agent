@@ -13,6 +13,18 @@ const axios = require('axios');
 const OUTPUT_FILE = path.join(__dirname, '..', 'data', 'pricing.json');
 
 // Google Sheet IDs (from share links)
+// ⚠️ THE SECTION NAMES BELOW DO NOT MATCH THEIR CONTENTS.
+// Verified 2026-10-03 against the live sheets and confirmed with the owner:
+//   catalogue <- "HORECA CATALOUGE PRICE LIST 2026"  (bar caddies, menu/bill
+//                folders, QR scanners, room tags, ice chillers)  = HORECA
+//   horeca    <- "PRODUCTS PRICE LIST 2026"          (general cork goods with
+//                9C-* product ids)                   = GIFTING / general range
+// The PARSERS are correctly matched to each sheet's column shape, so the ids
+// must NOT be swapped — doing so breaks parsing. The names are kept as-is
+// because 39 references across 13 files depend on them and this bot is being
+// retired; every place that makes a DECISION on the name has been corrected
+// and points back here. The replacement system imports with the correct
+// product_line from day one.
 const SHEETS = {
   catalogue: '19mA0s2VYAyiDCJ0M-7VgvXXnSQbUk31HQa4U3sMw6HY',  // Cork Gifting Catalogue
   combos:    '1Dxk9QnniE6WDASj2SBTdfesqYY7knpyfRzZUwTDMuwE',  // Cork Combo Price List
