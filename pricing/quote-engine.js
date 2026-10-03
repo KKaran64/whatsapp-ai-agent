@@ -74,7 +74,12 @@ const BRANDING_OPTIONS = {
 
 // Pen-specific restriction: only laser allowed. Same holder/station guard as
 // the GST pattern — a PEN HOLDER is flat cork, all branding techniques work.
-const PEN_PATTERNS = [/\bpens?\b(?!\s*(?:holders?|stations?|stands?|&|and\b))/i];
+// The lookahead already spares PEN HOLDER / PEN STAND (flat cork — every
+// technique works). The lookbehind spares a product whose name NEGATES the
+// pen: "EXECUTIVE DIARY (WITHOUT PEN)" is a diary, and was being restricted
+// to laser-only because the bare word matched. A customer asking for
+// single-colour printing on it was told it is not possible.
+const PEN_PATTERNS = [/(?<!\b(?:without|no|sans|w\/o)\s)\bpens?\b(?!\s*(?:holders?|stations?|stands?|&|and\b))/i];
 function isProductPen(productName) {
   return PEN_PATTERNS.some(re => re.test(productName));
 }

@@ -59,3 +59,29 @@ describe('an exact name beats a token-subset match', () => {
     expect(wrong).toEqual([]);
   });
 });
+
+describe('the pen branding restriction fires on pens, not on the word "pen"', () => {
+  const { BRANDING_OPTIONS } = require('../pricing/quote-engine');
+  const allowedFor = name => Object.keys(BRANDING_OPTIONS).filter(b =>
+    computeQuote({ productQuery: name, quantity: 100, customerType: 'reseller', branding: b }).found);
+
+  test('a diary sold WITHOUT a pen is not a pen', () => {
+    // The bare word matched inside "(WITHOUT PEN)", restricting a diary to
+    // laser only — a customer asking for single-colour print was refused.
+    const allowed = allowedFor('EXECUTIVE DIARY (WITHOUT PEN)');
+    if (allowed.length === 0) return; // catalog drift guard
+    expect(allowed).toEqual(expect.arrayContaining(['single-color', 'pad-printing', 'multi-color']));
+  });
+
+  test('a pen holder is flat cork — every technique still works', () => {
+    const allowed = allowedFor('CORK PEN HOLDER');
+    if (allowed.length === 0) return;
+    expect(allowed).toEqual(expect.arrayContaining(['single-color', 'laser']));
+  });
+
+  test('an ordinary diary is unaffected', () => {
+    const allowed = allowedFor('ECODESK DIARY A5');
+    if (allowed.length === 0) return;
+    expect(allowed.length).toBeGreaterThan(1);
+  });
+});
