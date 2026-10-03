@@ -135,15 +135,28 @@ function scoreMatch(productName, query) {
   const pname = productName.toLowerCase();
   const q = query.toLowerCase().trim();
   if (!q) return 0;
-  if (pname === q) return 100;
+  // Exact name match must OUTRANK a token-subset match, not tie with it. The
+  // formula below also tops out at 100, so "NATURAL CORK PLANTER" (the exact
+  // product, 400) and "NATURAL PLANTER" (a different product, 650, which wins
+  // on tokens once the stop word "cork" is dropped) both scored 100 and the
+  // sort decided. The customer was quoted 650 for a 400 product.
+  if (pname === q) return 110;
 
+  // A single DIGIT is a variant identifier, not noise. Dropping it (the old
+  // `length >= 2` filter) made "BAR CADDY 6" and "BAR CADDY 1" both reduce to
+  // {bar, caddy}: identical scores, and the sort handed back whichever came
+  // first. A customer asking for BAR CADDY 6 (list 800) was quoted BAR CADDY 1
+  // (list 550). 26 products were affected — every variant numbered 1-9 across
+  // bar caddies, room tags, mirrors and tablemats. Numbers 10+ were unaffected
+  // because two characters survived the filter, which is why this went unseen.
+  const keep = t => t.length >= 2 || /^\d$/.test(t);
   const pTokens = new Set(
     pname.split(/[\s/&\-,.]+/)
-      .filter(t => t.length >= 2)
+      .filter(keep)
       .map(stem)
   );
   const qTokens = q.split(/[\s/&\-,.]+/)
-    .filter(t => t.length >= 2 && !STOP_WORDS.has(t))
+    .filter(t => keep(t) && !STOP_WORDS.has(t))
     .map(stem);
 
   if (qTokens.length === 0) return 0;
