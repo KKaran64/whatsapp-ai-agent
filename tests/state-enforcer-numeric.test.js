@@ -117,18 +117,31 @@ describe('packaging figures', () => {
     packaging: 'individual_boxes'
   });
 
-  test('box rate and box subtotal are allowed amounts', () => {
+  // Policy changed 2026-10-03: individual packing is never priced. The quote
+  // therefore carries no box figures, so EVERY box price is fabricated and the
+  // guard must block it — previously only a wrong one was blocked.
+  test('the quote carries no box figures to quote from', () => {
     expect(boxedQuote.found).toBe(true);
-    expect(boxedQuote.packaging.applied).toBe(true);
-    const reply = `For ${boxedQuote.quantity} ${boxedQuote.product.name}: ₹${boxedQuote.perPiece} per piece. Individual boxes: ₹${boxedQuote.packaging.ratePerPc} per piece (₹${boxedQuote.packaging.subtotalEx.toLocaleString('en-IN')} for boxes). Total ₹${boxedQuote.grandTotal.toLocaleString('en-IN')} incl. GST.`;
-    const result = enforce(QUOTE_PRESENTED_STATE, reply, { quote: boxedQuote });
-    expect(result.allowed).toBe(true);
+    expect(boxedQuote.packaging.applied).toBe(false);
+    expect(boxedQuote.packaging.needsConfirmation).toBe(true);
+    expect(boxedQuote.packaging.ratePerPc).toBeUndefined();
   });
 
-  test('a fabricated box rate is blocked', () => {
-    const reply = `Individual boxes are just ₹15 per piece extra!`;
+  test('any box rate is blocked, not just a wrong one', () => {
+    for (const reply of [
+      `Individual boxes are just ₹15 per piece extra!`,
+      `Individual boxes: ₹10 per piece.`,
+      `Boxes add ₹4,000 to the order.`
+    ]) {
+      const result = enforce(QUOTE_PRESENTED_STATE, reply, { quote: boxedQuote });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('fabricated_amount');
+    }
+  });
+
+  test('promising to confirm individual packing is allowed', () => {
+    const reply = `For ${boxedQuote.quantity} ${boxedQuote.product.name}: ₹${boxedQuote.perPiece} per piece. Total ₹${boxedQuote.grandTotal.toLocaleString('en-IN')} incl. GST. Goods ship shrink-wrapped in a master carton; I'll check on individual packing and confirm.`;
     const result = enforce(QUOTE_PRESENTED_STATE, reply, { quote: boxedQuote });
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('fabricated_amount');
+    expect(result.allowed).toBe(true);
   });
 });

@@ -58,12 +58,19 @@ const BRANDING_OPTIONS = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// Individual-box packaging (2026-07-06 spec): corrugated brown pizza box,
-// ₹10/pc + 5% GST — only for catalogue-section products under ₹500/pc
-// (post-discount), and only when the customer requests individual boxes.
-// HORECA / trophies / combos: no charge (box included / standard packing).
+// Packaging (owner decision, 2026-10-03). There is NO individual-box charge.
+// Standard for all bulk orders: shrink-wrapped, packed in a master carton.
+// If a customer wants individual packaging we do NOT quote a price — the bot
+// says we will check and confirm, and a human prices it.
+//
+// The previous rule charged ₹10/pc + 5% GST for "catalogue-section products
+// under ₹500/pc" and exempted HORECA. It keyed on the pricing.json section
+// name, which is inverted (see scripts/sync-pricing.js header), so the charge
+// landed on HORECA buyers — the exact group it was meant to exempt. It was
+// removed rather than re-keyed: the two sheets overlap and read as MOQ tiers
+// for the same goods, so "which sheet" could never answer "is this a gifting
+// order". Quoting nothing beats quoting the wrong number.
 // ─────────────────────────────────────────────────────────────────────
-const PACKAGING_BOX = { ratePerPc: 10, gstRate: 0.05, thresholdPerPiece: 500 };
 
 // Pen-specific restriction: only laser allowed. Same holder/station guard as
 // the GST pattern — a PEN HOLDER is flat cork, all branding techniques work.
@@ -313,21 +320,9 @@ function computeQuote({ productQuery, quantity, customerType, branding, refineme
   let packagingSubtotalEx = 0;
   let packagingGst = 0;
   if (packaging === 'individual_boxes') {
-    const eligible = top.source === 'catalogue' && perPiece < PACKAGING_BOX.thresholdPerPiece;
-    if (eligible) {
-      packagingSubtotalEx = PACKAGING_BOX.ratePerPc * quantity;
-      packagingGst = Math.round(packagingSubtotalEx * PACKAGING_BOX.gstRate);
-      packagingDetail = {
-        key: 'individual_boxes',
-        ratePerPc: PACKAGING_BOX.ratePerPc,
-        subtotalEx: packagingSubtotalEx,
-        gst: packagingGst,
-        applied: true
-      };
-    } else {
-      // Requested but not chargeable — box included / standard packing.
-      packagingDetail = { key: 'individual_boxes', applied: false };
-    }
+    // Never priced here. The quote stays a product+branding quote and the bot
+    // tells the customer we will check and confirm individual packaging.
+    packagingDetail = { key: 'individual_boxes', applied: false, needsConfirmation: true };
   }
 
   const subtotalEx = productSubtotalEx + brandingSubtotalEx + packagingSubtotalEx;
@@ -372,8 +367,8 @@ function formatQuoteForCustomer(quote) {
       lines.push(`Branding setup: ₹${quote.branding.setupFee} flat.`);
     }
   }
-  if (quote.packaging && quote.packaging.applied) {
-    lines.push(`Individual boxes: ₹${quote.packaging.ratePerPc} per piece.`);
+  if (quote.packaging && quote.packaging.needsConfirmation) {
+    lines.push(`Goods ship shrink-wrapped in a master carton; I'll check on individual packing and confirm.`);
   }
   lines.push(`Total ₹${quote.grandTotal.toLocaleString('en-IN')} incl. GST.`);
   lines.push(`Would you like to proceed?`);
@@ -392,6 +387,5 @@ module.exports = {
   isBrandingAllowedForProduct,
   END_CONSUMER_SLABS,
   RESELLER_SLABS,
-  BRANDING_OPTIONS,
-  PACKAGING_BOX
+  BRANDING_OPTIONS
 };
